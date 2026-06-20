@@ -55,16 +55,11 @@ graph LR
     end
 
     subgraph Action["行动层"]
-        Reply[消息回复]
-        Switch[切换未读聊天]
-        File[文件/图片发送]
-        Recovery[登录恢复]
+        A[UI 交互抽象]
     end
 
     subgraph Memory["记忆层"]
-        WM[工作记忆<br/>最近 N 条原文]
-        SM[会话记忆<br/>人物卡 / 关系 / 偏好]
-        LM[长期记忆<br/>LLM Wiki + 向量数据库]
+        M[LLM Wiki + 向量数据库]
     end
 
     subgraph Flywheel["数据飞轮"]
@@ -73,21 +68,11 @@ graph LR
 
     C --> P
     P -->|PerceptionResult| R
-    R -->|ActionResult| Reply
-    R --> Switch
-    R --> File
-    R --> Recovery
-
-    WM -->|上下文| R
-    SM -->|上下文| R
-    LM -->|来源| SM
-
-    Reply -->|反馈| WM
-    Reply -->|反馈| SM
-    Reply -->|反馈| LM
-    W -->|全量聊天记录初始化| LM
-
-    Reply -->|生产数据| D
+    R -->|ActionResult| A
+    A -->|反馈| M
+    M -->|上下文| R
+    W -->|全量聊天记录初始化| M
+    A -->|生产数据| D
     D -->|质量反馈| R
 ```
 
