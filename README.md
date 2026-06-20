@@ -51,11 +51,7 @@ graph LR
     end
 
     subgraph Reasoning["推理层"]
-        Dedup[LCS 跨 tick 去重]
-        Router[Skills 路由]
-        Agent[轻量化 Agent<br/>ReAct 循环]
-        Hermes[Hermes<br/>长上下文推理]
-        Tools[工具层<br/>search_memory / web_search / browse_url]
+        R[去重 → 路由 → Agent]
     end
 
     subgraph Action["行动层"]
@@ -76,24 +72,15 @@ graph LR
     end
 
     C --> P
-    P -->|PerceptionResult| Dedup
-    Dedup --> Router
-    Router -->|日常对话| Agent
-    Router -->|复杂 Skill| Hermes
+    P -->|PerceptionResult| R
+    R -->|ActionResult| Reply
+    R --> Switch
+    R --> File
+    R --> Recovery
 
-    Agent --> Tools
-    Tools -->|search_memory| LM
-    Tools -->|web_search / browse_url| Web[(外部网络)]
-
-    WM -->|上下文| Agent
-    SM -->|上下文| Agent
+    WM -->|上下文| R
+    SM -->|上下文| R
     LM -->|来源| SM
-
-    Agent -->|ActionResult| Reply
-    Hermes -->|ActionResult| Reply
-    Agent --> Switch
-    Agent --> Recovery
-    Agent --> File
 
     Reply -->|反馈| WM
     Reply -->|反馈| SM
@@ -101,7 +88,7 @@ graph LR
     W -->|全量聊天记录初始化| LM
 
     Reply -->|生产数据| D
-    D -->|质量反馈| Agent
+    D -->|质量反馈| R
 ```
 
 ---
