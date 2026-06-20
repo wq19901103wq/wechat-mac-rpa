@@ -104,3 +104,4 @@ class PerceptionResult:
     window_rect: Optional[Rect] = None  # 窗口屏幕逻辑坐标
     scale_factor: float = 1.0  # Retina 缩放因子
     debug_info: Optional[Dict] = None  # 完整调试信息（tick 级）
+    is_service_account_list: bool = False  # 当前是否为服务号/订阅号/公众号列表

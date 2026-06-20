@@ -94,4 +94,5 @@ class VisionPipeline:
             window_rect=capture_result.window_rect,
             scale_factor=capture_result.scale_factor,
             debug_info=debug.__dict__,
+            is_service_account_list=layout.is_service_account_list,
         )

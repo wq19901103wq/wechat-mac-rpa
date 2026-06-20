@@ -35,6 +35,7 @@ class UILayout:
     timestamp_elements: List[OCRTextElement]
     self_bubbles: List[Rect]
     message_candidates: List[OCRTextElement]
+    is_service_account_list: bool = False
 
 
 class LayoutParser:
@@ -121,6 +122,9 @@ class LayoutParser:
         # 提取 chat_name
         chat_name = self._extract_chat_name(title_elements, width)
 
+        # 检测是否为服务号/订阅号/公众号列表（误点固定入口后会进入该视图）
+        is_service_account_list = self._detect_service_account_list(title_elements)
+
         t_parse_ms = (time.time() - t_parse_start) * 1000
         print(f"[Perf][Layout] parse: {t_parse_ms:.0f}ms "
               f"bubbles={t_bubble_ms:.0f}ms chat_list={t_chatlist_ms:.0f}ms "
@@ -144,6 +148,7 @@ class LayoutParser:
             timestamp_elements=timestamp_elements,
             self_bubbles=self_bubbles,
             message_candidates=message_candidates,
+            is_service_account_list=is_service_account_list,
         )
 
     def _detect_self_bubbles(self, arr: np.ndarray) -> List[Rect]:
@@ -406,3 +411,15 @@ class LayoutParser:
         candidates = filtered if filtered else title_elements
         best = max(candidates, key=lambda e: len(e.text))
         return self.clean_chat_name(best.text)
+
+    _SERVICE_ACCOUNT_TITLES = {"服务号", "订阅号", "公众号"}
+
+    def _detect_service_account_list(
+        self, title_elements: List[OCRTextElement]
+    ) -> bool:
+        """检测当前是否为服务号/订阅号/公众号列表视图。"""
+        for e in title_elements:
+            text = e.text.strip()
+            if text in self._SERVICE_ACCOUNT_TITLES:
+                return True
+        return False

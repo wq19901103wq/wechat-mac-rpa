@@ -301,7 +301,7 @@ class WeChatBot:
                     # 先尝试从服务号/公众号/文章列表等异常视图返回
                     recovered = self._recover_from_non_chat_view(result)
                     if recovered:
-                        self.debug_logger.log_action("recover", action_input="Esc", success=True, error="尝试从非聊天视图返回")
+                        self.debug_logger.log_action("recover", action_input="back_button", success=True, error="尝试从服务号/公众号列表返回")
                         return
                     # 恢复失败或本身就是普通视图，尝试切换到未读
                     self.logger.warning("尝试切换到未读")
@@ -311,6 +311,14 @@ class WeChatBot:
                     else:
                         self.debug_logger.log_action("none", action_input="", success=False, error="聊天名为空且无未读")
                 return
+
+            # API/Layout 识别到当前是服务号/订阅号/公众号列表，触发返回
+            if chat_name in self._SERVICE_ACCOUNT_NAMES:
+                self.logger.warning(f"当前聊天名为'{chat_name}'，处于服务号/公众号列表，尝试返回")
+                recovered = self._recover_from_non_chat_view(result)
+                if recovered:
+                    self.debug_logger.log_action("recover", action_input="back_button", success=True, error=f"尝试从{chat_name}列表返回")
+                    return
 
             self.logger.log_layout(
                 tick_id=tick_id,
@@ -605,36 +613,48 @@ class WeChatBot:
                 QwenClient.log_token_stats(self.logger)
             time.sleep(interval)
 
-    def _recover_from_non_chat_view(self, result: PerceptionResult, force: bool = False) -> bool:
-        """当当前视图不是普通聊天窗口时（如服务号/公众号列表），尝试 Esc 返回。
+    _SERVICE_ACCOUNT_NAMES = {"服务号", "订阅号", "公众号"}
 
-        检测依据：chat_name 为空且左侧聊天列表不可见。此时按 Esc 通常能
-        从服务号/公众号/文章列表退回到聊天列表。
+    def _recover_from_non_chat_view(self, result: PerceptionResult) -> bool:
+        """当当前视图为服务号/订阅号/公众号列表时，点击左上角返回按钮回到聊天视图。
 
-        Args:
-            result: 感知结果
-            force: 是否强制触发（忽略 chat_name/chat_list_items 检测）。
-                   用于点击后验证失败时的主动恢复。
+        检测依据：
+        1. layout 层识别到标题栏包含"服务号/订阅号/公众号"字样；
+        2. fallback：API/OCR 返回的 chat_name 本身就是这三个名称之一。
+        只在明确识别为该视图时才点击返回，避免在其他非聊天视图误操作。
         """
-        if not force and result.chat_name:
-            return False
-        if not force and result.chat_list_items:
-            # 左侧聊天列表可见，说明是普通聊天视图（可能只是当前聊天名没识别到）
+        is_service = result.is_service_account_list
+        if not is_service:
+            # API 路径（如 SmartPipeline）可能更准确地识别出 chat_name='服务号'
+            chat_name = _normalize_chat_name(result.chat_name or "")
+            if chat_name in self._SERVICE_ACCOUNT_NAMES:
+                is_service = True
+        if not is_service:
             return False
 
-        self.logger.warning("[Recovery] 当前不在聊天视图，尝试 Esc 返回")
+        # 冷却：避免连续 tick 高频点击返回
+        now = time.time()
+        if getattr(self, '_last_recovery_time', 0) and now - self._last_recovery_time < 3.0:
+            self.logger.info("[Recovery] 恢复冷却中，跳过本次返回")
+            return False
+
+        window_rect = result.window_rect
+        scale_factor = result.scale_factor
+        if window_rect is None:
+            self.logger.warning("[Recovery] window_rect 为空，无法点击返回")
+            return False
+
+        self.logger.warning("[Recovery] 检测到服务号/公众号列表，点击左上角返回按钮")
         try:
-            subprocess.run(
-                ["osascript", "-e", 'tell application "System Events" to key code 53'],
-                timeout=3,
-                capture_output=True,
-                check=True,
-            )
-            time.sleep(0.8)
-            self.logger.info("[Recovery] Esc 返回已发送，等待下一轮重新感知")
-            return True
+            clicker = ChatListClicker(window_rect, scale_factor)
+            if clicker.click_back_button():
+                self._last_recovery_time = time.time()
+                self.logger.info("[Recovery] 返回按钮已点击，等待下一轮重新感知")
+                return True
+            self.logger.warning("[Recovery] 点击返回按钮失败")
+            return False
         except Exception as e:
-            self.logger.warning(f"[Recovery] Esc 返回失败: {e}")
+            self.logger.warning(f"[Recovery] 点击返回按钮异常: {e}")
             return False
 
     def _try_switch_to_unread_chat(self, result: PerceptionResult) -> str:
@@ -772,39 +792,13 @@ class WeChatBot:
             self.logger.info(f"[WeFlow] 点击失败: '{target_item.nickname}'")
             return ""
 
-        # 点击后验证：重新感知确认是否真的切换到了目标聊天
-        try:
-            verify_result = self.perception.perceive()
-            verify_chat = _normalize_chat_name(verify_result.chat_name or "")
-            if verify_chat == target_norm:
-                self._last_switch_target = target_norm
-                self._last_switch_time = now
-                self.logger.info(f"🔄 切换聊天: {target_name!r} (未读 {target_unread})")
-                self.debug_logger.log_bot_decision(switch_target=target_name, switch_reason=f"未读 {target_unread}")
-                return target_name
-
-            self.logger.warning(
-                f"[Switch] 点击后未切换到目标聊天，目标={target_name!r}，当前={verify_result.chat_name!r}，尝试 Esc 恢复"
-            )
-            recovered = self._recover_from_non_chat_view(verify_result, force=True)
-            if recovered:
-                # 重试一次
-                clicked = clicker.click_item(target_item)
-                if clicked:
-                    verify_result = self.perception.perceive()
-                    verify_chat = _normalize_chat_name(verify_result.chat_name or "")
-                    if verify_chat == target_norm:
-                        self._last_switch_target = target_norm
-                        self._last_switch_time = now
-                        self.logger.info(f"🔄 切换聊天（重试成功）: {target_name!r} (未读 {target_unread})")
-                        self.debug_logger.log_bot_decision(switch_target=target_name, switch_reason=f"未读 {target_unread}")
-                        return target_name
-
-            self.logger.warning(f"[Switch] 切换失败，放弃: {target_name!r}")
-            return ""
-        except Exception as e:
-            self.logger.warning(f"[Switch] 点击后验证异常: {e}")
-            return ""
+        # 不再做点击后二次截图验证，依赖 5 秒 tick 兜底：
+        # 若误点进服务号/公众号列表，下一轮 tick 会识别并触发返回按钮。
+        self._last_switch_target = target_norm
+        self._last_switch_time = now
+        self.logger.info(f"🔄 切换聊天: {target_name!r} (未读 {target_unread})")
+        self.debug_logger.log_bot_decision(switch_target=target_name, switch_reason=f"未读 {target_unread}")
+        return target_name
 
     def send_to_chat(self, chat_name: str, text: str) -> ActionResult:
         """外部系统调用此接口主动发消息到指定聊天。"""

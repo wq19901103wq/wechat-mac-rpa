@@ -278,6 +278,7 @@ class WeFlowPipeline:
                 window_rect=capture_result.window_rect,
                 scale_factor=capture_result.scale_factor,
                 debug_info={"source": "weflow", "error": "unknown_talker", "chat_name": chat_name},
+                is_service_account_list=layout.is_service_account_list,
             )
 
         # 4. 增量同步：拉取新消息
@@ -305,6 +306,7 @@ class WeFlowPipeline:
                 "new_messages": len(new_messages),
                 "total_history": self.init_total_messages,
             },
+            is_service_account_list=layout.is_service_account_list,
         )
 
     def _sync_incremental(self, talker: str) -> list[WeFlowMessage]:

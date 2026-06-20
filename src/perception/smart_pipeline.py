@@ -550,6 +550,7 @@ class SmartPerceptionPipeline:
                 is_group=self._last_perception.is_group,
                 window_rect=window_rect,
                 scale_factor=scale_factor,
+                is_service_account_list=self._last_perception.is_service_account_list,
             )
         # 首次运行没有缓存，需要跑 OCR 建立基线
         _logger.info("[SmartPipeline] 首次运行，跑本地OCR建立缓存")
@@ -570,6 +571,7 @@ class SmartPerceptionPipeline:
             window_rect=window_rect,
             scale_factor=scale_factor,
             debug_info=debug_info,
+            is_service_account_list=layout.is_service_account_list,
         )
         self._last_perception = result
         return result
@@ -690,6 +692,7 @@ class SmartPerceptionPipeline:
             window_rect=window_rect,
             scale_factor=scale_factor,
             debug_info=debug_info,
+            is_service_account_list=getattr(layout, 'is_service_account_list', False) if layout else False,
         )
         self._last_perception = result
         return result

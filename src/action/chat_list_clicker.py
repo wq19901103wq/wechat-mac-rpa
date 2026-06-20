@@ -96,6 +96,48 @@ class ChatListClicker:
         except Exception:
             return False
 
+    # 服务号/订阅号/公众号列表返回按钮的默认偏移（截图像素，相对窗口内容左上角）。
+    # 实测标题栏显示 "＜ 服务号"，返回箭头在标题栏左侧，中心约 (165,140)。
+    BACK_BUTTON_OFFSET_X = 165
+    BACK_BUTTON_OFFSET_Y = 140
+
+    def click_back_button(self) -> bool:
+        """点击窗口左上角返回按钮，用于从服务号/订阅号/公众号列表返回聊天视图。"""
+        if not self._can_click():
+            return False
+
+        click_x = int(self.window_rect.x + self.BACK_BUTTON_OFFSET_X / self.scale_factor)
+        click_y = int(self.window_rect.y + self.BACK_BUTTON_OFFSET_Y / self.scale_factor)
+
+        try:
+            # Step 1: 强制置顶微信窗口
+            subprocess.run(
+                ["osascript", "-e",
+                 'tell application "System Events" to tell process "WeChat" to set frontmost to true'],
+                timeout=3,
+                capture_output=True,
+                check=True,
+            )
+            time.sleep(0.3)
+            # Step 2: 点击返回按钮
+            subprocess.run(
+                ["/opt/homebrew/bin/cliclick", f"c:{click_x},{click_y}"],
+                check=True,
+                timeout=5,
+            )
+            ChatListClicker._last_click_time = time.time()
+            # Step 3: 等待页面返回动画
+            time.sleep(0.8)
+            _logger.info(
+                f"点击返回按钮: screen=({click_x},{click_y}) "
+                f"window=({self.window_rect.x},{self.window_rect.y}) "
+                f"offset=({self.BACK_BUTTON_OFFSET_X},{self.BACK_BUTTON_OFFSET_Y}) "
+                f"scale={self.scale_factor}"
+            )
+            return True
+        except Exception:
+            return False
+
     def click_by_index(self, items: list[ChatListItem], index: int) -> bool:
         """按索引点击列表项。"""
         if 0 <= index < len(items):
