@@ -51,15 +51,24 @@ graph LR
     end
 
     subgraph Reasoning["推理层"]
-        R[去重 → 路由 → Agent]
+        Dedup[LCS 跨 tick 去重]
+        Router[Skills 路由]
+        Agent[轻量化 Agent<br/>ReAct 循环]
+        Hermes[Hermes<br/>长上下文推理]
+        Tools[工具层<br/>search_memory / web_search / browse_url]
     end
 
     subgraph Action["行动层"]
-        A[UI 交互抽象]
+        Reply[消息回复]
+        Switch[切换未读聊天]
+        File[文件/图片发送]
+        Recovery[登录恢复]
     end
 
     subgraph Memory["记忆层"]
-        M[LLM Wiki + 向量数据库]
+        WM[工作记忆<br/>最近 N 条原文]
+        SM[会话记忆<br/>人物卡 / 关系 / 偏好]
+        LM[长期记忆<br/>LLM Wiki + 向量数据库]
     end
 
     subgraph Flywheel["数据飞轮"]
@@ -67,13 +76,32 @@ graph LR
     end
 
     C --> P
-    P -->|PerceptionResult| R
-    R -->|ActionResult| A
-    A -->|反馈| M
-    M -->|上下文| R
-    W -->|全量聊天记录初始化| M
-    A -->|生产数据| D
-    D -->|质量反馈| R
+    P -->|PerceptionResult| Dedup
+    Dedup --> Router
+    Router -->|日常对话| Agent
+    Router -->|复杂 Skill| Hermes
+
+    Agent --> Tools
+    Tools -->|search_memory| LM
+    Tools -->|web_search / browse_url| Web[(外部网络)]
+
+    WM -->|上下文| Agent
+    SM -->|上下文| Agent
+    LM -->|来源| SM
+
+    Agent -->|ActionResult| Reply
+    Hermes -->|ActionResult| Reply
+    Agent --> Switch
+    Agent --> Recovery
+    Agent --> File
+
+    Reply -->|反馈| WM
+    Reply -->|反馈| SM
+    Reply -->|反馈| LM
+    W -->|全量聊天记录初始化| LM
+
+    Reply -->|生产数据| D
+    D -->|质量反馈| Agent
 ```
 
 ---
