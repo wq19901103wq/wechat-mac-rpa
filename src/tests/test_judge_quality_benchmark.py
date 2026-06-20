@@ -574,7 +574,15 @@ _FALLBACK_CASES: List[JudgeBenchmarkCase] = [
     _CASE_NORMAL, _CASE_NORMAL2, _CASE_NORMAL3, _CASE_NORMAL4, _CASE_NORMAL5,
 ]
 
-BENCHMARK_CASES: List[JudgeBenchmarkCase] = _load_cases_from_db()
+_BENCHMARK_CASES_CACHE: List[JudgeBenchmarkCase] | None = None
+
+
+def _get_benchmark_cases() -> List[JudgeBenchmarkCase]:
+    """懒加载 benchmark cases，避免测试收集阶段访问真实数据库。"""
+    global _BENCHMARK_CASES_CACHE
+    if _BENCHMARK_CASES_CACHE is None:
+        _BENCHMARK_CASES_CACHE = _load_cases_from_db()
+    return _BENCHMARK_CASES_CACHE
 
 
 # =============================================================================
@@ -628,7 +636,7 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None, n_runs: int
             os.environ["DASHSCOPE_API_KEY"] = api_key
             worker = JudgeWorker()
 
-    for case in BENCHMARK_CASES:
+    for case in _get_benchmark_cases():
         all_runs = []
 
         if use_api:
@@ -805,11 +813,12 @@ def main():
     parser.add_argument("--n-runs", type=int, default=3, help="每个 case 跑几次取平均（默认 3）")
     args = parser.parse_args()
 
-    print(f"🧑‍⚖️  Judge Quality Benchmark — {len(BENCHMARK_CASES)} 真实生产 case")
+    cases = _get_benchmark_cases()
+    print(f"🧑‍⚖️  Judge Quality Benchmark — {len(cases)} 真实生产 case")
     print(f"   模式: {'真实 API' if args.run_api else '缓存回归'} × {args.n_runs} runs")
-    print(f"   badcase: {sum(1 for c in BENCHMARK_CASES if c.ground_truth_is_badcase)}")
-    print(f"   normal:  {sum(1 for c in BENCHMARK_CASES if not c.ground_truth_is_badcase)}")
-    for c in BENCHMARK_CASES:
+    print(f"   badcase: {sum(1 for c in cases if c.ground_truth_is_badcase)}")
+    print(f"   normal:  {sum(1 for c in cases if not c.ground_truth_is_badcase)}")
+    for c in cases:
         print(f"     [{c.case_name}] {c.category} ← {c.source_draft_id or c.source_chat_name}")
     print()
 

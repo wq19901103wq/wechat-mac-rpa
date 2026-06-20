@@ -56,14 +56,37 @@ CREATE TABLE IF NOT EXISTS tick_log (
 CREATE TABLE IF NOT EXISTS cases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     draft_id TEXT UNIQUE NOT NULL, tick_id INTEGER, chat_name TEXT,
+    source TEXT DEFAULT 'committed',
     status TEXT DEFAULT 'pending', badcase_type TEXT, severity TEXT,
     confidence REAL, overall_score REAL, is_badcase INTEGER DEFAULT 0,
-    screenshot_path TEXT, judge_reason TEXT, created_at TEXT DEFAULT (datetime('now','localtime'))
+    auto_commit INTEGER DEFAULT 0,
+    screenshot_path TEXT, judge_reason TEXT, expected_behavior TEXT,
+    committed_at TEXT, committed_by TEXT,
+    dismissed_at TEXT, dismiss_reason TEXT,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    git_commit TEXT
 );
 
 CREATE TABLE IF NOT EXISTS case_prompts (
     case_id INTEGER PRIMARY KEY REFERENCES cases(id),
-    system_prompt TEXT, user_prompt TEXT
+    system_prompt TEXT, user_prompt TEXT,
+    tools_context TEXT, memory_injected TEXT
+);
+
+CREATE TABLE IF NOT EXISTS case_tool_calls (
+    case_id INTEGER REFERENCES cases(id),
+    call_order INTEGER,
+    tool_name TEXT,
+    arguments TEXT,
+    UNIQUE(case_id, call_order)
+);
+
+CREATE TABLE IF NOT EXISTS case_llm_messages (
+    case_id INTEGER REFERENCES cases(id),
+    message_order INTEGER,
+    role TEXT,
+    content_preview TEXT,
+    UNIQUE(case_id, message_order)
 );
 
 CREATE TABLE IF NOT EXISTS case_dimensions (
@@ -237,6 +260,59 @@ class CaseDB:
                 conn.commit()
             except Exception as e:
                 _logger.warning("[CaseDB] 添加 messages_json 列失败: %s", e)
+
+            # 迁移：补全 cases 表缺失列
+            try:
+                cur = conn.execute("PRAGMA table_info(cases)")
+                columns = {row[1] for row in cur.fetchall()}
+                for col, dtype in [
+                    ("source", "TEXT DEFAULT 'committed'"),
+                    ("auto_commit", "INTEGER DEFAULT 0"),
+                    ("expected_behavior", "TEXT"),
+                    ("committed_at", "TEXT"),
+                    ("committed_by", "TEXT"),
+                    ("dismissed_at", "TEXT"),
+                    ("dismiss_reason", "TEXT"),
+                    ("git_commit", "TEXT"),
+                ]:
+                    if col not in columns:
+                        conn.execute(f"ALTER TABLE cases ADD COLUMN {col} {dtype}")
+                conn.commit()
+            except Exception as e:
+                _logger.warning("[CaseDB] cases 表迁移失败: %s", e)
+
+            # 迁移：补全 case_prompts 表缺失列
+            try:
+                cur = conn.execute("PRAGMA table_info(case_prompts)")
+                columns = {row[1] for row in cur.fetchall()}
+                for col, dtype in [("tools_context", "TEXT"), ("memory_injected", "TEXT")]:
+                    if col not in columns:
+                        conn.execute(f"ALTER TABLE case_prompts ADD COLUMN {col} {dtype}")
+                conn.commit()
+            except Exception as e:
+                _logger.warning("[CaseDB] case_prompts 表迁移失败: %s", e)
+
+            # 迁移：创建 case_tool_calls / case_llm_messages 表
+            try:
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS case_tool_calls (
+                        case_id INTEGER REFERENCES cases(id),
+                        call_order INTEGER,
+                        tool_name TEXT,
+                        arguments TEXT,
+                        UNIQUE(case_id, call_order)
+                    );
+                    CREATE TABLE IF NOT EXISTS case_llm_messages (
+                        case_id INTEGER REFERENCES cases(id),
+                        message_order INTEGER,
+                        role TEXT,
+                        content_preview TEXT,
+                        UNIQUE(case_id, message_order)
+                    );
+                """)
+                conn.commit()
+            except Exception as e:
+                _logger.warning("[CaseDB] 创建 case_tool_calls / case_llm_messages 表失败: %s", e)
 
             conn.close()
 
