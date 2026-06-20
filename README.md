@@ -205,6 +205,22 @@ graph LR
     end
 ```
 
+#### 设计思想：Judge 就是 Reward Model
+
+这个数据飞轮的设计思想与 **On-Policy 强化学习**非常相似：
+
+| 数据飞轮 | 强化学习 |
+|---|---|
+| 少量人工标注 | 人类偏好监督数据 |
+| LLM as Judge | Reward Model |
+| Bot 回复生成 | Actor |
+| Prompt / 工具 / 约束优化 | 策略更新 |
+| 新策略上线后继续生产 tick_log | On-Policy：新策略采样新数据 |
+
+区别只在于，这里的 Actor 优化不是通过梯度更新模型参数，而是通过人工分析 reward 信号、调整 prompt / 工具 / 约束等"策略配置"，再用 AB Test 验证新策略是否确实提升了 reward。所以这是一个**人工设计策略 + 自动评估验证**的 on-policy 循环：新策略上线后继续产生新的 tick_log，再采样、标注、校准 Judge，周而复始。
+
+这个类比也解释了为什么 Judge 的质量如此关键：**一个带偏的 Reward Model 会把 Actor 带偏**。只有 Judge 足够可信，Bot 的迭代方向才不会歪。
+
 #### 回路一：用有限人工标注校准 Judge
 
 人工 review 只发生在回路一，且是**少量、有策略的采样标注**。每一例人工标注都被同时用于两件事：训练我们自己对 case 的判断标准，以及评估 Judge 是否跟上了这个标准。
