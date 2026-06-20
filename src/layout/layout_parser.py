@@ -374,6 +374,10 @@ class LayoutParser:
                 )
             )
 
+        # 过滤微信固定入口，避免 Bot 误点击服务号/订阅号后无法返回
+        _BLOCKED_ENTRIES = {"订阅号", "服务号", "公众号"}
+        items = [item for item in items if item.nickname not in _BLOCKED_ENTRIES]
+
         self.debug_info["chat_list"] = {
             "groups": [[e.text for e in g] for g in groups],
             "group_anchor_y": group_anchor_y,
