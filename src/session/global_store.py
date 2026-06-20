@@ -395,7 +395,7 @@ class GlobalStore:
             self._dirty.add(chat_name)
 
         # 选择去重策略
-        if mode in ("weflow", "hybrid") and messages and getattr(messages[0], "local_id", None) is not None:
+        if mode in ("weflow", "hybrid"):
             _logger.info("[GlobalStore] %s 使用 WeFlow 精确去重 (%d 条)", chat_name, len(messages))
             new_messages = self._merge_tick_weflow(chat_name, messages)
         else:
@@ -408,6 +408,15 @@ class GlobalStore:
             new_msg = replace(msg, chat_name=chat_name)
             state.messages.append(new_msg)
             state._msg_ids.add(_msg_id(chat_name, new_msg, is_group))
+
+        # 裁剪历史消息，避免无限增长
+        if len(state.messages) > self.max_messages:
+            state.messages = state.messages[-self.max_messages:]
+            state._msg_ids = {
+                _msg_id(chat_name, m, state.is_group)
+                for m in state.messages
+            }
+            self._dirty.add(chat_name)
 
         # 收集所有未回复的消息（按时间顺序）
         unreplied = [
