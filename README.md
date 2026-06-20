@@ -178,47 +178,51 @@ graph TB
 
 ---
 
-### 数据飞轮：人工 Review 驱动持续迭代
+### 数据飞轮：有限人工标注，无限自动迭代
 
-Bot 上线不是终点，而是数据积累的开始。数据飞轮的核心不是"收集 badcase 然后修 bug"，而是建立两套并行的反馈回路，让 **Judge 评估器**和 **Bot 提示词**都能被量化地、可回归地改进。
+数据飞轮的精髓不是"人来一条一条修 badcase"，而是**用有限的人工标注成本，换一瓶优质的 LLM as Judge；再用这瓶 Judge 作为自动实验评估标准，无限地迭代 Bot**。
+
+人工 review 是稀缺资源，所以只投在最关键的地方——校准 Judge。一旦 Judge 的打分与人工判断足够一致，它就能接管后续所有 Bot 实验的评估工作：每天产生的大量 tick_log、每一次 prompt 改动、每一个路由策略调整，都可以让 Judge 自动评分，不再需要人逐条过目。
 
 ```mermaid
 graph LR
-    subgraph Flywheel["数据飞轮"]
+    subgraph Flywheel["数据飞轮：有限人工标注 → 无限自动迭代"]
         Prod[Bot 生产运行] --> Tick[tick_log<br/>结构化日志]
-        Tick --> Review[人工 Review Case<br/>好 / 坏 / 中性标注]
+        Tick --> Sample[候选 Case 采样]
 
-        Review --> JudgeEval[Judge 质量评估<br/>人工 GT vs Judge 一致性]
-        JudgeEval -->|分歧率过高| JudgeIter[迭代 Judge Prompt<br/>修正误判 / 细化 Rubric]
+        Sample -->|少量有限| Review[人工 Review<br/>Gold Truth 标注]
+        Review --> JudgeEval[Judge 质量评估<br/>人工 vs Judge 一致性]
+        JudgeEval -->|分歧率高| JudgeIter[迭代 Judge Prompt<br/>修正误判 / 细化 Rubric]
         JudgeIter --> JudgeEval
+        JudgeEval -->|优质 Judge| AutoJudge["LLM as Judge<br/>自动实验评估标准"]
 
-        Review --> PromptOpt[优化 Bot Prompt<br/>系统提示 / 工具 / 约束]
-        PromptOpt --> ABTest[AB Test<br/>实验组 vs 对照组]
+        Tick -->|大量无标注| AutoJudge
+        AutoJudge -->|自动评分| PromptOpt[优化 Bot Prompt<br/>系统提示 / 工具 / 约束]
+        PromptOpt --> ABTest[AB Test<br/>实验组 vs 对照组<br/>Judge 自动打分]
         ABTest -->|显著提升| Merge[合并上生产]
         Merge --> Prod
         ABTest -->|不显著或退化| PromptOpt
     end
 ```
 
-#### 回路一：Judge 质量评估与迭代
+#### 回路一：用有限人工标注校准 Judge
 
-人工 review 是 gold truth。每一条被人工标注为"好 / 坏 / 中性"的 case，都会同步用于评估 JudgeWorker 的打分质量。
+人工 review 只发生在回路一，且是**少量、有策略的采样标注**。每一例人工标注都被同时用于两件事：训练我们自己对 case 的判断标准，以及评估 Judge 是否跟上了这个标准。
 
-- **Judge 质量评估**：对比人工标注与 Judge 评分，计算一致性、误判率、分歧率。
-- **Judge Prompt 迭代**：当分歧率超过阈值时，暂停 Judge 自动评估，分析典型误判模式，迭代 Judge 的 Rubric、示例和边界定义。
-- **回归验证**：更新后的 Judge 必须先在 **Judge Quality benchmark** 上通过回归验证，才能重新投入生产评估。
+- **Judge 质量评估**：持续对比人工标注与 Judge 评分，计算一致性、误判率、分歧率。分歧率就是 Judge 这瓶"度量衡"的误差。
+- **Judge Prompt 迭代**：当分歧率超过阈值时，暂停 Judge 自动评估，分析典型误判模式，迭代 Judge 的 Rubric、示例和边界定义——不是让 Judge 去拟合某一条 case，而是让它的评分标准更贴近人的真实偏好。
+- **回归验证**：更新后的 Judge 必须先在 **Judge Quality benchmark** 上通过回归验证，确认它既没有丢失旧能力、也没有引入新偏见，才能重新作为实验评估标准。
 
-只有当 Judge 足够可信时，它才有资格驱动 Bot 的优化。
+#### 回路二：用优质 Judge 无限迭代 Bot
 
-#### 回路二：Bot 提示词优化与 AB Test
+Judge 一旦可信，回路二就可以大规模自动化运转，**人工不再参与逐条评估**。
 
-可信的 Judge 打分才是 Bot 提示词迭代的依据。
-
-- **根因分析**：从 Judge 评分和人工 review 中提取共性问题，定位是系统提示、工具定义、约束条件还是记忆召回出了问题。
+- **自动质量评估**：每天的生产 tick_log 由 Judge 自动打分，筛选出值得关注的候选 case 供下一轮少量人工抽检；AB Test 中的实验组与对照组由同一版 Judge 评分，保证评估口径一致。
+- **根因分析**：从 Judge 评分和抽检样本中提取共性问题，定位是系统提示、工具定义、约束条件还是记忆召回出了问题。
 - **通用规则修复**：禁止 case-by-case 打补丁。所有修复必须表达为可复用的规则或配置变更，并在 benchmark 上验证。
-- **AB Test 验证**：任何提示词、模型、路由策略的改动，必须先跑 AB Test——实验组 vs 对照组，同批 case 用同一版 Judge 评分，对比 badcase 率和关键指标。只有显著提升才允许合并上生产；不显著或退化则回炉重优化。
+- **AB Test 验证**：任何提示词、模型、路由策略的改动，必须先跑 AB Test。只有实验组相比对照组显著提升才允许合并上生产；不显著或退化则回炉重优化。
 
-生产环境的改动不能凭直觉上线。数据飞轮保证每一次上线都是经过 Judge 评估、AB Test 量化验证的。
+这就是数据飞轮的杠杆：**人在回路一中投入的每一分钟，都在放大回路二的自动化能力**。Judge 越准，Bot 迭代越快、人工投入越少。
 
 ---
 
