@@ -35,7 +35,7 @@ graph LR
     end
 
     subgraph Flywheel["数据飞轮"]
-        D[tick_log → Judge → 回归]
+        D[人工 Review → Judge → AB Test → 回归]
     end
 
     C --> P
@@ -178,26 +178,47 @@ graph TB
 
 ---
 
-### 数据飞轮：生产质量闭环
+### 数据飞轮：人工 Review 驱动持续迭代
 
-Bot 上线不是终点，而是数据积累的开始。与传统"散落 JSON + 手动归档"不同，我们的闭环以 **SQLite 数据库**为核心，将每一条生产异常转化为可回归的 case 资产。
+Bot 上线不是终点，而是数据积累的开始。数据飞轮的核心不是"收集 badcase 然后修 bug"，而是建立两套并行的反馈回路，让 **Judge 评估器**和 **Bot 提示词**都能被量化地、可回归地改进。
 
 ```mermaid
 graph LR
-    Tick["tick_log<br/>结构化存储"] --> Judge["JudgeWorker<br/>LLM 自动评估"]
-    Judge --> GT["人工 GT 标注<br/>修正 Judge 误判"]
-    GT --> Case["badcase 入库<br/>完整对话 + 评分维度"]
-    Case --> Gen["CaseGenerator<br/>自动生成 benchmark case"]
-    Gen --> Bench["benchmark_cases<br/>量化基线"]
-    Bench --> Fix["通用规则修复<br/>禁止 case-by-case 补丁"]
-    Fix --> Bench
-    Bench -->|通过| Prod["合并上生产"]
-    Prod --> Tick
+    subgraph Flywheel["数据飞轮"]
+        Prod[Bot 生产运行] --> Tick[tick_log<br/>结构化日志]
+        Tick --> Review[人工 Review Case<br/>好 / 坏 / 中性标注]
+
+        Review --> JudgeEval[Judge 质量评估<br/>人工 GT vs Judge 一致性]
+        JudgeEval -->|分歧率过高| JudgeIter[迭代 Judge Prompt<br/>修正误判 / 细化 Rubric]
+        JudgeIter --> JudgeEval
+
+        Review --> PromptOpt[优化 Bot Prompt<br/>系统提示 / 工具 / 约束]
+        PromptOpt --> ABTest[AB Test<br/>实验组 vs 对照组]
+        ABTest -->|显著提升| Merge[合并上生产]
+        Merge --> Prod
+        ABTest -->|不显著或退化| PromptOpt
+    end
 ```
 
-**JudgeWorker** 是闭环的关键齿轮。它是一个异步后台服务，消费 tick_log 中的生产记录，按结构化 Rubric 多维度打分——相关性、准确性、语气、克制、工具使用。每条评分都附带详细理由，可追溯、可质疑、可修正。人工与 Judge 的分歧率持续监控，超过阈值时暂停自动评估，等待人工复核。
+#### 回路一：Judge 质量评估与迭代
 
-随着 case 库的增长，Bot 的鲁棒性持续提升。不是"修完就忘"，而是形成**可追溯、可回归的生产质量资产**。
+人工 review 是 gold truth。每一条被人工标注为"好 / 坏 / 中性"的 case，都会同步用于评估 JudgeWorker 的打分质量。
+
+- **Judge 质量评估**：对比人工标注与 Judge 评分，计算一致性、误判率、分歧率。
+- **Judge Prompt 迭代**：当分歧率超过阈值时，暂停 Judge 自动评估，分析典型误判模式，迭代 Judge 的 Rubric、示例和边界定义。
+- **回归验证**：更新后的 Judge 必须先在 **Judge Quality benchmark** 上通过回归验证，才能重新投入生产评估。
+
+只有当 Judge 足够可信时，它才有资格驱动 Bot 的优化。
+
+#### 回路二：Bot 提示词优化与 AB Test
+
+可信的 Judge 打分才是 Bot 提示词迭代的依据。
+
+- **根因分析**：从 Judge 评分和人工 review 中提取共性问题，定位是系统提示、工具定义、约束条件还是记忆召回出了问题。
+- **通用规则修复**：禁止 case-by-case 打补丁。所有修复必须表达为可复用的规则或配置变更，并在 benchmark 上验证。
+- **AB Test 验证**：任何提示词、模型、路由策略的改动，必须先跑 AB Test——实验组 vs 对照组，同批 case 用同一版 Judge 评分，对比 badcase 率和关键指标。只有显著提升才允许合并上生产；不显著或退化则回炉重优化。
+
+生产环境的改动不能凭直觉上线。数据飞轮保证每一次上线都是经过 Judge 评估、AB Test 量化验证的。
 
 ---
 
