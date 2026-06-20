@@ -16,12 +16,10 @@
 
 ```mermaid
 graph LR
-    subgraph Input["输入层"]
-        C[窗口截图]
-    end
-
     subgraph Perception["感知层"]
+        C[窗口截图]
         P[视觉理解 + 布局解析]
+        W[全量聊天记录初始化]
     end
 
     subgraph Reasoning["推理层"]
@@ -45,6 +43,7 @@ graph LR
     R -->|ActionResult| A
     A -->|反馈| M
     M -->|上下文| R
+    W -->|全量聊天记录初始化| M
     A -->|生产数据| D
     D -->|质量反馈| R
 ```
