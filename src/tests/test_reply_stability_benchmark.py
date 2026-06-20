@@ -132,6 +132,7 @@ def _reply_similarity(replies: list[str]) -> float:
 def run_benchmark(use_api: bool = False, api_key: str | None = None, n_generations: int = 3) -> list[StabilityResult]:
     cases = _load_cases()
     results: list[StabilityResult] = []
+    tools: list[dict] = []
 
     if use_api:
         # 加载 .env（与 run_bot.py 相同）
