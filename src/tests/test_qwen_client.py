@@ -2,9 +2,10 @@
 """QwenClient 单元测试"""
 
 import os
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 from urllib.parse import urlparse
+
+import pytest
 
 from src.utils.qwen_client import QwenClient
 

@@ -56,7 +56,7 @@ class TestPrimaryMatching:
         assert "【王芊的记忆】" in result
         assert "- 职业：算法工程师" in result
         # primary 必须排在第一位
-        lines = [l for l in result.split("\n") if l.startswith("【")]
+        lines = [line for line in result.split("\n") if line.startswith("【")]
         assert lines[0].startswith("【王芊的记忆】")
 
     def test_only_one_primary_allowed(self, engine):
@@ -70,7 +70,7 @@ class TestPrimaryMatching:
         result = engine.search_keyword("王芊", max_chars=10000)
 
         # 只能有 1 个 primary → 王芊置顶
-        lines = [l for l in result.split("\n") if l.startswith("【")]
+        lines = [line for line in result.split("\n") if line.startswith("【")]
         assert lines[0].startswith("【王芊的记忆】")
 
         # 王芊的完整 wiki 只应出现一次（primary 的完整内容）
@@ -106,19 +106,19 @@ class TestTopNExpansion:
         """即使 Top N 增大，primary 文档仍然排在最前面。"""
         write_user_wiki(engine, "王芊", "- 姓名：王芊\n- 职业：算法工程师")
         for i in range(8):
-            write_user_wiki(engine, f"同事{i}", f"- 与王芊：同事")
+            write_user_wiki(engine, f"同事{i}", "- 与王芊：同事")
         write_noise_user(engine, "噪声用户")
 
         result = engine.search_keyword("王芊", max_chars=100000)
 
-        lines = [l for l in result.split("\n") if l.startswith("【")]
+        lines = [line for line in result.split("\n") if line.startswith("【")]
         assert lines[0].startswith("【王芊的记忆】")
 
     def test_max_chars_respected(self, engine):
         """即使 Top N 增大，max_chars 截断仍然有效。"""
         write_user_wiki(engine, "王芊", "- 姓名：王芊\n- 职业：算法工程师\n" + "- 详细描述\n" * 100)
         for i in range(8):
-            write_user_wiki(engine, f"同事{i}", f"- 与王芊：同事\n" + "- 详情\n" * 50)
+            write_user_wiki(engine, f"同事{i}", "- 与王芊：同事\n" + "- 详情\n" * 50)
         write_noise_user(engine, "噪声用户")
 
         result = engine.search_keyword("王芊 同事", max_chars=2000)

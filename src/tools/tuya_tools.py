@@ -12,17 +12,15 @@
 3. ~/.openclaw/tuya_local_devices.json
 """
 
-import logging
-
-_logger = logging.getLogger("src.tools.tuya")
-
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from .tool_registry import get_registry
 
+_logger = logging.getLogger("src.tools.tuya")
 
 _CONFIG_FILE = Path.home() / ".openclaw" / "tuya_config.json"
 _DEVICES_FILE = Path.home() / ".openclaw" / "tuya_devices.json"

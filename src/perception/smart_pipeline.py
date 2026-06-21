@@ -12,38 +12,31 @@
     - 群聊昵称识别、emoji、换行格式全部保留
 """
 
+import base64
 import hashlib
+import json as _json
 import logging
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 from PIL import Image
 
-from src.models.base import ChatListItem, ChatMessage, MEDIA_MESSAGE_TYPES, PerceptionResult, Rect, SenderType
-from src.capture.window_capture import WindowCapture, WeChatNotReadyError
-from src.ocr.vision_ocr import VisionOCREngine
+from src.capture.window_capture import WeChatNotReadyError, WindowCapture
 from src.layout.layout_parser import TIMESTAMP_PATTERNS, LayoutParser, UILayout
 from src.layout.profile import LayoutProfile
-
+from src.models.base import MEDIA_MESSAGE_TYPES, ChatListItem, ChatMessage, PerceptionResult, Rect, SenderType
+from src.ocr.vision_ocr import VisionOCREngine
 from src.utils.chat_utils import _is_group_chat_name
-
 
 _logger = logging.getLogger("src.runtime.smart_pipeline")
 
 # ---------------------------------------------------------------------------
 # Qwen3.6-flash API 客户端（轻量封装，避免循环导入 benchmark 脚本）
 # ---------------------------------------------------------------------------
-
-import base64
-import json as _json
-import time
-
-
-
 
 QWEN_SYSTEM_PROMPT = """你是一位专精 UI 截图文字识别的 OCR 引擎。请仔细识别这张微信 Mac 版截图中的文字信息，并输出为 JSON。
 
@@ -176,7 +169,7 @@ class _QwenAPIClient:
         """识别并返回 (parsed_result, prompt, raw_response, thinking)。"""
         b64 = self._image_to_base64(image_path)
         prompt = QWEN_SYSTEM_PROMPT
-        messages = [
+        messages: list[Any] = [
             {
                 "role": "user",
                 "content": [
@@ -312,7 +305,7 @@ class SmartPerceptionPipeline:
         # ===== WeFlow 分流 =====
         if self._weflow_mode in ("weflow", "hybrid") and self._weflow_pipeline:
             try:
-                print(f"[SmartPipeline] calling weflow_pipeline.perceive()")
+                print("[SmartPipeline] calling weflow_pipeline.perceive()")
                 result = self._weflow_pipeline.perceive()
                 print(f"[SmartPipeline] weflow_pipeline.perceive() returned {result is not None}")
                 if result is not None:
@@ -362,7 +355,7 @@ class SmartPerceptionPipeline:
         diff_ratio = None
         if self.always_use_api:
             _logger.info("[SmartPipeline] always_use_api=true，强制调用API（不跳过）")
-        elif self._last_screenshot and self._last_screenshot.exists():
+        elif self._last_screenshot and self._last_screenshot.exists() and self._last_hash is not None:
             curr_hash = self._compute_hash(image_path)
             _logger.debug(
                 f"[SmartPipeline] hash对比: prev={self._last_hash[:8]}... curr={curr_hash[:8]}..."
@@ -371,7 +364,7 @@ class SmartPerceptionPipeline:
                 skip_api = True
                 self._consecutive_low_diff += 1
                 _logger.info(
-                    f"[SmartPipeline] 截图完全相同 (hash一致)，跳过API调用"
+                    "[SmartPipeline] 截图完全相同 (hash一致)，跳过API调用"
                 )
             else:
                 msg_diff = self._check_pixel_diff(str(self._last_screenshot), image_path, self.message_region)
@@ -586,7 +579,7 @@ class SmartPerceptionPipeline:
         - 搜索栏高约 50px，列表起始 y = 50
         - 每个列表项高度 = 75
         - 列表宽度：右侧展开时 ~35%，折叠时 ~85%
-        
+
         注意：window_width/height 传入的是截图实际像素（Retina），不是逻辑像素。
         """
         items = []

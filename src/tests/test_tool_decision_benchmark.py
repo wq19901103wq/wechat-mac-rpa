@@ -39,7 +39,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.tests.test_reply_quality_benchmark import JudgeLLM, Rubric, RubricDimension
+from src.tests.test_reply_quality_benchmark import JudgeLLM, Rubric, RubricDimension  # noqa: E402
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "tool_decision"
 
@@ -476,7 +476,7 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None, n_runs: int
 
     if use_api and api_key is None:
         api_key = _get_api_key()
-    
+
     judge = None
 
     for case in BENCHMARK_CASES:
@@ -616,37 +616,37 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None, n_runs: int
                 continue
             if r.error and "无缓存结果" in r.error:
                 continue
-            
+
             bc = case_map.get(r.case_name)
             if not bc:
                 continue
-            
+
             # 只对失败的 case 或对抗性 case 调用 Judge
             needs_judge = (not r.passed) or (bc.category == "adversarial")
             if not needs_judge:
                 continue
-            
+
             # 构建 tool_calls 用于缓存 key
             tool_calls_for_hash = [{"name": t} for t in r.called_tools]
             judge_cache = _read_judge_cache(r.case_name, tool_calls_for_hash)
-            
+
             if judge_cache is not None:
                 r.rubric_scores = judge_cache
                 r.evaluation_mode = "rubric(cached)"
                 print(f"  [{r.case_name}] 📋 Judge 缓存")
                 continue
-            
+
             if not _get_api_key():
                 print(f"  [{r.case_name}] ⚠️ 无 API key，跳过 Judge")
                 continue
-            
+
             if judge is None:
                 print("  [Judge] 初始化 deepseek-v4-pro...")
                 judge = JudgeLLM(api_key=_get_api_key())
-            
+
             rubric = _build_tool_rubric(bc)
             context = f"用户消息: {bc.user_message}\n期望: {'调用 search_memory' if bc.should_call_memory else '不调用 search_memory'}\n实际调用工具: {r.called_tools or '无'}"
-            
+
             print(f"  [{r.case_name}] 🧑‍⚖️ Judge 评估...")
             rubric_scores = judge.evaluate(
                 rubric=rubric,

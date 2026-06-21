@@ -1,7 +1,7 @@
 """工具注册表 - 管理所有可用工具"""
 
 import json
-from typing import Callable, Dict, List, Any
+from typing import Any, Callable, Dict, List
 
 
 class Tool:

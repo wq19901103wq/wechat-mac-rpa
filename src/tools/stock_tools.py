@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """股票查询工具 - 调用腾讯财经 API 获取实时行情"""
 
-import urllib.request
 import ssl
-from typing import Dict, Any
+import urllib.request
+from typing import Any, Dict
 
 
 def _fetch_stock(codes: str) -> Dict[str, Any]:

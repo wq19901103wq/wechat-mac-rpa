@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """L4 Reply Policy - 回复决策."""
 
-from src.models.base import ChatMessage, SenderType
 from typing import Any
+
+from src.models.base import ChatMessage, SenderType
 
 
 class ReplyPolicy:

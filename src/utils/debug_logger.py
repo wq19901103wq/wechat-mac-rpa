@@ -7,11 +7,11 @@ Tick 级调试日志 —— 保存每个截图的完整处理链路，方便排�
 """
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import logging
 
 _logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class DebugLogger:
 
     def _save_prompt_markdown(self, ts: str) -> None:
         """保存完整 prompt 到 markdown 文件，不截断。按实际发生顺序：OCR → 对话回复（多轮）。
-        
+
         如果没有任何实质性内容（无 OCR、无对话、无 Bot 回复），跳过生成空文件。
         只保留最近 50 个 prompt 文件，防止磁盘无限增长。
         """

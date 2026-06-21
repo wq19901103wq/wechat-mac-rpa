@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """L3 MessageExtractor 单元测试"""
 
-from src.models.base import Point, Rect, OCRTextElement, SenderType
-from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
 from src.layout.layout_parser import UILayout
+from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
 from src.message.extractor import MessageExtractor
+from src.models.base import OCRTextElement, Point, Rect, SenderType
 
 
 def make_element(text: str, cx: int, cy: int, confidence: float = 0.95) -> OCRTextElement:
     """快速构造 OCRTextElement，bbox 以 center 为中心生成 30x15 矩形
-    
+
     面积 450 >= avatar_noise 阈值 300，避免在单元测试中被误过滤。
     """
     return OCRTextElement(

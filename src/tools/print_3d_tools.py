@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from xml.etree import ElementTree as ET
 
+from .tool_registry import get_registry
+
 _logger = logging.getLogger("src.tools.print3d")
 
 
@@ -396,7 +398,7 @@ def print3d_get_printer_status(ip: str = "", access_code: str = "", serial: str 
     # Light status
     lights = status_data.get("lights_report", [])
     if lights:
-        light_states = ", ".join(f"{l.get('node', '?')}={'ON' if l.get('mode') == 'on' else 'OFF'}" for l in lights)
+        light_states = ", ".join(f"{light.get('node', '?')}={'ON' if light.get('mode') == 'on' else 'OFF'}" for light in lights)
         lines.append(f"   灯光: {light_states}")
 
     # Print progress
@@ -418,8 +420,6 @@ def print3d_get_printer_status(ip: str = "", access_code: str = "", serial: str 
 
 
 # ── 注册 ──
-
-from .tool_registry import get_registry
 
 
 def register_print3d_tools(registry=None):

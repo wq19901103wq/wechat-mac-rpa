@@ -9,10 +9,10 @@
 """
 
 import logging
-import subprocess
 import time
 from typing import Optional
 
+from src.action.system_automation import MacOSSystemAutomation, SystemAutomation
 from src.models.base import ChatListItem, Rect
 
 _logger = logging.getLogger("src.chat_list_clicker")
@@ -26,9 +26,15 @@ class ChatListClicker:
     MIN_CLICK_INTERVAL_SECONDS = 1.0
     _last_click_time: float = 0.0
 
-    def __init__(self, window_rect: Rect, scale_factor: float = 2.0):
+    def __init__(
+        self,
+        window_rect: Rect,
+        scale_factor: float = 2.0,
+        automation: Optional[SystemAutomation] = None,
+    ):
         self.window_rect = window_rect
         self.scale_factor = scale_factor
+        self.automation = automation or MacOSSystemAutomation()
 
     def _can_click(self) -> bool:
         """检查是否距离上次点击已超过最小冷却时间。"""
@@ -68,33 +74,22 @@ class ChatListClicker:
         abs_x = int(self.window_rect.x + click_x / self.scale_factor)
         abs_y = int(self.window_rect.y + click_y / self.scale_factor)
 
-        try:
-            # Step 1: 强制置顶微信窗口
-            subprocess.run(
-                ["osascript", "-e",
-                 'tell application "System Events" to tell process "WeChat" to set frontmost to true'],
-                timeout=3,
-                capture_output=True,
-                check=True,
-            )
+        # Step 1: 强制置顶微信窗口
+        if not self.automation.get_frontmost_app("WeChat")[0]:
+            self.automation.activate_app("WeChat")
             time.sleep(0.5)
-            # Step 2: 点击聊天列表项
-            subprocess.run(
-                ["/opt/homebrew/bin/cliclick", f"c:{abs_x},{abs_y}"],
-                check=True,
-                timeout=5,
-            )
-            ChatListClicker._last_click_time = time.time()
-            # Step 3: 等待右侧聊天内容加载
-            time.sleep(2.5)
-            _logger.info(
-                f"点击聊天列表: screen=({abs_x},{abs_y}) "
-                f"window=({self.window_rect.x},{self.window_rect.y}) "
-                f"rect_in_screenshot=({click_x},{click_y}) scale={self.scale_factor}"
-            )
-            return True
-        except Exception:
+        # Step 2: 点击聊天列表项
+        if not self.automation.click_at(abs_x, abs_y):
             return False
+        ChatListClicker._last_click_time = time.time()
+        # Step 3: 等待右侧聊天内容加载
+        time.sleep(2.5)
+        _logger.info(
+            f"点击聊天列表: screen=({abs_x},{abs_y}) "
+            f"window=({self.window_rect.x},{self.window_rect.y}) "
+            f"rect_in_screenshot=({click_x},{click_y}) scale={self.scale_factor}"
+        )
+        return True
 
     # 服务号/订阅号/公众号列表返回按钮的默认偏移（截图像素，相对窗口内容左上角）。
     # 实测标题栏显示 "＜ 服务号"，返回箭头在标题栏左侧，中心约 (165,140)。
@@ -109,34 +104,23 @@ class ChatListClicker:
         click_x = int(self.window_rect.x + self.BACK_BUTTON_OFFSET_X / self.scale_factor)
         click_y = int(self.window_rect.y + self.BACK_BUTTON_OFFSET_Y / self.scale_factor)
 
-        try:
-            # Step 1: 强制置顶微信窗口
-            subprocess.run(
-                ["osascript", "-e",
-                 'tell application "System Events" to tell process "WeChat" to set frontmost to true'],
-                timeout=3,
-                capture_output=True,
-                check=True,
-            )
+        # Step 1: 强制置顶微信窗口
+        if not self.automation.get_frontmost_app("WeChat")[0]:
+            self.automation.activate_app("WeChat")
             time.sleep(0.3)
-            # Step 2: 点击返回按钮
-            subprocess.run(
-                ["/opt/homebrew/bin/cliclick", f"c:{click_x},{click_y}"],
-                check=True,
-                timeout=5,
-            )
-            ChatListClicker._last_click_time = time.time()
-            # Step 3: 等待页面返回动画
-            time.sleep(0.8)
-            _logger.info(
-                f"点击返回按钮: screen=({click_x},{click_y}) "
-                f"window=({self.window_rect.x},{self.window_rect.y}) "
-                f"offset=({self.BACK_BUTTON_OFFSET_X},{self.BACK_BUTTON_OFFSET_Y}) "
-                f"scale={self.scale_factor}"
-            )
-            return True
-        except Exception:
+        # Step 2: 点击返回按钮
+        if not self.automation.click_at(click_x, click_y):
             return False
+        ChatListClicker._last_click_time = time.time()
+        # Step 3: 等待页面返回动画
+        time.sleep(0.8)
+        _logger.info(
+            f"点击返回按钮: screen=({click_x},{click_y}) "
+            f"window=({self.window_rect.x},{self.window_rect.y}) "
+            f"offset=({self.BACK_BUTTON_OFFSET_X},{self.BACK_BUTTON_OFFSET_Y}) "
+            f"scale={self.scale_factor}"
+        )
+        return True
 
     def click_by_index(self, items: list[ChatListItem], index: int) -> bool:
         """按索引点击列表项。"""

@@ -7,9 +7,9 @@
 """
 
 import pickle
-from pathlib import Path
-from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -251,7 +251,7 @@ class MessageVectorIndex:
             print(f"[MessageVectorIndex] 警告: 缓存不存在 {self.cache_path}")
             return
 
-        print(f"[MessageVectorIndex] 加载消息级向量索引...")
+        print("[MessageVectorIndex] 加载消息级向量索引...")
         with open(self.cache_path, 'rb') as f:
             data = pickle.load(f)
 

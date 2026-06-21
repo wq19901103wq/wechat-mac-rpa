@@ -7,14 +7,13 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from src.tools.print_3d_tools import (
+    print3d_get_printer_status,
     print3d_read_3mf,
     print3d_scale_model,
     print3d_update_support,
-    print3d_get_printer_status,
     register_print3d_tools,
 )
 from src.tools.tool_registry import ToolRegistry
-
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 SAMPLE_3MF = FIXTURE_DIR / "test_model.3mf"

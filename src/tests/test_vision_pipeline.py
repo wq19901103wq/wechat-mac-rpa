@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """L3.5 VisionPipeline 单元测试"""
 
-import pytest
 from unittest.mock import Mock
 
-from src.perception.vision_pipeline import VisionPipeline
-from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
-from src.models.base import (
-    Point, Rect, OCRTextElement, ChatMessage, ChatListItem,
-    SenderType, PerceptionResult
-)
+import pytest
+
 from src.layout.layout_parser import UILayout
+from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
+from src.models.base import ChatListItem, ChatMessage, OCRTextElement, PerceptionResult, Point, Rect, SenderType
+from src.perception.vision_pipeline import VisionPipeline
 
 
 class TestVisionPipeline:

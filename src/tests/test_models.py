@@ -2,10 +2,16 @@
 """L1 Domain Models 单元测试"""
 
 import pytest
+
 from src.models.base import (
-    Point, Rect, OCRTextElement, SenderType,
-    ChatMessage, ActionResult,
-    ChatListItem, PerceptionResult
+    ActionResult,
+    ChatListItem,
+    ChatMessage,
+    OCRTextElement,
+    PerceptionResult,
+    Point,
+    Rect,
+    SenderType,
 )
 
 

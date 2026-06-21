@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """L3 LayoutParser 单元测试"""
 
-import pytest
 from pathlib import Path
 
-from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
-from src.layout.layout_parser import LayoutParser, TIMESTAMP_PATTERNS
-from src.ocr.vision_ocr import VisionOCREngine
-from src.models.base import Rect
+import pytest
 
+from src.layout.layout_parser import TIMESTAMP_PATTERNS, LayoutParser
+from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
+from src.models.base import Rect
+from src.ocr.vision_ocr import VisionOCREngine
 
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "tests" / "fixtures"
 ERRORS_DIR = FIXTURES_DIR / "errors"
@@ -142,10 +142,10 @@ class TestLayoutParserRealFixtures:
             f"candidates={candidate_texts}, input={input_texts}"
         )
         assert "所有方面" not in input_texts, (
-            f"\"所有方面\" 不应在 input_elements 中"
+            "\"所有方面\" 不应在 input_elements 中"
         )
         assert "你帮我看下" not in input_texts, (
-            f"\"你帮我看下\" 不应在 input_elements 中"
+            "\"你帮我看下\" 不应在 input_elements 中"
         )
 
         # 验证动态坐标已生效（1602 > 1280，坐标应被放大）

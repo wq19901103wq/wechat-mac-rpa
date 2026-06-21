@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for src/utils/text_utils."""
 
-from src.utils.text_utils import _truncate_text, _compress_text
+from src.utils.text_utils import _compress_text, _truncate_text
 
 
 class TestTruncateText:

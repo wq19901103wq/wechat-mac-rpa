@@ -10,14 +10,14 @@ import logging
 import os
 from typing import List
 
-import Vision
-
-_logger = logging.getLogger("src.vision_ocr")
 import Quartz
+import Vision
 from Foundation import NSURL, NSArray
 from PIL import Image
 
 from src.models.base import OCRTextElement, Point, Rect
+
+_logger = logging.getLogger("src.vision_ocr")
 
 
 class VisionOCREngine:

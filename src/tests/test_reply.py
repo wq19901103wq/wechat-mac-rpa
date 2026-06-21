@@ -2,9 +2,9 @@
 """Tests for L4 Reply modules."""
 
 from src.models.base import ChatMessage, SenderType
-from src.session.global_store import ChatState
-from src.reply.policy import ReplyPolicy
 from src.reply.generator import ReplyGenerator
+from src.reply.policy import ReplyPolicy
+from src.session.global_store import ChatState
 from src.tools import get_registry, register_builtin_tools
 
 # 测试用全局工具注册表

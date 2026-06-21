@@ -147,12 +147,13 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None, n_generatio
         if api_key:
             os.environ["DASHSCOPE_API_KEY"] = api_key
 
-        from src.utils.qwen_client import QwenClient
-        from src.badcase.judge_worker import JudgeWorker
-        from src.tools.tool_registry import get_registry
-        from src.tools.builtin_tools import register_builtin_tools
-        from src.memory import MemoryEngine
         import json as _json
+
+        from src.badcase.judge_worker import JudgeWorker
+        from src.memory import MemoryEngine
+        from src.tools.builtin_tools import register_builtin_tools
+        from src.tools.tool_registry import get_registry
+        from src.utils.qwen_client import QwenClient
 
         llm = QwenClient()
         judge = JudgeWorker()

@@ -15,11 +15,12 @@ AI 使用指南：
 
 import json
 import logging
+import threading
 import traceback
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from logging.handlers import RotatingFileHandler
 
 
 class _EmojiFormatter(logging.Formatter):
@@ -234,7 +235,6 @@ class BotLogger:
 
 
 # 全局单例（方便 import 即用）
-import threading
 _default_logger: Optional[BotLogger] = None
 _default_logger_lock = threading.Lock()
 

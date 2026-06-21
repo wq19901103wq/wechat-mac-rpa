@@ -5,9 +5,7 @@ Kimi LLM 客户端
 """
 
 import os
-
-
-from typing import List, Dict
+from typing import Dict, List
 
 try:
     from openai import OpenAI
@@ -17,10 +15,10 @@ except ImportError:
 
 class KimiClient:
     """Kimi Coding Agent LLM 客户端"""
-    
+
     def __init__(self):
         agent_name = os.getenv("CODING_AGENT_NAME", "claude-code")
-        
+
         self.client = OpenAI(
             api_key=os.getenv("OPENAI_API_KEY"),
             base_url=os.getenv("OPENAI_BASE_URL", "https://api.kimi.com/coding/v1"),
@@ -32,7 +30,7 @@ class KimiClient:
         )
         self.model = os.getenv("LLM_MODEL", "kimi-for-coding")
         self.conversations: Dict[str, List[dict]] = {}
-    
+
     def chat(
         self,
         user_id: str = None,
@@ -96,7 +94,7 @@ class KimiClient:
             _logger = __import__("logging").getLogger("src.llm_client")
             _logger.error(f"LLM 错误: {e}")
             return "抱歉，服务暂时不可用"
-    
+
     def clear_history(self, user_id: str):
         if user_id in self.conversations:
             del self.conversations[user_id]

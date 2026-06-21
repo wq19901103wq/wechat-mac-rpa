@@ -48,6 +48,12 @@ admin.pid
 # Judge 缓存（运行时生成）
 src/tests/fixtures/reply_quality/*/judge_*.json
 
+# 测试运行时自动生成的缓存/样本（非人工标注 fixture）
+src/tests/fixtures/auto_cases/
+src/tests/fixtures/judge_quality/cache/
+src/tests/fixtures/judge_quality_v2/cache/
+src/tests/fixtures/reply_stability/cache/
+
 # 内部提示词与纪律守则
 AGENTS.md
 prompts/

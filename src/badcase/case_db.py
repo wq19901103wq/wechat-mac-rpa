@@ -16,7 +16,6 @@ import json
 import logging
 import sqlite3
 import threading
-
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -626,7 +625,6 @@ class CaseDB:
 # =============================================================================
 # Singleton
 # =============================================================================
-import threading
 
 _db_instance: Optional[CaseDB] = None
 _db_lock = threading.Lock()

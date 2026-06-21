@@ -13,13 +13,13 @@ Judge LLM 质量 Benchmark — 基于生产环境人工标注的真实 tick
 import argparse
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
-import logging
 
 import pytest
 
@@ -392,7 +392,7 @@ def main():
 
     metrics = _compute_metrics(results)
     print(f"\n{'='*60}")
-    print(f"📈 总指标:")
+    print("📈 总指标:")
     print(f"   Accuracy:  {metrics['accuracy']:.1%} ({metrics['passed']}/{metrics['total']})")
     print(f"   Precision: {metrics['precision']:.1%}")
     print(f"   Recall:    {metrics['recall']:.1%}")

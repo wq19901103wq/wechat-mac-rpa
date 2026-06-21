@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 """L5 Bot Orchestrator - 主循环编排"""
 
+import logging as _logging
 import os
-import subprocess
 import time
 from pathlib import Path
 from typing import Callable, Optional
 
+from src.action.chat_list_clicker import ChatListClicker
+from src.action.login_recovery import LoginRecoveryStatus, WeChatLoginHandler
+from src.action.message_sender import WeChatMessageSender
+from src.capture.window_capture import WeChatNotReadyError
+from src.logging.bot_logger import BotLogger, get_logger
+from src.memory import MemoryEngine
 from src.models.base import ActionResult, ChatMessage, PerceptionResult, SenderType
 from src.perception.vision_pipeline import VisionPipeline
-from src.capture.window_capture import WeChatNotReadyError
-from src.action.login_recovery import WeChatLoginHandler, LoginRecoveryStatus
-from src.session.global_store import GlobalStore
-from src.reply.policy import ReplyPolicy
-from src.utils.chat_utils import _is_group_chat_name, _normalize_chat_name
 from src.reply.generator import ReplyGenerator, _get_judge_worker
+from src.reply.policy import ReplyPolicy
+from src.session.global_store import GlobalStore
 from src.tools import get_registry, register_builtin_tools
-from src.action.message_sender import WeChatMessageSender
-from src.action.chat_list_clicker import ChatListClicker
-import logging as _logging
-from src.logging.bot_logger import BotLogger, get_logger
+from src.utils.chat_utils import _is_group_chat_name, _normalize_chat_name
 from src.utils.debug_logger import DebugLogger
-from src.memory import MemoryEngine
 
 
 def _raw_with_thinking(raw_response: str, thinking: str) -> str:
@@ -52,7 +51,6 @@ class WeChatBot:
         else:
             self.perception = VisionPipeline(profile)
         self.global_store = GlobalStore()
-        self.logger: BotLogger = get_logger()
         self.policy = ReplyPolicy(require_at_in_group=False)
 
         if llm_client is not None:
@@ -166,6 +164,9 @@ class WeChatBot:
         self._last_switch_target: str = ""
         self._last_switch_time: float = 0.0
         self._switch_debounce_seconds: float = 10.0
+
+        # 服务号/公众号列表恢复冷却
+        self._last_recovery_time: float = 0.0
 
         # 全局状态持久化目录
         project_root = Path(__file__).parent.parent.parent
@@ -418,6 +419,7 @@ class WeChatBot:
             conn = None
             try:
                 import json as _json
+
                 from src.badcase.case_db import get_db
                 conn = get_db()._get_conn()
                 # 提取工具执行结果（从 generation_trace 中过滤 tool_execution 事件）
@@ -739,7 +741,7 @@ class WeChatBot:
         window_rect = result.window_rect
         scale_factor = result.scale_factor
         if window_rect is None:
-            self.logger.info(f"[WeFlow] window_rect 为 None，无法切换")
+            self.logger.info("[WeFlow] window_rect 为 None，无法切换")
             return ""
 
         clicker = ChatListClicker(window_rect, scale_factor)

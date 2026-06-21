@@ -36,10 +36,10 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.models.base import ChatMessage, SenderType
-from src.reply.generator import ReplyGenerator
-from src.tools import get_registry, register_builtin_tools
-from src.utils.qwen_client import QwenClient
+from src.models.base import ChatMessage, SenderType  # noqa: E402
+from src.reply.generator import ReplyGenerator  # noqa: E402
+from src.tools import get_registry, register_builtin_tools  # noqa: E402
+from src.utils.qwen_client import QwenClient  # noqa: E402
 
 # 测试用全局工具注册表
 _TEST_TOOL_REGISTRY = get_registry()
@@ -110,7 +110,7 @@ class Rubric:
     def to_judge_prompt(self, context: str, replies: List[str], case_notes: str = "") -> str:
         """生成给 Judge LLM 的完整 prompt"""
         replies_text = "\n".join(f"[{i+1}] {r}" for i, r in enumerate(replies)) if replies else "(无回复)"
-        
+
         dims_text = "\n\n".join(
             f"### {i+1}. {d.name}\n"
             f"**描述**: {d.description}\n"
@@ -118,9 +118,9 @@ class Rubric:
             f"**重要性**: {'必须通过' if d.required else '参考项（不决定通过/失败）'}"
             for i, d in enumerate(self.dimensions)
         )
-        
+
         notes_section = f"\n## Case 备注\n{case_notes}\n" if case_notes else ""
-        
+
         return f"""你是一位专业的对话质量评估专家。请根据以下评分标准，客观评估 Bot 的回复质量。
 
 ## 评估原则
@@ -167,7 +167,7 @@ class JudgeLLM:
                  case_notes: str = "") -> Dict[str, Any]:
         """调用 Judge LLM 评估回复，返回结构化结果"""
         prompt = rubric.to_judge_prompt(context, replies, case_notes)
-        
+
         try:
             response = self.client.chat(
                 messages=[{"role": "user", "content": prompt}],
@@ -182,7 +182,7 @@ class JudgeLLM:
                 "overall": "FAIL",
                 "explanation": "Judge 评估失败",
             }
-        
+
         # 解析 JSON
         result = self._parse_judge_response(response)
         return result
@@ -196,7 +196,7 @@ class JudgeLLM:
                 "overall": "FAIL",
                 "explanation": "空响应",
             }
-        
+
         # 尝试提取 JSON
         text = raw.strip()
         # 移除可能的 markdown 代码块
@@ -207,13 +207,13 @@ class JudgeLLM:
         if text.endswith("```"):
             text = text[:-3]
         text = text.strip()
-        
+
         # 尝试找到 JSON 对象
         start = text.find("{")
         end = text.rfind("}")
         if start != -1 and end != -1 and end > start:
             text = text[start:end+1]
-        
+
         try:
             data = json.loads(text)
         except json.JSONDecodeError as e:
@@ -223,7 +223,7 @@ class JudgeLLM:
                 "overall": "FAIL",
                 "explanation": "解析失败",
             }
-        
+
         # 规范化结果
         dimensions = []
         for d in data.get("dimensions", []):
@@ -232,14 +232,14 @@ class JudgeLLM:
                 "score": "PASS" if d.get("score", "").upper() == "PASS" else "FAIL",
                 "reason": d.get("reason", ""),
             })
-        
+
         overall = "PASS" if data.get("overall", "").upper() == "PASS" else "FAIL"
-        
+
         # 校验：如果 overall 是 PASS 但有 required 维度失败，修正为 FAIL
         required_fail = any(d["score"] == "FAIL" for d in dimensions if d.get("required", True))
         if required_fail and overall == "PASS":
             overall = "FAIL"
-        
+
         return {
             "dimensions": dimensions,
             "overall": overall,
@@ -319,7 +319,7 @@ def _make_msg(
 def _auto_rubric_from_keywords(case: BenchmarkCase) -> Rubric:
     """从 keywords 自动生成基础 rubric（兜底策略）"""
     dims = []
-    
+
     # 维度1: 回复数检查
     dims.append(RubricDimension(
         name="回复数量",
@@ -327,7 +327,7 @@ def _auto_rubric_from_keywords(case: BenchmarkCase) -> Rubric:
         criteria=f"回复数量必须满足 {case.min_replies} <= 数量 <= {case.max_replies}",
         required=True,
     ))
-    
+
     # 维度2: 必须包含的关键词
     if case.required_keywords and case.required_hits > 0:
         dims.append(RubricDimension(
@@ -336,7 +336,7 @@ def _auto_rubric_from_keywords(case: BenchmarkCase) -> Rubric:
             criteria=f"回复中应至少包含以下关键词/概念之一（需≥{case.required_hits}个）：{', '.join(case.required_keywords)}",
             required=True,
         ))
-    
+
     # 维度3: 禁止出现的关键词
     if case.forbidden_keywords:
         dims.append(RubricDimension(
@@ -345,7 +345,7 @@ def _auto_rubric_from_keywords(case: BenchmarkCase) -> Rubric:
             criteria=f"回复中不得包含以下敷衍词（除非用于否定/纠正语境）：{', '.join(case.forbidden_keywords)}",
             required=True,
         ))
-    
+
     instructions = "请评估 Bot 回复是否符合以下基本要求。注意：关键词出现在否定语境中（如'287万是我瞎编的'）不应视为命中禁忌词。"
     return Rubric(instructions=instructions, dimensions=dims)
 
@@ -1114,7 +1114,7 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None) -> List[Ben
         llm_client = QwenClient(model="deepseek-v4-flash")
 
     memory_engine = MockMemoryEngine()
-    
+
     # Judge LLM（仅在需要 rubric 评估时初始化）
     judge = None
 
@@ -1151,30 +1151,30 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None) -> List[Ben
             # =============================================================
             reply_count = len(replies)
             reply_count_ok = case.min_replies <= reply_count <= case.max_replies
-            
+
             # --- Keywords 评估（保留作为基准对比）---
             full_text = " ".join(replies)
             hits = sum(1 for kw in case.required_keywords if kw in full_text)
             missing = [kw for kw in case.required_keywords if kw not in full_text]
             found_forbidden = [kw for kw in case.forbidden_keywords if kw in full_text]
-            
+
             keywords_passed = (
                 reply_count_ok
                 and (case.required_hits == 0 or hits >= case.required_hits)
                 and not found_forbidden
             )
-            
+
             # --- Rubric 评估（优先）---
             rubric = case.rubric
             rubric_scores = None
             evaluation_mode = "keywords"
-            
+
             if rubric is None:
                 # 优先使用自定义 rubric，其次从 keywords 自动生成
                 rubric = _CUSTOM_RUBRICS.get(case.case_name)
                 if rubric is None and (case.required_keywords or case.forbidden_keywords):
                     rubric = _auto_rubric_from_keywords(case)
-            
+
             if rubric is not None:
                 # 检查 judge 缓存
                 judge_cache = _read_judge_cache(case.case_name, replies)
@@ -1188,7 +1188,7 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None) -> List[Ben
                     if judge is None:
                         print("  [Judge] 初始化 deepseek-v4-pro...")
                         judge = JudgeLLM(api_key=_get_api_key())
-                    
+
                     context = _build_context_for_judge(case.all_messages)
                     print(f"  [{case.case_name}] 🧑‍⚖️ 调用 Judge 评估...")
                     rubric_scores = judge.evaluate(
@@ -1203,7 +1203,7 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None) -> List[Ben
                     # 无 API key，fallback 到 keywords
                     evaluation_mode = "keywords(no-api-key)"
                     print(f"  [{case.case_name}] ⚠️ 无 API key，跳过 Judge 评估")
-                
+
                 # 如果 rubric 评估成功（无 error），使用 rubric 结果
                 if rubric_scores and not rubric_scores.get("error"):
                     passed = rubric_scores.get("overall") == "PASS" and reply_count_ok
@@ -1256,11 +1256,11 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None) -> List[Ben
 def compute_metrics(results: List[BenchmarkResult]) -> dict[str, Any]:
     total = len(results)
     passed = sum(1 for r in results if r.passed)
-    
+
     # 按评估模式统计
     rubric_results = [r for r in results if r.evaluation_mode.startswith("rubric")]
     keywords_results = [r for r in results if not r.evaluation_mode.startswith("rubric")]
-    
+
     return {
         "total": total,
         "passed": passed,
@@ -1286,7 +1286,7 @@ def print_report(results: List[BenchmarkResult], metrics: dict[str, Any]) -> Non
         details = []
         if not r.reply_count_ok:
             details.append(f"条数={r.reply_count}")
-        
+
         if r.evaluation_mode.startswith("rubric") and r.rubric_scores:
             dim_details = []
             for d in r.rubric_scores.get("dimensions", []):
@@ -1295,30 +1295,30 @@ def print_report(results: List[BenchmarkResult], metrics: dict[str, Any]) -> Non
             if dim_details:
                 details.append(" | ".join(dim_details))
             if r.rubric_scores.get("error"):
-                details.append(f"JudgeErr")
+                details.append("JudgeErr")
         else:
             if r.missing_keywords:
                 details.append(f"缺={r.missing_keywords}")
             if r.found_forbidden:
                 details.append(f"禁={r.found_forbidden}")
-        
+
         replies_preview = " / ".join(r.replies)[:25] + "..." if r.replies else "(空)"
         detail_str = " | ".join(details) if details else replies_preview
         print(f"{r.case_name:<28} {mode:<10} {r.reply_count:>7} {status:<7} {detail_str}")
 
-    print(f"\n📊 指标汇总")
+    print("\n📊 指标汇总")
     print(f"  Total:     {metrics['total']}")
     print(f"  Passed:    {metrics['passed']}/{metrics['total']}")
     print(f"  Failed:    {metrics['failed']}")
     print(f"  Accuracy:  {metrics['accuracy']:.1%}")
-    print(f"\n📊 按评估模式拆分")
+    print("\n📊 按评估模式拆分")
     print(f"  Rubric:    {metrics['rubric_passed']}/{metrics['rubric_evaluated']} 通过")
     print(f"  Keywords:  {metrics['keywords_passed']}/{metrics['keywords_evaluated']} 通过")
-    
+
     # Rubric 失败详情
     rubric_failures = [r for r in results if r.evaluation_mode.startswith("rubric") and not r.passed]
     if rubric_failures:
-        print(f"\n🧑‍⚖️ Rubric 评估失败详情")
+        print("\n🧑‍⚖️ Rubric 评估失败详情")
         for r in rubric_failures:
             print(f"\n  ❌ {r.case_name} ({r.category})")
             if r.rubric_scores:
@@ -1327,7 +1327,7 @@ def print_report(results: List[BenchmarkResult], metrics: dict[str, Any]) -> Non
                     print(f"     {icon} {d['name']}: {d['reason']}")
                 if r.rubric_scores.get("explanation"):
                     print(f"     💡 {r.rubric_scores['explanation']}")
-    
+
     print("=" * 90)
 
 

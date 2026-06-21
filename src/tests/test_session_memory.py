@@ -2,11 +2,10 @@
 """SessionMemory 单元测试"""
 
 import time
+
 import pytest
 
-from src.reply.session_memory import (
-    CachedToolResult, SessionSnapshot, SessionMemory, _extract_query_key
-)
+from src.reply.session_memory import CachedToolResult, SessionMemory, SessionSnapshot, _extract_query_key
 
 
 class TestCachedToolResult:

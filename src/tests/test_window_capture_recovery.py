@@ -4,9 +4,7 @@
 import unittest
 from unittest.mock import patch
 
-from src.capture.window_capture import (
-    WindowCapture, WindowNotFoundError, WeChatNotReadyError
-)
+from src.capture.window_capture import WeChatNotReadyError, WindowCapture, WindowNotFoundError
 
 
 class TestWindowCaptureRecovery(unittest.TestCase):
@@ -22,12 +20,13 @@ class TestWindowCaptureRecovery(unittest.TestCase):
             'kCGWindowNumber': window_id,
         }
 
+    @patch.object(WindowCapture, '_validate_wechat_screenshot', return_value=True)
     @patch('src.capture.window_capture.subprocess.run')
     @patch('src.capture.window_capture.time.sleep')
     @patch('src.capture.window_capture.Quartz')
     @patch('src.capture.window_capture.AppKit')
     def test_small_window_triggers_activation_and_retry(
-        self, mock_appkit, mock_quartz, mock_sleep, mock_subprocess
+        self, mock_appkit, mock_quartz, mock_sleep, mock_subprocess, mock_validate
     ):
         """窗口尺寸过小时应自动激活微信并重试截图"""
         mock_quartz.CGWindowListCopyWindowInfo.side_effect = [

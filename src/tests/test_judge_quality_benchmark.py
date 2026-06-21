@@ -649,7 +649,7 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None, n_runs: int
                     jr = worker._judge(case.tick_data)
                     all_runs.append(jr)
                     print("✓", end="", flush=True)
-                except Exception as e:
+                except Exception:
                     all_runs.append({"is_badcase": False, "badcase_type": "none",
                                      "confidence": 0.0, "overall_score": 0, "dimensions": {}})
                     print("✗", end="", flush=True)
@@ -769,7 +769,7 @@ def print_report(results: list[JudgeBenchmarkResult], metrics: dict):
             vote = f"({r.badcase_votes}/{r.n_runs}票)" if r.n_runs > 1 else ""
             print(f"  [{r.case_name}] GT={gt} Pred={pred} {vote} score={r.overall_score:.0f}±{r.overall_score_std:.0f} conf={r.predicted_confidence:.0%}")
     else:
-        print(f"\n✅ 全部一致")
+        print("\n✅ 全部一致")
 
 
 # =============================================================================

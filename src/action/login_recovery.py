@@ -13,8 +13,7 @@ from typing import List, Optional
 
 import Quartz
 
-
-from src.models.base import Rect, OCRTextElement
+from src.models.base import OCRTextElement, Rect
 from src.ocr.vision_ocr import VisionOCREngine
 
 
@@ -104,14 +103,14 @@ class WeChatLoginHandler:
     def _click_login_button(self, window_rect: Rect, btn_rect: Rect) -> bool:
         """
         尝试点击登录按钮。
-        
+
         注意：macOS 及微信的安全机制可能阻止外部模拟点击，
         因此此函数仅做最佳-effort 尝试，不保证一定成功。
         """
         try:
             center_x = window_rect.x + btn_rect.x + btn_rect.width // 2
             center_y = window_rect.y + btn_rect.y + btn_rect.height // 2
-            
+
             # 方法 1: AppleScript 点击（需要辅助功能权限）
             script = f'''
                 tell application "System Events"

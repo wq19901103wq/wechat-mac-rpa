@@ -11,14 +11,12 @@ Badcase 审核台 - FastAPI + 原生 HTML/JS
 """
 
 import json
-import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, Body, Form, Query
+from fastapi import Body, FastAPI, Query
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent.parent

@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """JudgeWorker - 异步 badcase 判定，支持查证反思"""
 
-import json, logging, queue, re, sqlite3, subprocess, threading
-
+import json
+import logging
+import queue
+import re
+import sqlite3
+import subprocess
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from .case_db import get_db
+from .case_generator import CaseGenerator
+
 _logger = logging.getLogger("src.badcase.judge_worker")
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-
-from .case_generator import CaseGenerator
-from .case_db import get_db
-
 
 _JUDGE_PROMPT_TEMPLATE = """【你只允许输出纯 JSON，不要有任何分析、思考、解释或自然语言。如果违反，判定无效。】
 
@@ -332,7 +336,8 @@ class JudgeWorker:
                 judge_result.get('_raw_response', '') or '',
                 tick_id,
             ))
-            conn.commit(); conn.close()
+            conn.commit()
+            conn.close()
         except Exception as e:
             _logger.warning("judge db write failed: %s", e)
 
@@ -399,7 +404,8 @@ class JudgeWorker:
         # 时间锚点：优先 tick 发生时间，fallback 当前
         tick_ts = tick_data.get("created_at", "")
         if tick_ts:
-            try: now = datetime.fromisoformat(tick_ts)
+            try:
+                now = datetime.fromisoformat(tick_ts)
             except Exception as e:
                 _logger.warning("parse tick timestamp failed: %s", e)
                 now = datetime.now()
@@ -413,7 +419,9 @@ class JudgeWorker:
             for t in trace:
                 if t.get("type") == "llm_response":
                     tc2 = t.get("tool_calls", [])
-                    if tc2: tc = tc2; break
+                    if tc2:
+                        tc = tc2
+                        break
 
         tool_results_raw = tick_data.get("tool_results_json", "")
         if tool_results_raw:
@@ -468,26 +476,36 @@ class JudgeWorker:
                 d = dict(r)
                 notes = (d.get("human_notes") or "").strip()
                 btype = (d.get("human_badcase_type") or "").strip()
-                if not notes: continue
+                if not notes:
+                    continue
                 # 提取判定逻辑而非列举案例
                 logic = notes[:120]
                 shots.append(f"人类判定为 {btype}：{logic}")
-            if not shots: return ""
+            if not shots:
+                return ""
             return "人类 QA 判定过以下 badcase，学习他们的判断思路：\n" + "\n".join(f"- {s}" for s in shots)
         except Exception:
             return ""
 
     def _parse_judge_response(self, raw: str) -> dict:
-        if not raw: return _empty_judge_result("空返回")
+        if not raw:
+            return _empty_judge_result("空返回")
         text = raw.strip()
-        if text.startswith("```json"): text = text[7:]
-        if text.startswith("```"): text = text[3:]
-        if text.endswith("```"): text = text[:-3]
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
         text = text.strip()
-        s = text.find("{"); e = text.rfind("}")
-        if s != -1 and e != -1 and e > s: text = text[s:e+1]
-        try: data = json.loads(text)
-        except json.JSONDecodeError: return _empty_judge_result("JSON 解析失败")
+        s = text.find("{")
+        e = text.rfind("}")
+        if s != -1 and e != -1 and e > s:
+            text = text[s:e + 1]
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return _empty_judge_result("JSON 解析失败")
 
         checks = data.get("checks", {})
         dims_raw = data.get("dimensions", {})
@@ -619,7 +637,8 @@ class JudgeWorker:
         }
 
     def _should_auto_commit(self, judge_result: dict) -> bool:
-        if not judge_result.get("is_badcase"): return False
+        if not judge_result.get("is_badcase"):
+            return False
         confidence = judge_result.get("confidence", 0)
         is_p0 = judge_result.get("severity") == "P0"
         auto = judge_result.get("auto_commit", False)

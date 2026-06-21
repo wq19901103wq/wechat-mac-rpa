@@ -2,15 +2,14 @@
 
 
 from datetime import datetime
-
-from urllib.parse import parse_qs, urlparse, unquote
+from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 
-from .tool_registry import get_registry
-from .stock_tools import stock_query
-from .tuya_tools import register_tuya_tools
 from .print_3d_tools import register_print3d_tools
+from .stock_tools import stock_query
+from .tool_registry import get_registry
+from .tuya_tools import register_tuya_tools
 
 
 def _get_current_time() -> str:

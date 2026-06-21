@@ -4,9 +4,9 @@
 import logging
 from unittest.mock import Mock
 
-from src.perception.vision_pipeline import VisionPipeline
-from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
 from src.capture.window_capture import WeChatNotReadyError
+from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
+from src.perception.vision_pipeline import VisionPipeline
 
 
 class TestVisionPipelineLogging:

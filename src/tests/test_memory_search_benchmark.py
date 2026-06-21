@@ -20,8 +20,8 @@
 import argparse
 import shutil
 import sys
-import time
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List
@@ -32,7 +32,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.memory.engine import MemoryEngine
+from src.memory.engine import MemoryEngine  # noqa: E402
 
 REAL_WIKI_DIR = Path(__file__).parent.parent.parent / "data" / "memory" / "wiki"
 

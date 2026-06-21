@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """登录恢复流程单元测试"""
 
-import pytest
 from unittest.mock import Mock, patch
 
-from src.action.login_recovery import (
-    WeChatLoginHandler, LoginRecoveryStatus
-)
-from src.models.base import Rect, OCRTextElement, Point
+import pytest
+
+from src.action.login_recovery import LoginRecoveryStatus, WeChatLoginHandler
+from src.models.base import OCRTextElement, Point, Rect
 
 
 class TestWeChatLoginHandler:
@@ -83,15 +82,16 @@ class TestWeChatLoginHandler:
         result = handler._click_login_button(window_rect, btn_rect)
         assert result is False
 
+    @patch.object(WeChatLoginHandler, "_capture_window")
     @patch("src.action.login_recovery.subprocess.run")
     @patch("src.action.login_recovery.time.sleep")
     @patch("src.action.login_recovery.Quartz")
-    @patch("src.action.login_recovery.AppKit")
     def test_handle_success_after_click(
-        self, mock_appkit, mock_quartz, mock_sleep, mock_subprocess, tmp_path
+        self, mock_quartz, mock_sleep, mock_subprocess, mock_capture, tmp_path
     ):
         """点击登录后窗口恢复正常，返回 SUCCESS"""
-        from src.capture.window_capture import WindowCapture
+        capture_path = str(tmp_path / "capture.png")
+        mock_capture.return_value = capture_path
 
         # Mock 第一次截图：小窗口，带"登录"按钮
         # Mock 第二次截图：正常大窗口
@@ -115,9 +115,7 @@ class TestWeChatLoginHandler:
         mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
         mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
 
-        mock_appkit.NSScreen.mainScreen.return_value.backingScaleFactor.return_value = 1.0
-
-        handler = WeChatLoginHandler(capture_output=str(tmp_path / "capture.png"))
+        handler = WeChatLoginHandler(capture_output=capture_path)
         # Mock OCR: 第一次返回"登录"按钮
         handler.ocr.recognize = Mock(return_value=[
             OCRTextElement(
@@ -131,14 +129,17 @@ class TestWeChatLoginHandler:
         assert result.status == LoginRecoveryStatus.SUCCESS
         assert result.message == "微信已恢复为主窗口"
 
+    @patch.object(WeChatLoginHandler, "_capture_window")
     @patch("src.action.login_recovery.subprocess.run")
     @patch("src.action.login_recovery.time.sleep")
     @patch("src.action.login_recovery.Quartz")
-    @patch("src.action.login_recovery.AppKit")
     def test_handle_needs_phone_confirm_after_click(
-        self, mock_appkit, mock_quartz, mock_sleep, mock_subprocess, tmp_path
+        self, mock_quartz, mock_sleep, mock_subprocess, mock_capture, tmp_path
     ):
         """点击登录后窗口仍小但显示'需在手机上完成登录'，返回 NEEDS_PHONE_CONFIRM"""
+        capture_path = str(tmp_path / "capture.png")
+        mock_capture.return_value = capture_path
+
         mock_quartz.CGWindowListCopyWindowInfo.return_value = [
             {
                 'kCGWindowOwnerName': '微信',
@@ -153,18 +154,25 @@ class TestWeChatLoginHandler:
         mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
         mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
 
-        mock_appkit.NSScreen.mainScreen.return_value.backingScaleFactor.return_value = 1.0
-
-        handler = WeChatLoginHandler(capture_output=str(tmp_path / "capture.png"))
-        handler.ocr.recognize = Mock(return_value=[
-            OCRTextElement(
-                text="需在手机上完成登录", bbox=Rect(50, 200, 200, 30),
-                center=Point(150, 215), confidence=0.95
-            ),
-            OCRTextElement(
-                text="取消", bbox=Rect(100, 350, 40, 20),
-                center=Point(120, 360), confidence=0.9
-            ),
+        handler = WeChatLoginHandler(capture_output=capture_path)
+        # Mock OCR: 第一次返回"登录"按钮；第二次返回手机确认提示
+        handler.ocr.recognize = Mock(side_effect=[
+            [
+                OCRTextElement(
+                    text="登录", bbox=Rect(100, 300, 80, 30),
+                    center=Point(140, 315), confidence=0.95
+                ),
+            ],
+            [
+                OCRTextElement(
+                    text="需在手机上完成登录", bbox=Rect(50, 200, 200, 30),
+                    center=Point(150, 215), confidence=0.95
+                ),
+                OCRTextElement(
+                    text="取消", bbox=Rect(100, 350, 40, 20),
+                    center=Point(120, 360), confidence=0.9
+                ),
+            ],
         ])
 
         result = handler.handle()
@@ -172,14 +180,17 @@ class TestWeChatLoginHandler:
         assert result.status == LoginRecoveryStatus.NEEDS_PHONE_CONFIRM
         assert "手机上确认" in result.message
 
+    @patch.object(WeChatLoginHandler, "_capture_window")
     @patch("src.action.login_recovery.subprocess.run")
     @patch("src.action.login_recovery.time.sleep")
     @patch("src.action.login_recovery.Quartz")
-    @patch("src.action.login_recovery.AppKit")
     def test_handle_needs_qrcode_after_click(
-        self, mock_appkit, mock_quartz, mock_sleep, mock_subprocess, tmp_path
+        self, mock_quartz, mock_sleep, mock_subprocess, mock_capture, tmp_path
     ):
         """点击登录后窗口仍小且无手机确认提示，返回 NEEDS_QRCODE"""
+        capture_path = str(tmp_path / "capture.png")
+        mock_capture.return_value = capture_path
+
         mock_quartz.CGWindowListCopyWindowInfo.return_value = [
             {
                 'kCGWindowOwnerName': '微信',
@@ -194,14 +205,16 @@ class TestWeChatLoginHandler:
         mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
         mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
 
-        mock_appkit.NSScreen.mainScreen.return_value.backingScaleFactor.return_value = 1.0
-
-        handler = WeChatLoginHandler(capture_output=str(tmp_path / "capture.png"))
-        handler.ocr.recognize = Mock(return_value=[
-            OCRTextElement(
-                text="登录", bbox=Rect(100, 300, 80, 30),
-                center=Point(140, 315), confidence=0.95
-            ),
+        handler = WeChatLoginHandler(capture_output=capture_path)
+        # Mock OCR: 第一次返回"登录"按钮；第二次仍无手机确认提示
+        handler.ocr.recognize = Mock(side_effect=[
+            [
+                OCRTextElement(
+                    text="登录", bbox=Rect(100, 300, 80, 30),
+                    center=Point(140, 315), confidence=0.95
+                ),
+            ],
+            [],
         ])
 
         result = handler.handle()
@@ -209,13 +222,16 @@ class TestWeChatLoginHandler:
         assert result.status == LoginRecoveryStatus.NEEDS_QRCODE
         assert "手机上确认" in result.message or "扫码" in result.message
 
+    @patch.object(WeChatLoginHandler, "_capture_window")
     @patch("src.action.login_recovery.subprocess.run")
     @patch("src.action.login_recovery.Quartz")
-    @patch("src.action.login_recovery.AppKit")
     def test_handle_no_login_button(
-        self, mock_appkit, mock_quartz, mock_subprocess, tmp_path
+        self, mock_quartz, mock_subprocess, mock_capture, tmp_path
     ):
         """窗口小但找不到登录按钮，返回 NO_LOGIN_BUTTON"""
+        capture_path = str(tmp_path / "capture.png")
+        mock_capture.return_value = capture_path
+
         mock_quartz.CGWindowListCopyWindowInfo.return_value = [
             {
                 'kCGWindowOwnerName': '微信',
@@ -230,9 +246,7 @@ class TestWeChatLoginHandler:
         mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
         mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
 
-        mock_appkit.NSScreen.mainScreen.return_value.backingScaleFactor.return_value = 1.0
-
-        handler = WeChatLoginHandler(capture_output=str(tmp_path / "capture.png"))
+        handler = WeChatLoginHandler(capture_output=capture_path)
         handler.ocr.recognize = Mock(return_value=[])
 
         result = handler.handle()

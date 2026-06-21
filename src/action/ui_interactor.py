@@ -8,7 +8,6 @@ from abc import ABC, abstractmethod
 
 from src.models.base import ChatListItem
 
-
 try:
     import pyautogui
 except Exception:  # pragma: no cover

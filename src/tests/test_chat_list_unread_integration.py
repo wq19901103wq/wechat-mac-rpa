@@ -15,7 +15,6 @@ import pytest
 
 from src.perception.smart_pipeline import _QwenAPIClient
 
-
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "unread_false_positive"
 
 

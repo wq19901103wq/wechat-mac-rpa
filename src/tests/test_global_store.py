@@ -6,8 +6,8 @@ import tempfile
 
 import pytest
 
-from src.session.global_store import GlobalStore, _msg_id, ChatState, _is_group_chat_name
 from src.models.base import ChatMessage, SenderType
+from src.session.global_store import ChatState, GlobalStore, _is_group_chat_name, _msg_id
 
 
 class TestMsgId:

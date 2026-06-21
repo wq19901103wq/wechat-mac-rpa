@@ -2,7 +2,6 @@
 """L1 Domain Models - 基础数据类型"""
 
 from dataclasses import dataclass
-
 from enum import Enum
 from typing import Dict, FrozenSet, List, Optional
 

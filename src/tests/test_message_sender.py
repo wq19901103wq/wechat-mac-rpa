@@ -2,6 +2,7 @@
 """MessageSender paste 验证单元测试"""
 
 from unittest.mock import Mock, patch
+
 import pytest
 
 from src.action.message_sender import WeChatMessageSender
@@ -31,6 +32,9 @@ class TestPasteVerification:
                     # 验证时读到的是要发送的文本
                     return Mock(returncode=0, stdout="测试消息".encode("utf-8"))
             elif cmd[0] == "osascript":
+                script = cmd[2] if len(cmd) > 2 else ""
+                if "frontApp" in script or "frontmost" in script:
+                    return Mock(returncode=0, stdout=b"WeChat\n", stderr=b"")
                 return Mock(returncode=0, stderr=b"")
             elif cmd[0] == "pbcopy":
                 return Mock(returncode=0, stderr=b"")
@@ -67,6 +71,9 @@ class TestPasteVerification:
                     return Mock(returncode=0, stdout="测试消息".encode("utf-8"))  # 重试后成功
                 return Mock(returncode=0, stdout=b"")
             elif cmd[0] == "osascript":
+                script = cmd[2] if len(cmd) > 2 else ""
+                if "frontApp" in script or "frontmost" in script:
+                    return Mock(returncode=0, stdout=b"WeChat\n", stderr=b"")
                 return Mock(returncode=0, stderr=b"")
             elif cmd[0] == "pbcopy":
                 return Mock(returncode=0, stderr=b"")
@@ -89,6 +96,9 @@ class TestPasteVerification:
                 # 总是返回空，验证永远失败
                 return Mock(returncode=0, stdout=b"")
             elif cmd[0] == "osascript":
+                script = cmd[2] if len(cmd) > 2 else ""
+                if "frontApp" in script or "frontmost" in script:
+                    return Mock(returncode=0, stdout=b"WeChat\n", stderr=b"")
                 return Mock(returncode=0, stderr=b"")
             elif cmd[0] == "pbcopy":
                 return Mock(returncode=0, stderr=b"")
@@ -113,6 +123,9 @@ class TestPasteVerification:
                     # 输入框内容包含发送文本 + 一些其他字符
                     return Mock(returncode=0, stdout="前缀测试消息后缀".encode("utf-8"))
             elif cmd[0] == "osascript":
+                script = cmd[2] if len(cmd) > 2 else ""
+                if "frontApp" in script or "frontmost" in script:
+                    return Mock(returncode=0, stdout=b"WeChat\n", stderr=b"")
                 return Mock(returncode=0, stderr=b"")
             elif cmd[0] == "pbcopy":
                 return Mock(returncode=0, stderr=b"")

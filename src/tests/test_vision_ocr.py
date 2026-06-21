@@ -2,11 +2,11 @@
 """VisionOCREngine 单元测试"""
 
 import os
+
 import pytest
 
 from src.models.base import OCRTextElement, Point, Rect
 from src.ocr.vision_ocr import VisionOCREngine
-
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "tests", "fixtures")
 SMALL_SCENE_PATH = os.path.join(FIXTURES_DIR, "small_scene.png")

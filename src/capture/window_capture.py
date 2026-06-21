@@ -10,12 +10,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-import Quartz
 import AppKit
-
-_logger = logging.getLogger("src.window_capture")
+import Quartz
 
 from src.models.base import Rect
+
+_logger = logging.getLogger("src.window_capture")
 
 
 class WindowNotFoundError(Exception):

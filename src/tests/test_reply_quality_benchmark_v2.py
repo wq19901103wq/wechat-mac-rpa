@@ -138,7 +138,7 @@ def main():
     print(f"📊 Bot 回复质量 Benchmark — 基于 {len(cases)} 个人工标注")
     print(f"   Badcase: {len(bad)}/{len(cases)} ({len(bad)/len(cases)*100:.0f}%)")
     print(f"   正常:    {len(ok)}/{len(cases)} ({len(ok)/len(cases)*100:.0f}%)")
-    print(f"\n   Badcase 类型分布:")
+    print("\n   Badcase 类型分布:")
     for t, n in sorted(type_counts.items(), key=lambda x: -x[1]):
         print(f"     {t}: {n}")
 
@@ -146,7 +146,7 @@ def main():
     print(f"\n   Judge 与人工一致: {judge_match}/{len(cases)} ({judge_match/len(cases)*100:.0f}%)")
 
     print(f"\n{'='*60}")
-    print(f"逐 Case 详情:")
+    print("逐 Case 详情:")
     for c in cases:
         status = "❌ BAD" if c.human_is_badcase else "✅ OK"
         j_match = "✅" if c.human_is_badcase == c.judge_is_badcase else "❌"

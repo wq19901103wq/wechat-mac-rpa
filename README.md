@@ -16,6 +16,7 @@
 - **环境**：macOS 12+，Python 3.10+，微信 Mac 版
 - **依赖**：`pip install -r requirements.txt`
 - **配置**：复制 `.env.example` 为 `.env`，填入 API Key
+- **权限**：Bot 依赖 macOS 辅助功能/屏幕录制权限，详见下文[权限说明](#权限说明)
 - **启动**：`python3 run_bot.py`
 - **管理后台（LaunchAgent 常驻）**：
   ```bash
@@ -35,6 +36,20 @@
 - **生成报告**：`python3 scripts/generate_ocr_benchmark_report.py`
 
 详细安装与配置指南见 `docs/01-quickstart/AI_QUICKSTART.md`。
+
+---
+
+## 权限说明
+
+Bot 通过 macOS 公开 API 与微信交互，需要以下系统权限：
+
+| 权限 | 用途 | 设置位置 |
+|------|------|---------|
+| **屏幕录制** | `screencapture` 截取微信窗口画面 | 系统设置 → 隐私与安全 → 屏幕录制 → 终端/运行 Bot 的应用 |
+| **辅助功能** | AppleScript 控制微信窗口（点击、输入、激活） | 系统设置 → 隐私与安全 → 辅助功能 → 终端/运行 Bot 的应用 |
+| **自动化** | System Events 进程间通信（keystroke、click） | 首次运行时会弹窗授权 |
+
+> 如果截图失败、点击无效或消息发到其他应用，请首先检查上述权限是否已授予。
 
 ---
 
@@ -383,6 +398,19 @@ wechat-mac-rpa/
 
 ---
 
+## 核心术语
+
+| 术语 | 说明 |
+|------|------|
+| **Tick** | Bot 主循环的一次迭代（默认 5 秒），包含 感知 → 去重 → 决策 → 回复 |
+| **Perception** | 感知层，将微信窗口截图转换为结构化数据（聊天名、消息列表、未读数等） |
+| **Layout** | 布局解析，把 OCR 文字元素按 UI 区域分组（聊天列表、标题栏、消息区等） |
+| **SmartPipeline** | 感知层实现之一：OCR + 视觉模型 API，带像素 diff 缓存，降低 API 调用频率 |
+| **WeFlow** | 感知层实现之一：通过 WeChatDB 导出历史消息，用于首次全量初始化 |
+| **GlobalStore** | 全局消息存储，负责跨 tick 去重、会话状态维护和持久化 |
+| **Judge** | LLM-as-a-Judge，用于评估回复质量、自动标注 badcase |
+| **Skill** | Markdown 格式的可插拔知识卡片，可被工具动态加载 |
+
 ## 文档索引
 
 | 文档 | 说明 |
@@ -403,6 +431,12 @@ wechat-mac-rpa/
 本项目采用 [MIT License](LICENSE) 开源。
 
 ---
+
+## 数据安全与 WeFlow
+
+- **OCR / SmartPipeline 模式**：Bot 仅通过 macOS 公开 API 截取微信窗口画面，不读取微信本地数据库。
+- **WeFlow 模式**：可选启用，用于首次启动时全量导出历史消息以初始化记忆。该导出基于用户已授权的本地 WeChat 数据库副本，Bot 不会修改或上传原始数据库。
+- 所有 API Key、聊天记录、记忆数据均保存在本地 `.env`、`data/` 目录，不上传至项目服务器。
 
 ## 免责声明
 

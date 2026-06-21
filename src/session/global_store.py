@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from src.models.base import ChatMessage, MEDIA_MESSAGE_TYPES, SenderType
+from src.models.base import MEDIA_MESSAGE_TYPES, ChatMessage, SenderType
 from src.utils.chat_utils import _is_group_chat_name
 
 _logger = logging.getLogger("src.global_store")

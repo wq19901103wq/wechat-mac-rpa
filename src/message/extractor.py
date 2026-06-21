@@ -4,9 +4,9 @@
 import re
 from typing import Any, Dict, List
 
-from src.models.base import ChatMessage, OCRTextElement, Point, Rect, SenderType
-from src.layout.layout_parser import UILayout, TIMESTAMP_PATTERNS
+from src.layout.layout_parser import TIMESTAMP_PATTERNS, UILayout
 from src.layout.profile import LayoutProfile
+from src.models.base import ChatMessage, OCRTextElement, Point, Rect, SenderType
 
 # 微信系统通知/安全提示关键词模式
 _SYSTEM_NOTICE_KEYWORDS = [

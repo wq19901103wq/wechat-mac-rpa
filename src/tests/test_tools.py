@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Tools 模块单元测试 —— ToolRegistry + builtin_tools + stock_tools"""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
+
+from src.tools.builtin_tools import _browse_url, _get_current_time, _get_weather, _web_search, register_builtin_tools
+from src.tools.stock_tools import _fetch_stock, stock_query
 from src.tools.tool_registry import Tool, ToolRegistry, get_registry
-from src.tools.builtin_tools import (
-    _get_current_time, _get_weather, _web_search, _browse_url, register_builtin_tools
-)
-from src.tools.stock_tools import stock_query, _fetch_stock
 
 
 class TestTool:

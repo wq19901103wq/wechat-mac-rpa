@@ -4,12 +4,12 @@
 import os
 import sys
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from src.capture.window_capture import CaptureResult, WindowCapture, WindowNotFoundError
 from src.models.base import Rect
-from src.capture.window_capture import WindowCapture, CaptureResult, WindowNotFoundError
 
 
 class TestWindowCapture(unittest.TestCase):
@@ -31,10 +31,11 @@ class TestWindowCapture(unittest.TestCase):
             'kCGWindowNumber': window_id,
         }
 
+    @patch.object(WindowCapture, '_validate_wechat_screenshot', return_value=True)
     @patch('src.capture.window_capture.subprocess.run')
     @patch('src.capture.window_capture.Quartz')
     @patch('src.capture.window_capture.AppKit')
-    def test_capture_success_wechat_en(self, mock_appkit, mock_quartz, mock_subprocess):
+    def test_capture_success_wechat_en(self, mock_appkit, mock_quartz, mock_subprocess, mock_validate):
         """Successful capture of English-named WeChat window."""
         mock_quartz.CGWindowListCopyWindowInfo.return_value = [
             self._make_mock_window('Safari', 0, 0, 1200, 800),
@@ -68,10 +69,11 @@ class TestWindowCapture(unittest.TestCase):
         self.assertEqual(cmd[3], '-x')
         self.assertEqual(cmd[4], self.capture.output_path)
 
+    @patch.object(WindowCapture, '_validate_wechat_screenshot', return_value=True)
     @patch('src.capture.window_capture.subprocess.run')
     @patch('src.capture.window_capture.Quartz')
     @patch('src.capture.window_capture.AppKit')
-    def test_capture_success_wechat_cn(self, mock_appkit, mock_quartz, mock_subprocess):
+    def test_capture_success_wechat_cn(self, mock_appkit, mock_quartz, mock_subprocess, mock_validate):
         """Successful capture of Chinese-named WeChat window."""
         mock_quartz.CGWindowListCopyWindowInfo.return_value = [
             self._make_mock_window('微信', 50, 100, 1760, 1280),
@@ -125,10 +127,11 @@ class TestWindowCapture(unittest.TestCase):
         with self.assertRaises(WindowNotFoundError):
             self.capture.capture()
 
+    @patch.object(WindowCapture, '_validate_wechat_screenshot', return_value=True)
     @patch('src.capture.window_capture.subprocess.run')
     @patch('src.capture.window_capture.Quartz')
     @patch('src.capture.window_capture.AppKit')
-    def test_capture_uses_largest_matching_window(self, mock_appkit, mock_quartz, mock_subprocess):
+    def test_capture_uses_largest_matching_window(self, mock_appkit, mock_quartz, mock_subprocess, mock_validate):
         """When multiple WeChat windows exist, the largest one is selected."""
         mock_quartz.CGWindowListCopyWindowInfo.return_value = [
             self._make_mock_window('WeChat', 10, 20, 1200, 900, window_id=1),

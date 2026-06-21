@@ -3,18 +3,18 @@
 
 import logging
 import os
+import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from src.models.base import ChatMessage, MEDIA_MESSAGE_TYPES, SenderType
-from src.tools import get_registry
+from src.models.base import MEDIA_MESSAGE_TYPES, ChatMessage, SenderType
 from src.reply.session_memory import SessionMemory, _extract_query_key
+from src.tools import get_registry
 
 _logger = logging.getLogger("src.reply.generator")
 
 # Badcase JudgeWorker（可选，默认不启用）
-import threading
 _judge_worker = None
 _judge_worker_lock = threading.Lock()
 
@@ -40,7 +40,7 @@ class ReplyGenerator:
                  enable_reply_restraint: bool = True,
                  enable_unread_dedup: bool = True,
                  enable_timestamps: bool = True,
-                 enable_mode_detection: bool = None):
+                 enable_mode_detection: Optional[bool] = None):
         self.llm_client = llm_client
         self.complex_llm_client = complex_llm_client
         self.memory_engine = memory_engine
@@ -82,6 +82,7 @@ class ReplyGenerator:
         try:
             import numpy  # noqa: F401
             from sklearn.feature_extraction.text import TfidfVectorizer  # noqa: F401
+
             from src.memory.vector_index import MessageVectorIndex
             index_path = Path(__file__).parent.parent.parent / "data" / "vector_indexes" / "humor_messages_index.pkl"
             if index_path.exists():
@@ -156,10 +157,10 @@ class ReplyGenerator:
 
     def generate(self, unreplied: List[ChatMessage], all_messages: List[ChatMessage],
                  is_group: bool = False, tick_id: int = 0,
-                 enable_time_awareness: bool = None,
-                 enable_reply_restraint: bool = None,
-                 enable_unread_dedup: bool = None,
-                 enable_timestamps: bool = None) -> List[str]:
+                 enable_time_awareness: Optional[bool] = None,
+                 enable_reply_restraint: Optional[bool] = None,
+                 enable_unread_dedup: Optional[bool] = None,
+                 enable_timestamps: Optional[bool] = None) -> List[str]:
         """
         生成回复内容，返回多条回复列表（最多3条）。
         支持多轮工具调用，但总工具时间不超过 max_tool_seconds，超时后强制生成文本回复。
@@ -262,13 +263,13 @@ class ReplyGenerator:
         overall_start_time = time.time()
 
         # 构建 messages：system（人设）+ user（上下文含缓存）
-        messages = [{"role": "system", "content": system_prompt}]
+        messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         messages.append({"role": "user", "content": user_prompt})
 
         # Hermes 走精简 system prompt，不传 tools
         if is_hermes:
             messages[0]["content"] = self._hermes_system_prompt()
-            print(f"[Hermes] 使用精简 system prompt，不传 tools")
+            print("[Hermes] 使用精简 system prompt，不传 tools")
         tool_round_count = 0  # 已执行的 tool 轮数
 
         for attempt in range(max_retries + 1):
@@ -436,7 +437,7 @@ class ReplyGenerator:
 
                     # deepseek 请求切换 hermes → 保留 tool 结果上下文，只换 system prompt
                     if text and '"use_hermes"' in text and self.complex_llm_client is not None:
-                        print(f"[Hermes] deepseek 输出 use_hermes → 切 Hermes 重新生成")
+                        print("[Hermes] deepseek 输出 use_hermes → 切 Hermes 重新生成")
                         self.last_hermes_fallback_triggered = True
                         # 基于当前 messages（含 tool 调用结果），替换 system prompt
                         hermes_system = self._hermes_system_prompt()
@@ -478,7 +479,7 @@ class ReplyGenerator:
                             self._submit_to_judge(tick_id, hermes_replies, unreplied, all_messages, is_group)
                             return hermes_replies
                         # hermes 也返回空 → fallback 到不回复
-                        print(f"[Hermes] 返回空 replies")
+                        print("[Hermes] 返回空 replies")
                         self.last_llm_calls = llm_calls
                         self.last_tool_calls = tool_calls
                         self.last_generation_trace.extend(trace)
@@ -487,7 +488,7 @@ class ReplyGenerator:
 
                     # LLM 明确输出了 {"replies": []} → 正确决策（不想回复），不 retry
                     if text and '"replies"' in text:
-                        print(f"[Hermes] LLM 输出空 replies → 正确决策不回复")
+                        print("[Hermes] LLM 输出空 replies → 正确决策不回复")
                         self.last_llm_calls = llm_calls
                         self.last_tool_calls = tool_calls
                         self.last_generation_trace.extend(trace)
@@ -498,7 +499,7 @@ class ReplyGenerator:
                     if force_no_tools:
                         # 禁用 tools 后返回空，可能是 LLM 还在尝试调用工具
                         # 继续外层 retry，给 LLM 一次基于已有信息直接回复的机会
-                        print(f"[Hermes] force_no_tools 空回复，继续 retry")
+                        print("[Hermes] force_no_tools 空回复，继续 retry")
                         self.last_raw_response = f"[空回复且已禁用tools，attempt={attempt+1}]"
                         break  # 跳出 while，进入下一次 retry
 
@@ -520,7 +521,7 @@ class ReplyGenerator:
                 if attempt < max_retries:
                     time.sleep(1)
 
-        print(f"[Hermes] generate 最终返回空 ( exhausted retries )")
+        print("[Hermes] generate 最终返回空 ( exhausted retries )")
         self.last_llm_calls = llm_calls
         self.last_tool_calls = tool_calls
         self.last_generation_trace.extend(trace)
@@ -778,9 +779,35 @@ class ReplyGenerator:
             _logger.warning("[HumorRAG] search failed: %s", e)
             return ""
 
-    def _system_prompt(self, enable_reply_restraint: bool = None,
-                       unreplied: List[ChatMessage] = None,
-                       all_messages: List[ChatMessage] = None,
+    def _hermes_system_prompt(self) -> str:
+        """hermes 专用 system prompt：不含 tool 列表，只保留风格+格式。"""
+        return (
+            "核心人设与风格\n"
+            "你没有固定人设。参照对方的说话风格自然融入对话。\n"
+            '风格：casual，不用"您"，略带傲娇，适当幽默反转。\n'
+            '口头禅：对方炫富/晒成就时可用"羡慕你们这些有钱人"、"被你装到了"等。\n'
+            "不要重复自己之前说过的梗，每次回复都是新的。\n"
+            "\n"
+            "你可以使用 skills_list 查看可用技能，用 skill_view 加载需要的技能。"
+            "遇到专业领域的问题，先加载对应 skill 再回答。"
+            "回复开头请用【Skill: xxx】标注使用了哪些 skill。"
+            "\n\n"
+            "输出格式\n"
+            "直接输出 JSON（不要 markdown 代码块）：\n"
+            '{"replies": ["回复内容1", "回复内容2"]}\n'
+            "replies 数组包含 0-5 条，不需要回复时为空数组 []。\n"
+            "绝对不要输出思考过程。\n"
+            "\n"
+            "规则\n"
+            "1. 每条回复简洁自然，不超过300字\n"
+            "2. 不懂、不确定的话题，输出空 replies []\n"
+            "3. 禁止敷衍词：收到、好的、嗯、OK、1\n"
+            "4. 参照对方语气回复，不要延续自己的风格\n"
+        )
+
+    def _system_prompt(self, enable_reply_restraint: Optional[bool] = None,
+                       unreplied: Optional[List[ChatMessage]] = None,
+                       all_messages: Optional[List[ChatMessage]] = None,
                        is_group: bool = False) -> str:
         """核心 system prompt：读 prompts/persona.md（DT 风格），注入工具描述 + 检索案例。"""
         if enable_reply_restraint is None:
@@ -988,7 +1015,7 @@ class ReplyGenerator:
             name = match.group()
             if name not in common_words and len(name) >= 2:
                 potential_names.append(name)
-        
+
         if potential_names and any(s in last_texts for s in memory_query_signals):
             names_str = "、".join(potential_names[:3])
             hints.append(f"【场子】对方在问身边的人/旧事（提到：{names_str}），如果不确定，必须调用 search_memory 查记忆，不要猜测不要编造")
@@ -1038,9 +1065,9 @@ class ReplyGenerator:
 
     def _build_user_prompt(self, unreplied: List[ChatMessage], all_messages: List[ChatMessage],
                            is_group: bool = False,
-                           enable_time_awareness: bool = None,
-                           enable_unread_dedup: bool = None,
-                           enable_timestamps: bool = None,
+                           enable_time_awareness: Optional[bool] = None,
+                           enable_unread_dedup: Optional[bool] = None,
+                           enable_timestamps: Optional[bool] = None,
                            tools_context: str = "") -> str:
         """构建结构化 user prompt：会话信息 + 记忆 + 缓存 + 历史 + 未读。"""
         if enable_time_awareness is None:

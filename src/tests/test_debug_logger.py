@@ -2,8 +2,9 @@
 """DebugLogger 单元测试"""
 
 import json
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from src.utils.debug_logger import DebugLogger, TickDebugInfo
 
