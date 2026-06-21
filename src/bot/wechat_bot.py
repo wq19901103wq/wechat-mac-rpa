@@ -532,14 +532,14 @@ class WeChatBot:
                         chat_name=chat_name, replied=True, reply_text=reply,
                         reply_time=time.time(), message_type="text"
                     )
-                    state = self.global_store.chats.get(chat_name)
-                    if state is not None:
-                        state.pending_self_messages.append(self_msg)
+                    chat_state = self.global_store.chats.get(chat_name)
+                    if chat_state is not None:
+                        chat_state.pending_self_messages.append(self_msg)
                         self.logger.info("[Pending] %s 记录 pending self 消息 (pending 队列长度=%d): %.60s",
-                                             chat_name, len(state.pending_self_messages), reply)
+                                             chat_name, len(chat_state.pending_self_messages), reply)
                 else:
                     self.logger.log_send(tick_id, success=False, text=reply, error=action_result.error)
-                    self.debug_logger.log_action("send", action_input=reply, success=False, error=action_result.error)
+                    self.debug_logger.log_action("send", action_input=reply, success=False, error=action_result.error or "")
                     break
                 if i < len(replies) - 1:
                     time.sleep(1.5)
@@ -612,7 +612,7 @@ class WeChatBot:
             # 每 60 个 tick（约 5 分钟，按 5s 间隔）输出一次 DeepSeek token 统计
             if self._tick_id > 0 and self._tick_id % 60 == 0:
                 from src.utils.qwen_client import QwenClient
-                QwenClient.log_token_stats(self.logger)
+                QwenClient.log_token_stats(self.logger.runtime_logger)
             time.sleep(interval)
 
     _SERVICE_ACCOUNT_NAMES = {"服务号", "订阅号", "公众号"}
@@ -670,7 +670,7 @@ class WeChatBot:
 
         current_chat = _normalize_chat_name(result.chat_name)
         target_name = ""
-        target_unread = 0
+        target_unread: int | str = 0
 
         # ===== WeFlow 模式：API 轮询检测未读 =====
         if self._weflow_mode in ("weflow", "hybrid"):

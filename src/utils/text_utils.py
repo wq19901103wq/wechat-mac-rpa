@@ -87,7 +87,7 @@ def extract_context_around_keywords(
         windows.append((w_start, w_end))
 
     # 合并重叠或相邻（间隔 < context_radius // 2）的窗口
-    merged = []
+    merged: list[list[int]] = []
     for w_start, w_end in windows:
         if not merged:
             merged.append([w_start, w_end])
@@ -107,7 +107,7 @@ def extract_context_around_keywords(
     merged.sort(key=window_score, reverse=True)
 
     # 在 max_chars 预算内取窗口，优先匹配密度高的
-    result_parts = []
+    result_parts: list[str] = []
     budget = max_chars
     last_end = 0
 

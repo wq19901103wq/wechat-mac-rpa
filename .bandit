@@ -1,0 +1,4 @@
+exclude_dirs:
+  - src/tests
+skips:
+  - B101

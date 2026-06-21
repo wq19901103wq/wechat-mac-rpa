@@ -106,7 +106,7 @@ class CaseGenerator:
         # required / forbidden keywords
         if badcase_type == "hallucination":
             required = ["瞎编", "记错", "没记到", "不知道", "不记得"]
-            forbidden = []
+            forbidden: list[str] = []
         elif badcase_type == "wrong_fact":
             required = ["错", "抱歉", "记错"]
             forbidden = []

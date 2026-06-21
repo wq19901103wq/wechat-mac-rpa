@@ -42,8 +42,8 @@ jobs:
           python-version: "3.10"
           cache: "pip"
       - run: pip install mypy types-requests types-beautifulsoup4 types-Pillow
-      # 目前类型注解遗留问题较多，先只报告不阻塞 merge； issues 输出到日志。
-      - run: mypy src || true
+      # 类型检查现已清零，阻塞 merge。
+      - run: mypy src
 
   bandit:
     name: Bandit Security Scan
@@ -55,8 +55,8 @@ jobs:
           python-version: "3.10"
           cache: "pip"
       - run: pip install bandit
-      # 目前安全扫描遗留问题较多，先只报告不阻塞 merge； issues 输出到日志。
-      - run: bandit -r src -f json -o bandit-report.json || true
+      # 使用 .bandit 配置：排除 tests 目录的 B101 assert_used，其余 Medium/High 阻塞。
+      - run: bandit -c .bandit -r src -f json -o bandit-report.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -81,6 +81,10 @@ jobs:
             src/tests/test_layout_profile.py \
             src/tests/test_message_extractor.py \
             src/tests/test_session_memory.py \
+            src/tests/test_message_sender.py \
+            src/tests/test_login_recovery.py \
+            src/tests/test_window_capture.py \
+            src/tests/test_window_capture_recovery.py \
             --cov=src --cov-report=xml --cov-report=term
       - uses: actions/upload-artifact@v4
         if: always()

@@ -257,7 +257,8 @@ class WeFlowPipeline:
                         t = contact.username
                         try:
                             msgs, _ = self.weflow.get_messages(t, limit=1)
-                        except Exception:
+                        except Exception as e:
+                            _logger.debug("[WeFlow] 获取联系人 %s 消息失败: %s", t, e)
                             continue
                         if msgs:
                             talker = t
@@ -500,7 +501,8 @@ class WeFlowPipeline:
             last_id = self._last_local_ids.get(talker, 0)
             try:
                 msgs, _ = self.weflow.get_messages(talker, limit=check_limit, offset=0)
-            except Exception:
+            except Exception as e:
+                _logger.debug("[WeFlow] 获取 %s 历史消息失败: %s", talker, e)
                 continue
             checked += 1
 

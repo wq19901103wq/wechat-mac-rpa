@@ -220,7 +220,7 @@ def _search_in_page(url: str = "", keyword: str = "") -> str:
         return f"页面未缓存。请先用 browse_url 打开 {url}"
     text = _PAGE_CACHE[url]
     # 查找关键词位置，返回前后各 200 字的上下文
-    results = []
+    results: list[str] = []
     results = _search_keyword_in_text(text, keyword, results, is_fuzzy=False)
     if not results:
         # 模糊搜索：按空格拆词

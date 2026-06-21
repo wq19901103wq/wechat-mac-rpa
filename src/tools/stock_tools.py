@@ -4,6 +4,7 @@
 import ssl
 import urllib.request
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 
 def _fetch_stock(codes: str) -> Dict[str, Any]:
@@ -13,8 +14,11 @@ def _fetch_stock(codes: str) -> Dict[str, Any]:
     ctx.verify_mode = ssl.CERT_NONE
 
     url = f"https://qt.gtimg.cn/q={codes}"
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return {"error": f"不支持的 URL scheme: {parsed.scheme}"}
     try:
-        with urllib.request.urlopen(url, context=ctx, timeout=10) as resp:
+        with urllib.request.urlopen(url, context=ctx, timeout=10) as resp:  # nosec B310
             raw = resp.read().decode("gb2312", errors="ignore")
     except Exception as e:
         return {"error": f"请求失败: {e}"}

@@ -1,7 +1,7 @@
 """3D 打印工具 — Bambu Lab 打印机自动化
 
 支持 3MF 文件处理（读取配置、缩放模型、修改支撑）和打印机状态查询。
-所有 XML 解析使用 xml.etree.ElementTree（无正则）。
+所有 XML 解析使用 defusedxml.ElementTree（无正则）。
 """
 
 import json
@@ -11,7 +11,7 @@ import time
 import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional
-from xml.etree import ElementTree as ET
+from defusedxml import ElementTree as ET
 
 from .tool_registry import get_registry
 
@@ -273,8 +273,8 @@ def _load_printer_config() -> Dict:
         try:
             with open(config_path) as f:
                 return json.load(f)
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.debug("[3D] 读取打印机配置失败: %s", e)
     return {}
 
 

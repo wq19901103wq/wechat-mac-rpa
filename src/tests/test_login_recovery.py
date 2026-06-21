@@ -1,12 +1,70 @@
 #!/usr/bin/env python3
-"""登录恢复流程单元测试"""
+"""登录恢复流程单元测试
+
+通过 Mock SystemAutomation 验证 WeChatLoginHandler 的恢复逻辑，
+不再直接依赖 subprocess.run。
+"""
 
 from unittest.mock import Mock, patch
 
 import pytest
 
 from src.action.login_recovery import LoginRecoveryStatus, WeChatLoginHandler
+from src.action.system_automation import SystemAutomation
 from src.models.base import OCRTextElement, Point, Rect
+
+
+class MockSystemAutomation(SystemAutomation):
+    """可编程的 SystemAutomation mock，用于测试登录恢复流程。"""
+
+    def __init__(self, capture_success: bool = True, applescript_rc: int = 0):
+        self.capture_success = capture_success
+        self.applescript_rc = applescript_rc
+        self.calls: list[tuple[str, tuple, dict]] = []
+
+    def _log(self, name: str, *args, **kwargs):
+        self.calls.append((name, args, kwargs))
+
+    def activate_app(self, app_name: str) -> bool:
+        self._log("activate_app", app_name)
+        return True
+
+    def get_frontmost_app(self, app_name: str) -> tuple[bool, str]:
+        self._log("get_frontmost_app", app_name)
+        return True, app_name
+
+    def get_window_rect(self, app_name: str) -> tuple[bool, Rect | None, str]:
+        self._log("get_window_rect", app_name)
+        return True, Rect(x=0, y=0, width=800, height=600), ""
+
+    def click_at(self, x: int, y: int) -> bool:
+        self._log("click_at", x, y)
+        return True
+
+    def send_keys(self, key_spec: str) -> bool:
+        self._log("send_keys", key_spec)
+        return True
+
+    def run_applescript(self, script: str, timeout: int = 5) -> tuple[int, str, str]:
+        self._log("run_applescript", script, timeout=timeout)
+        return self.applescript_rc, "", ""
+
+    def set_clipboard_text(self, text: str) -> bool:
+        self._log("set_clipboard_text", text)
+        return True
+
+    def get_clipboard_text(self) -> tuple[bool, str]:
+        self._log("get_clipboard_text")
+        return True, ""
+
+    def capture_screen(
+        self,
+        rect: Rect,
+        output_path: str,
+        window_id: int | None = None,
+    ) -> tuple[bool, str]:
+        self._log("capture_screen", rect, output_path, window_id=window_id)
+        return self.capture_success, "" if self.capture_success else "capture failed"
 
 
 class TestWeChatLoginHandler:
@@ -60,36 +118,37 @@ class TestWeChatLoginHandler:
         ]
         assert handler._is_phone_confirm_state(elements) is False
 
-    @patch("src.action.login_recovery.subprocess.run")
-    def test_click_login_button_success(self, mock_subprocess, handler):
-        """点击登录按钮成功，使用 AppleScript"""
+    def test_click_login_button_success(self):
+        """点击登录按钮成功，调用 automation.run_applescript"""
+        automation = MockSystemAutomation()
+        handler = WeChatLoginHandler(automation=automation)
         window_rect = Rect(x=500, y=200, width=280, height=380)
         btn_rect = Rect(x=100, y=300, width=80, height=30)
         result = handler._click_login_button(window_rect, btn_rect)
         assert result is True
-        mock_subprocess.assert_called_once()
-        args = mock_subprocess.call_args[0][0]
-        assert args[0] == 'osascript'
-        assert '640' in args[2]
-        assert '515' in args[2]
+        assert any(c[0] == "run_applescript" for c in automation.calls)
+        script = next(c[1][0] for c in automation.calls if c[0] == "run_applescript")
+        # 中心坐标：500+100+40=640, 200+300+15=515
+        assert '640' in script
+        assert '515' in script
 
-    @patch("src.action.login_recovery.subprocess.run")
-    def test_click_login_button_failure(self, mock_subprocess, handler):
+    def test_click_login_button_failure(self):
         """AppleScript 异常时返回 False"""
-        mock_subprocess.side_effect = Exception("fail")
+        automation = MockSystemAutomation(applescript_rc=1)
+        handler = WeChatLoginHandler(automation=automation)
         window_rect = Rect(x=500, y=200, width=280, height=380)
         btn_rect = Rect(x=100, y=300, width=80, height=30)
         result = handler._click_login_button(window_rect, btn_rect)
         assert result is False
 
     @patch.object(WeChatLoginHandler, "_capture_window")
-    @patch("src.action.login_recovery.subprocess.run")
     @patch("src.action.login_recovery.time.sleep")
     @patch("src.action.login_recovery.Quartz")
     def test_handle_success_after_click(
-        self, mock_quartz, mock_sleep, mock_subprocess, mock_capture, tmp_path
+        self, mock_quartz, mock_sleep, mock_capture, tmp_path
     ):
         """点击登录后窗口恢复正常，返回 SUCCESS"""
+        automation = MockSystemAutomation()
         capture_path = str(tmp_path / "capture.png")
         mock_capture.return_value = capture_path
 
@@ -115,7 +174,7 @@ class TestWeChatLoginHandler:
         mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
         mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
 
-        handler = WeChatLoginHandler(capture_output=capture_path)
+        handler = WeChatLoginHandler(capture_output=capture_path, automation=automation)
         # Mock OCR: 第一次返回"登录"按钮
         handler.ocr.recognize = Mock(return_value=[
             OCRTextElement(
@@ -130,13 +189,13 @@ class TestWeChatLoginHandler:
         assert result.message == "微信已恢复为主窗口"
 
     @patch.object(WeChatLoginHandler, "_capture_window")
-    @patch("src.action.login_recovery.subprocess.run")
     @patch("src.action.login_recovery.time.sleep")
     @patch("src.action.login_recovery.Quartz")
     def test_handle_needs_phone_confirm_after_click(
-        self, mock_quartz, mock_sleep, mock_subprocess, mock_capture, tmp_path
+        self, mock_quartz, mock_sleep, mock_capture, tmp_path
     ):
         """点击登录后窗口仍小但显示'需在手机上完成登录'，返回 NEEDS_PHONE_CONFIRM"""
+        automation = MockSystemAutomation()
         capture_path = str(tmp_path / "capture.png")
         mock_capture.return_value = capture_path
 
@@ -154,7 +213,7 @@ class TestWeChatLoginHandler:
         mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
         mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
 
-        handler = WeChatLoginHandler(capture_output=capture_path)
+        handler = WeChatLoginHandler(capture_output=capture_path, automation=automation)
         # Mock OCR: 第一次返回"登录"按钮；第二次返回手机确认提示
         handler.ocr.recognize = Mock(side_effect=[
             [
@@ -181,13 +240,13 @@ class TestWeChatLoginHandler:
         assert "手机上确认" in result.message
 
     @patch.object(WeChatLoginHandler, "_capture_window")
-    @patch("src.action.login_recovery.subprocess.run")
     @patch("src.action.login_recovery.time.sleep")
     @patch("src.action.login_recovery.Quartz")
     def test_handle_needs_qrcode_after_click(
-        self, mock_quartz, mock_sleep, mock_subprocess, mock_capture, tmp_path
+        self, mock_quartz, mock_sleep, mock_capture, tmp_path
     ):
         """点击登录后窗口仍小且无手机确认提示，返回 NEEDS_QRCODE"""
+        automation = MockSystemAutomation()
         capture_path = str(tmp_path / "capture.png")
         mock_capture.return_value = capture_path
 
@@ -205,7 +264,7 @@ class TestWeChatLoginHandler:
         mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
         mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
 
-        handler = WeChatLoginHandler(capture_output=capture_path)
+        handler = WeChatLoginHandler(capture_output=capture_path, automation=automation)
         # Mock OCR: 第一次返回"登录"按钮；第二次仍无手机确认提示
         handler.ocr.recognize = Mock(side_effect=[
             [
@@ -223,12 +282,12 @@ class TestWeChatLoginHandler:
         assert "手机上确认" in result.message or "扫码" in result.message
 
     @patch.object(WeChatLoginHandler, "_capture_window")
-    @patch("src.action.login_recovery.subprocess.run")
     @patch("src.action.login_recovery.Quartz")
     def test_handle_no_login_button(
-        self, mock_quartz, mock_subprocess, mock_capture, tmp_path
+        self, mock_quartz, mock_capture, tmp_path
     ):
         """窗口小但找不到登录按钮，返回 NO_LOGIN_BUTTON"""
+        automation = MockSystemAutomation()
         capture_path = str(tmp_path / "capture.png")
         mock_capture.return_value = capture_path
 
@@ -246,7 +305,7 @@ class TestWeChatLoginHandler:
         mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
         mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
 
-        handler = WeChatLoginHandler(capture_output=capture_path)
+        handler = WeChatLoginHandler(capture_output=capture_path, automation=automation)
         handler.ocr.recognize = Mock(return_value=[])
 
         result = handler.handle()

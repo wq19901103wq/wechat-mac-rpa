@@ -6,11 +6,13 @@ import logging
 import queue
 import re
 import sqlite3
-import subprocess
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+from src.memory.engine import MemoryEngine
+from src.tools.builtin_tools import _web_search
 
 from .case_db import get_db
 from .case_generator import CaseGenerator
@@ -365,17 +367,10 @@ class JudgeWorker:
             _logger.info("[Judge] 查证: %s(%s)", tool_name, tool_query)
             try:
                 if tool_name == "search_memory":
-                    r = subprocess.run(
-                        ["python3", "-c", f"from src.memory.engine import MemoryEngine; m=MemoryEngine(); print(m.search_keyword('{tool_query}'))"],
-                        capture_output=True, timeout=15, cwd=str(PROJECT_ROOT),
-                    )
-                    tool_result = r.stdout.decode("utf-8", errors="replace")[:5000] if r.returncode == 0 and r.stdout else "(empty)"
+                    m = MemoryEngine()
+                    tool_result = str(m.search_keyword(tool_query))[:5000]
                 elif tool_name == "web_search":
-                    r = subprocess.run(
-                        ["python3", "-c", f"from src.tools.builtin_tools import _web_search; print(_web_search(query='{tool_query}'))"],
-                        capture_output=True, timeout=15, cwd=str(PROJECT_ROOT),
-                    )
-                    tool_result = r.stdout.decode("utf-8", errors="replace")[:3000] if r.returncode == 0 and r.stdout else "(empty)"
+                    tool_result = str(_web_search(query=tool_query))[:3000]
                 elif tool_name == "get_current_time":
                     from datetime import datetime
                     tool_result = datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")

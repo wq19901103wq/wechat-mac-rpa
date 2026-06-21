@@ -382,8 +382,14 @@ class CaseDB:
                 case_id = row[0]
 
                 # Delete old sub-records
+                allowed_child_tables = {"case_conversations", "case_dimensions", "case_tool_calls"}
                 for table in ("case_conversations", "case_dimensions", "case_tool_calls"):
-                    conn.execute(f"DELETE FROM {table} WHERE case_id = ?", (case_id,))
+                    if table not in allowed_child_tables:
+                        continue
+                    sql = "DELETE FROM "
+                    sql += table
+                    sql += " WHERE case_id = ?"
+                    conn.execute(sql, (case_id,))
 
                 # Insert conversations
                 conv = draft.get("conversation", [])
@@ -442,21 +448,32 @@ class CaseDB:
         with self._lock:
             conn = sqlite3.connect(str(self.db_path))
             try:
+                allowed_columns = {
+                    "committed_at": "committed_at = ?",
+                    "committed_by": "committed_by = ?",
+                    "dismissed_at": "dismissed_at = ?",
+                    "dismiss_reason": "dismiss_reason = ?",
+                    "severity": "severity = ?",
+                    "overall_score": "overall_score = ?",
+                }
                 updates = ["status = ?"]
                 params = [status]
                 for k, v in kwargs.items():
-                    if k in ("committed_at", "committed_by", "dismissed_at", "dismiss_reason", "severity", "overall_score"):
-                        updates.append(f"{k} = ?")
+                    if k in allowed_columns:
+                        updates.append(allowed_columns[k])
                         params.append(v)
                 params.append(draft_id)
-                conn.execute(f"UPDATE cases SET {', '.join(updates)} WHERE draft_id = ?", params)
+                sql = "UPDATE cases SET "
+                sql += ", ".join(updates)
+                sql += " WHERE draft_id = ?"
+                conn.execute(sql, params)
                 conn.commit()
             finally:
                 conn.close()
 
     # ── QUERY ──
 
-    def query_recent(self, days: int = 7, status: str = None) -> list[dict]:
+    def query_recent(self, days: int = 7, status: Optional[str] = None) -> list[dict]:
         """查询最近 N 天的 case。"""
         with self._lock:
             conn = sqlite3.connect(str(self.db_path))
@@ -579,13 +596,12 @@ class CaseDB:
 
     # ── MIGRATION ──
 
-    def migrate_from_json(self, drafts_dir: str = None):
+    def migrate_from_json(self, drafts_dir: Optional[str] = None):
         """从 data/review_drafts/ 迁移已有的 JSON draft 到数据库。"""
-        if drafts_dir is None:
-            drafts_dir = PROJECT_ROOT / "data" / "review_drafts"
+        drafts_path = Path(drafts_dir) if drafts_dir else PROJECT_ROOT / "data" / "review_drafts"
 
         for status_dir in ("committed", "pending", "dismissed"):
-            d = Path(drafts_dir) / status_dir
+            d = drafts_path / status_dir
             if not d.exists():
                 continue
             for f in d.glob("*.json"):
@@ -605,19 +621,18 @@ class CaseDB:
 
     def load_benchmark_cases(self, bench_type: str) -> list[dict]:
         """从 DB 加载 benchmark case。bench_type: 'tool' | 'reply' | 'search' | 'adversarial'"""
-        table_map = {
-            "tool": "bench_tool_cases",
-            "reply": "bench_reply_cases",
-            "search": "bench_search_cases",
-            "adversarial": "bench_adversarial_cases",
+        sql_map = {
+            "tool": "SELECT * FROM bench_tool_cases WHERE enabled=1",
+            "reply": "SELECT * FROM bench_reply_cases WHERE enabled=1",
+            "search": "SELECT * FROM bench_search_cases WHERE enabled=1",
+            "adversarial": "SELECT * FROM bench_adversarial_cases WHERE enabled=1",
         }
-        table = table_map.get(bench_type)
-        if not table:
+        sql = sql_map.get(bench_type)
+        if not sql:
             return []
         conn = self._get_conn()
         try:
-            return [dict(r) for r in conn.execute(
-                f"SELECT * FROM {table} WHERE enabled=1").fetchall()]
+            return [dict(r) for r in conn.execute(sql).fetchall()]
         finally:
             conn.close()
 

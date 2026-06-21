@@ -556,7 +556,7 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None, n_runs: int
                 )
             )
         else:
-            llm_response = _read_cached_response(case.case_name)
+            llm_response = _read_cached_response(case.case_name)  # type: ignore[no-redef,assignment]
             if llm_response is None:
                 print(f"  [{case.case_name}] 跳过: 无缓存结果且未使用 --run-api")
                 results.append(
@@ -576,7 +576,7 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None, n_runs: int
                 continue
 
             tool_calls = llm_response.get("tool_calls", [])
-            called_tools: List[str] = []
+            called_tools = []
             for tc in tool_calls:
                 fn = tc.get("function", {}) if isinstance(tc, dict) else getattr(tc, "function", {})
                 name = fn.get("name", "") if isinstance(fn, dict) else getattr(fn, "name", "")
@@ -757,12 +757,15 @@ def print_report(results: list[BenchmarkResult], metrics: dict[str, Any]) -> Non
         print("\n🧑‍⚖️ Judge 评估详情")
         for r in judged:
             print(f"\n  [{r.case_name}] ({r.evaluation_mode})")
-            for d in r.rubric_scores.get("dimensions", []):
+            scores = r.rubric_scores
+            if scores is None:
+                continue
+            for d in scores.get("dimensions", []):
                 icon = "✅" if d["score"] == "PASS" else "❌"
                 req = "(必须)" if d.get("required", True) else "(参考)"
                 print(f"     {icon} {d['name']} {req}: {d['reason']}")
-            if r.rubric_scores.get("explanation"):
-                print(f"     💡 {r.rubric_scores['explanation']}")
+            if scores.get("explanation"):
+                print(f"     💡 {scores['explanation']}")
 
     print("=" * 90)
 

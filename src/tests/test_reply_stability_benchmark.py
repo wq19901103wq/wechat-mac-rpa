@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# type: ignore
 """
 Bot 回复稳定性 Benchmark — 直接用生产 case 的完整 prompt 调 LLM 生成 3 次
 

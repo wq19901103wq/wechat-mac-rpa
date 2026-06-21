@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """L3 MessageExtractor 单元测试"""
 
+from typing import Optional
+
 from src.layout.layout_parser import UILayout
 from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
 from src.message.extractor import MessageExtractor
@@ -22,9 +24,9 @@ def make_element(text: str, cx: int, cy: int, confidence: float = 0.95) -> OCRTe
 
 def make_layout(
     chat_name: str = "测试聊天",
-    self_bubbles: list = None,
-    message_candidates: list = None,
-    timestamp_elements: list = None,
+    self_bubbles: Optional[list] = None,
+    message_candidates: Optional[list] = None,
+    timestamp_elements: Optional[list] = None,
 ) -> UILayout:
     return UILayout(
         chat_name=chat_name,

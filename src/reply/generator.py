@@ -84,7 +84,7 @@ class ReplyGenerator:
             from sklearn.feature_extraction.text import TfidfVectorizer  # noqa: F401
 
             from src.memory.vector_index import MessageVectorIndex
-            index_path = Path(__file__).parent.parent.parent / "data" / "vector_indexes" / "humor_messages_index.pkl"
+            index_path = Path(__file__).parent.parent.parent / "data" / "vector_indexes" / "humor_messages_index.json"
             if index_path.exists():
                 self._humor_vector_index = MessageVectorIndex(cache_path=index_path)
                 if self._humor_vector_index.messages:

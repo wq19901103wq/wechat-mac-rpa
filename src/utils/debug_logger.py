@@ -98,7 +98,7 @@ class TickDebugInfo:
 class DebugLogger:
     """统一管理 tick 级调试信息的收集和落盘。"""
 
-    def __init__(self, base_dir: str = None):
+    def __init__(self, base_dir: Optional[str] = None):
         if base_dir is None:
             base_dir = str(Path(__file__).parent.parent.parent / "data" / "debug")
         self.base_dir = Path(base_dir)
@@ -442,8 +442,8 @@ class DebugLogger:
     def log_session(
         self,
         input_chat_name: str = "",
-        input_messages: list = None,
-        output_unreplied: list = None,
+        input_messages: Optional[list] = None,
+        output_unreplied: Optional[list] = None,
         total_stored: int = 0,
     ) -> None:
         """记录 Session 层的输入输出。"""
@@ -472,14 +472,14 @@ class DebugLogger:
         system_prompt: str = "",
         user_prompt: str = "",
         raw_response: str = "",
-        llm_calls: list = None,
-        tool_calls: list = None,
-        trace: list = None,
-        loaded_skills: list = None,
+        llm_calls: Optional[list] = None,
+        tool_calls: Optional[list] = None,
+        trace: Optional[list] = None,
+        loaded_skills: Optional[list] = None,
         skill_injected_content: str = "",
         active_llm: str = "",
         hermes_fallback_triggered: bool = False,
-        hermes_messages: list = None,
+        hermes_messages: Optional[list] = None,
         hermes_response: str = "",
     ) -> None:
         """记录 Reply Generator 的完整调用链路（含多轮 LLM + 工具调用）。"""

@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """L4 Action - 系统级 UI 自动化抽象
 
-将 cliclick、osascript、AppleScript 等 macOS 特定调用封装为统一接口，
-使 Bot 层和 Action 层可以面向接口编程，便于 mock 和跨平台扩展。
+将 cliclick、osascript、AppleScript、screencapture、pbcopy/pbpaste 等 macOS 特定调用
+封装为统一接口，使 Bot 层和 Action 层可以面向接口编程，便于 mock、测试和跨平台扩展。
 """
 
-import subprocess
+import re
+import subprocess  # nosec B404
 from abc import ABC, abstractmethod
+
+from src.models.base import Rect
 
 
 class SystemAutomation(ABC):
@@ -27,6 +30,15 @@ class SystemAutomation(ABC):
         pass
 
     @abstractmethod
+    def get_window_rect(self, app_name: str) -> tuple[bool, Rect | None, str]:
+        """获取指定应用主窗口的位置和大小。
+
+        Returns:
+            (success, rect_or_none, error_message)
+        """
+        pass
+
+    @abstractmethod
     def click_at(self, x: int, y: int) -> bool:
         """在屏幕逻辑坐标 (x, y) 处点击一次。"""
         pass
@@ -36,7 +48,7 @@ class SystemAutomation(ABC):
         """发送键盘事件。
 
         Args:
-            key_spec: 按键描述，如 "keystroke \"v\" using command down"、
+            key_spec: 按键描述，如 "keystroke \\"v\\" using command down"、
                       "key code 53" 等 AppleScript 片段。
         """
         pass
@@ -60,9 +72,28 @@ class SystemAutomation(ABC):
         """读取系统剪贴板文本。"""
         pass
 
+    @abstractmethod
+    def capture_screen(
+        self,
+        rect: Rect,
+        output_path: str,
+        window_id: int | None = None,
+    ) -> tuple[bool, str]:
+        """截取指定屏幕区域或窗口并保存到文件。
+
+        Args:
+            rect: 截图区域（window_id 为空时使用）
+            output_path: 输出文件路径
+            window_id: 可选的窗口 ID，优先使用 screencapture -l
+
+        Returns:
+            (success, error_message)
+        """
+        pass
+
 
 class MacOSSystemAutomation(SystemAutomation):
-    """macOS 实现：基于 AppleScript + cliclick。"""
+    """macOS 实现：基于 AppleScript + cliclick + screencapture。"""
 
     def __init__(self, cliclick_path: str = "/opt/homebrew/bin/cliclick"):
         self.cliclick_path = cliclick_path
@@ -95,9 +126,34 @@ class MacOSSystemAutomation(SystemAutomation):
         except Exception as e:
             return False, str(e)
 
+    def get_window_rect(self, app_name: str) -> tuple[bool, Rect | None, str]:
+        """通过 AppleScript 获取应用主窗口的位置和大小。"""
+        script = f'''
+            tell application "System Events"
+                tell process "{app_name}"
+                    tell window 1
+                        set winPos to position
+                        set winSize to size
+                        return (item 1 of winPos) & "," & (item 2 of winPos) & "," & (item 1 of winSize) & "," & (item 2 of winSize)
+                    end tell
+                end tell
+            end tell
+        '''
+        try:
+            rc, stdout, stderr = self.run_applescript(script, timeout=5)
+            if rc != 0:
+                return False, None, stderr
+            parts = stdout.strip().split(",")
+            if len(parts) != 4:
+                return False, None, f"无法解析窗口坐标: {stdout!r}"
+            x, y, w, h = map(int, map(float, parts))
+            return True, Rect(x=x, y=y, width=w, height=h), ""
+        except Exception as e:
+            return False, None, str(e)
+
     def click_at(self, x: int, y: int) -> bool:
         try:
-            subprocess.run(
+            subprocess.run(  # nosec
                 [self.cliclick_path, f"c:{x},{y}"],
                 check=True,
                 timeout=5,
@@ -122,7 +178,7 @@ class MacOSSystemAutomation(SystemAutomation):
 
     def run_applescript(self, script: str, timeout: int = 5) -> tuple[int, str, str]:
         try:
-            r = subprocess.run(
+            r = subprocess.run(  # nosec
                 ["osascript", "-e", script],
                 timeout=timeout,
                 capture_output=True,
@@ -137,7 +193,7 @@ class MacOSSystemAutomation(SystemAutomation):
 
     def set_clipboard_text(self, text: str) -> bool:
         try:
-            subprocess.run(
+            subprocess.run(  # nosec
                 ["pbcopy"],
                 input=text.encode("utf-8"),
                 timeout=2,
@@ -149,7 +205,7 @@ class MacOSSystemAutomation(SystemAutomation):
 
     def get_clipboard_text(self) -> tuple[bool, str]:
         try:
-            r = subprocess.run(
+            r = subprocess.run(  # nosec
                 ["pbpaste"],
                 timeout=2,
                 capture_output=True,
@@ -160,15 +216,52 @@ class MacOSSystemAutomation(SystemAutomation):
         except Exception as e:
             return False, str(e)
 
+    def capture_screen(
+        self,
+        rect: Rect,
+        output_path: str,
+        window_id: int | None = None,
+    ) -> tuple[bool, str]:
+        """使用 screencapture 截取指定区域或窗口。
+
+        对输出路径做基本校验，防止路径注入。
+        """
+        if not output_path or "/" not in output_path or re.search(r"[&;|`$()]", output_path):
+            return False, f"非法截图输出路径: {output_path}"
+        if window_id:
+            cmd = [
+                "screencapture",
+                "-l", str(window_id),
+                "-o",  # 排除窗口阴影
+                "-x", output_path,
+            ]
+        else:
+            cmd = [
+                "screencapture",
+                "-R", f"{rect.x},{rect.y},{rect.width},{rect.height}",
+                "-x", output_path,
+            ]
+        try:
+            subprocess.run(cmd, check=True, timeout=5)  # nosec
+            return True, ""
+        except Exception as e:
+            return False, str(e)
+
 
 class NoOpSystemAutomation(SystemAutomation):
     """空实现，用于测试或禁用 UI 交互的场景。"""
+
+    def __init__(self, window_rect: Rect | None = None):
+        self.window_rect = window_rect or Rect(x=0, y=0, width=1200, height=800)
 
     def activate_app(self, app_name: str) -> bool:
         return True
 
     def get_frontmost_app(self, app_name: str) -> tuple[bool, str]:
         return True, app_name
+
+    def get_window_rect(self, app_name: str) -> tuple[bool, Rect | None, str]:
+        return True, self.window_rect, ""
 
     def click_at(self, x: int, y: int) -> bool:
         return True
@@ -183,4 +276,12 @@ class NoOpSystemAutomation(SystemAutomation):
         return True
 
     def get_clipboard_text(self) -> tuple[bool, str]:
+        return True, ""
+
+    def capture_screen(
+        self,
+        rect: Rect,
+        output_path: str,
+        window_id: int | None = None,
+    ) -> tuple[bool, str]:
         return True, ""

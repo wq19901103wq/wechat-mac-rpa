@@ -12,9 +12,10 @@
 """
 
 import json
+import logging
 import re
 from pathlib import Path
-import logging
+from typing import Any
 
 _logger = logging.getLogger(__name__)
 
@@ -24,10 +25,10 @@ def parse_knowledge_source(md_path: Path) -> dict:
     text = md_path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
-    people = []
-    groups = []
-    current = None
-    section = None  # 'people' or 'groups'
+    people: list[dict[str, Any]] = []
+    groups: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    section: str | None = None  # 'people' or 'groups'
 
     for line in lines:
         stripped = line.strip()
@@ -104,7 +105,7 @@ def extract_relation_value(fact_text: str) -> dict:
 
 def update_aliases(people: list, aliases_path: Path):
     """更新 aliases.json"""
-    data = {"users": {}}
+    data: dict[str, Any] = {"users": {}}
     if aliases_path.exists():
         try:
             data = json.loads(aliases_path.read_text(encoding="utf-8"))
@@ -131,7 +132,7 @@ def update_aliases(people: list, aliases_path: Path):
 
 def update_facts(people: list, facts_path: Path):
     """更新 facts.json"""
-    data = {"users": {}}
+    data: dict[str, Any] = {"users": {}}
     if facts_path.exists():
         try:
             data = json.loads(facts_path.read_text(encoding="utf-8"))
@@ -155,7 +156,7 @@ def update_facts(people: list, facts_path: Path):
 
 def update_corrections(groups: list, corrections_path: Path):
     """更新 corrections.json"""
-    data = {"groups": {}}
+    data: dict[str, Any] = {"groups": {}}
     if corrections_path.exists():
         try:
             data = json.loads(corrections_path.read_text(encoding="utf-8"))

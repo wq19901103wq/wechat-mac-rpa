@@ -7,12 +7,12 @@ import math
 import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from httpx import Timeout
 except ImportError:
-    Timeout = None
+    Timeout: Any = None  # type: ignore[misc,assignment,no-redef]
 
 _logger = logging.getLogger("src.memory.engine")
 
@@ -501,7 +501,7 @@ class MemoryEngine:
                     messages=[{"role": "user", "content": current_prompt}],
                     temperature=0.3,
                     max_tokens=10000,
-                    timeout=Timeout(connect=10.0, read=300.0, write=10.0, pool=5.0) if Timeout else 300,
+                    timeout=Timeout(connect=10.0, read=300.0, write=10.0, pool=5.0) if Timeout is not None else 300,
                 )
                 new_wiki = response if isinstance(response, str) else getattr(response, "content", str(response))
                 new_wiki = new_wiki.strip()
@@ -622,7 +622,7 @@ class MemoryEngine:
 
     def _extract_aliases_from_user_wiki(self, wiki: str, user_name: str) -> List[str]:
         """从用户 wiki 的 ## 别名 段落提取别名。严格过滤，排除他人名字和无效条目。"""
-        aliases = []
+        aliases: List[str] = []
         marker = "## 别名"
         if marker not in wiki:
             return aliases
@@ -667,7 +667,7 @@ class MemoryEngine:
         """从群聊 wiki 的成员画像中提取别名。
         匹配格式：**成员名（别名1/别名2）** 或 **成员名**：...
         """
-        result = {}
+        result: Dict[str, List[str]] = {}
         if "## 群成员画像" not in wiki and "## 活跃成员" not in wiki:
             return result
         # 模式: **成员名（别名1/别名2）**
@@ -746,7 +746,7 @@ class MemoryEngine:
         # 2. 持久化到文件
         try:
             aliases_path = self.overrides_dir / "aliases.json"
-            data = {"users": {}}
+            data: Dict[str, Any] = {"users": {}}
             if aliases_path.exists():
                 data = json.loads(aliases_path.read_text(encoding="utf-8"))
 
@@ -805,7 +805,7 @@ class MemoryEngine:
         kw_hit_counts.sort(key=lambda x: x[1])
 
         snippets = []
-        seen_ranges = set()  # 避免重叠片段
+        seen_ranges: set[tuple[int, int]] = set()  # 避免重叠片段
         hit_keywords = set()
         for kw, _ in kw_hit_counts:
             start = 0

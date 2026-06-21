@@ -4,16 +4,94 @@
 
 1. ChatVectorIndex: 基于 TF-IDF + 余弦相似度，检索 QA pair（问题-回复对）
 2. MessageVectorIndex: 消息级检索，检索最相似的消息并返回前后多轮完整上下文
+
+缓存使用 JSON 格式保存，避免 pickle 反序列化带来的安全风险（B301/B403）。
+TfidfVectorizer 通过保存 vocabulary_/idf_/初始化参数并在加载时重建，稀疏矩阵保存
+CSR 的 data/indices/indptr/shape。
 """
 
-import pickle
+import json
+import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import scipy.sparse as sp
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
+
+# ---------------------------------------------------------------------------
+# JSON 序列化辅助函数
+# ---------------------------------------------------------------------------
+
+def _vectorizer_to_json(vectorizer: TfidfVectorizer) -> Dict[str, Any]:
+    """将已拟合的 TfidfVectorizer 转为可 JSON 序列化的字典。"""
+    params = dict(vectorizer.get_params())
+    # dtype 在 sklearn 中通常是 type 对象（如 numpy.float64），需要转成字符串
+    dtype = params.get("dtype")
+    if dtype is not None and not isinstance(dtype, str):
+        params["dtype"] = np.dtype(dtype).name
+
+    return {
+        "params": params,
+        "vocabulary_": {k: int(v) for k, v in vectorizer.vocabulary_.items()},
+        "idf_": vectorizer.idf_.tolist() if hasattr(vectorizer, "idf_") else None,
+        "stop_words_": (
+            sorted(vectorizer.stop_words_)
+            if hasattr(vectorizer, "stop_words_") and vectorizer.stop_words_
+            else None
+        ),
+    }
+
+
+def _vectorizer_from_json(data: Dict[str, Any]) -> TfidfVectorizer:
+    """从 JSON 字典重建 TfidfVectorizer，保持与原始 vectorizer 相同的编码行为。"""
+    params = dict(data["params"])
+    # JSON 不保留元组，sklearn 期望 ngram_range 为元组
+    for key in ("ngram_range",):
+        if key in params and isinstance(params[key], list):
+            params[key] = tuple(params[key])
+
+    # dtype 序列化时为字符串，还原为 numpy type 以保持完全一致的参数
+    dtype = params.get("dtype")
+    if isinstance(dtype, str):
+        params["dtype"] = np.dtype(dtype).type
+
+    vectorizer = TfidfVectorizer(**params)
+
+    vocabulary = data.get("vocabulary_")
+    if vocabulary:
+        vectorizer.vocabulary_ = {k: int(v) for k, v in vocabulary.items()}
+
+    idf_ = data.get("idf_")
+    if idf_ is not None:
+        vectorizer.idf_ = np.array(idf_, dtype=np.float64)
+
+    stop_words = data.get("stop_words_")
+    if stop_words is not None:
+        vectorizer.stop_words_ = set(stop_words)
+
+    return vectorizer
+
+
+def _csr_to_json(matrix: sp.csr_matrix) -> Dict[str, Any]:
+    """将 CSR 稀疏矩阵转为可 JSON 序列化的字典。"""
+    return {
+        "data": matrix.data.tolist(),
+        "indices": matrix.indices.tolist(),
+        "indptr": matrix.indptr.tolist(),
+        "shape": list(matrix.shape),
+    }
+
+
+def _csr_from_json(data: Dict[str, Any]) -> sp.csr_matrix:
+    """从 JSON 字典重建 CSR 稀疏矩阵。"""
+    return sp.csr_matrix(
+        (data["data"], data["indices"], data["indptr"]),
+        shape=tuple(data["shape"]),
+    )
 
 
 class ChatVectorIndex:
@@ -23,6 +101,9 @@ class ChatVectorIndex:
     SENDER_MATCH_BOOST = 0.15      # 同发送者加分
     CHAT_TYPE_MATCH_BOOST = 0.08   # 同聊天类型加分
     MIN_SIMILARITY = 0.05          # 最低相似度阈值
+
+    # 缓存文件名
+    CACHE_FILE_NAME = "vector_index.json"
 
     def __init__(self, cache_dir: Path):
         self.cache_dir = Path(cache_dir)
@@ -43,39 +124,40 @@ class ChatVectorIndex:
         if not text:
             return ""
         text = text.lower().strip()
-        import re
         text = re.sub(r'[\s\.。，,！!？?~～]+', ' ', text)
         return text
 
+    def _load_cache_data(self, cache_file: Path) -> Dict[str, Any]:
+        """从 JSON 缓存文件读取原始数据字典。"""
+        with open(cache_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    def _apply_cache_data(self, data: Dict[str, Any]) -> None:
+        """将原始数据字典恢复到当前实例状态。"""
+        self.vectorizer = _vectorizer_from_json(data['vectorizer'])
+        self.qa_pairs = data['qa_pairs']
+        self.question_vectors = _csr_from_json(data['question_vectors'])
+        self.answer_vectors = _csr_from_json(data['answer_vectors'])
+        self.sender_index = defaultdict(list, data.get('sender_index', {}))
+        self.chat_type_index = defaultdict(list, data.get('chat_type_index', {}))
+
     def load(self, cache_file: Path) -> "ChatVectorIndex":
-        """从指定 pkl 文件加载索引（不重新构建）。"""
+        """从指定 JSON 缓存文件加载索引（不重新构建）。"""
         cache_file = Path(cache_file)
         print(f"📦 从缓存加载向量索引: {cache_file}")
-        with open(cache_file, 'rb') as f:
-            data = pickle.load(f)
-        self.vectorizer = data['vectorizer']
-        self.qa_pairs = data['qa_pairs']
-        self.question_vectors = data['question_vectors']
-        self.answer_vectors = data['answer_vectors']
-        self.sender_index = data.get('sender_index', defaultdict(list))
-        self.chat_type_index = data.get('chat_type_index', defaultdict(list))
+        data = self._load_cache_data(cache_file)
+        self._apply_cache_data(data)
         print(f"   加载完成: {len(self.qa_pairs)} 条对话")
         return self
 
     def build(self, qa_pairs: List[Dict]) -> "ChatVectorIndex":
         """构建索引"""
-        cache_file = self.cache_dir / "vector_index.pkl"
+        cache_file = self.cache_dir / self.CACHE_FILE_NAME
 
         if cache_file.exists():
             print("📦 从缓存加载向量索引...")
-            with open(cache_file, 'rb') as f:
-                data = pickle.load(f)
-                self.vectorizer = data['vectorizer']
-                self.qa_pairs = data['qa_pairs']
-                self.question_vectors = data['question_vectors']
-                self.answer_vectors = data['answer_vectors']
-                self.sender_index = data.get('sender_index', defaultdict(list))
-                self.chat_type_index = data.get('chat_type_index', defaultdict(list))
+            data = self._load_cache_data(cache_file)
+            self._apply_cache_data(data)
             print(f"   加载完成: {len(self.qa_pairs)} 条对话")
             return self
 
@@ -101,7 +183,7 @@ class ChatVectorIndex:
             ngram_range=(1, 2),
             min_df=2,
             max_df=0.8,
-            token_pattern=r'(?u)\b\w+\b',
+            token_pattern=r'(?u)\b\w+\b',  # nosec B106
         )
         self.vectorizer.fit(all_texts)
 
@@ -110,15 +192,16 @@ class ChatVectorIndex:
         self.answer_vectors = self.vectorizer.transform(answers)
 
         # 保存缓存
-        with open(cache_file, 'wb') as f:
-            pickle.dump({
-                'vectorizer': self.vectorizer,
-                'qa_pairs': self.qa_pairs,
-                'question_vectors': self.question_vectors,
-                'answer_vectors': self.answer_vectors,
-                'sender_index': dict(self.sender_index),
-                'chat_type_index': dict(self.chat_type_index),
-            }, f)
+        cache_payload = {
+            'vectorizer': _vectorizer_to_json(self.vectorizer),
+            'qa_pairs': self.qa_pairs,
+            'question_vectors': _csr_to_json(self.question_vectors),
+            'answer_vectors': _csr_to_json(self.answer_vectors),
+            'sender_index': dict(self.sender_index),
+            'chat_type_index': dict(self.chat_type_index),
+        }
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(cache_payload, f, ensure_ascii=False, separators=(',', ':'))
 
         print(f"   索引完成: {len(self.qa_pairs)} 条对话, {len(self.vectorizer.vocabulary_)} 维特征")
         print(f"   发送者索引: {len(self.sender_index)} 个唯一发送者")
@@ -252,11 +335,11 @@ class MessageVectorIndex:
             return
 
         print("[MessageVectorIndex] 加载消息级向量索引...")
-        with open(self.cache_path, 'rb') as f:
-            data = pickle.load(f)
+        with open(self.cache_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
 
-        self.vectorizer = data['vectorizer']
-        self.vectors = data['vectors']
+        self.vectorizer = _vectorizer_from_json(data['vectorizer'])
+        self.vectors = _csr_from_json(data['vectors'])
         self.messages = data['messages']
         self.sender_index = data.get('sender_index', {})
         self.chat_type_index = data.get('chat_type_index', {})

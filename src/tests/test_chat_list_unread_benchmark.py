@@ -98,12 +98,12 @@ def _call_api_recognize(screenshot_path: Path, api_key: str | None = None) -> li
     except ImportError:
         try:
             # Fallback for direct execution
-            from perception.smart_pipeline import _QwenAPIClient
+            from perception.smart_pipeline import _QwenAPIClient  # type: ignore[no-redef]
         except ImportError:
             # Absolute import with sys.path
             import sys
             sys.path.insert(0, str(Path(__file__).parent.parent))
-            from perception.smart_pipeline import _QwenAPIClient
+            from perception.smart_pipeline import _QwenAPIClient  # type: ignore[no-redef]
 
     if api_key is None:
         api_key = (os.environ.get("DASHSCOPE_API_KEY")
@@ -214,7 +214,7 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None) -> list[Ben
         notes = gt.get("notes", "")
 
         # 获取 API 结果
-        api_result = None
+        api_result: dict[str, Any] | None = None
         if use_api:
             screenshot_path = case_dir / "screenshot.png"
             print(f"  [{case_name}] 调用 API 识别: {screenshot_path.name}")

@@ -51,7 +51,7 @@ class MessageExtractor:
 
     def _extract_self_messages(self, layout: UILayout) -> List[ChatMessage]:
         """提取自己发送的消息（中心点落在 self_bubbles 内的文本）"""
-        messages = []
+        messages: List[ChatMessage] = []
         used = set()
 
         for bubble in layout.self_bubbles:
@@ -141,7 +141,7 @@ class MessageExtractor:
             else:
                 clusters.append([elem])
 
-        messages = []
+        messages: List[ChatMessage] = []
         for cluster in clusters:
             cluster.sort(key=lambda e: e.center.y)
             top = cluster[0]

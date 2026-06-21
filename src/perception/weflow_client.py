@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 from urllib.error import HTTPError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from src.utils.xml_utils import _extract_xml_text
@@ -68,15 +68,20 @@ class WeFlowContact:
 class WeFlowClient:
     """WeFlow HTTP API 轻量客户端"""
 
+    _ALLOWED_SCHEMES = {"http", "https"}
+
     def __init__(
         self,
         host: str = "127.0.0.1",
         port: int = 5031,
-        access_token: str = "weflow_token_123",
+        access_token: str | None = None,
         timeout: float = 10.0,
     ):
         self.base_url = f"http://{host}:{port}"
-        self.access_token = access_token
+        parsed = urlparse(self.base_url)
+        if parsed.scheme not in self._ALLOWED_SCHEMES:
+            raise ValueError(f"WeFlow base_url 必须是 http/https，当前: {self.base_url}")
+        self.access_token = access_token or "weflow_token_123"
         self.timeout = timeout
         self._contacts_cache: Optional[list[WeFlowContact]] = None
         self._contacts_ts: float = 0
@@ -94,7 +99,7 @@ class WeFlowClient:
         req.add_header("Accept", "application/json")
 
         try:
-            with urlopen(req, timeout=self.timeout) as resp:
+            with urlopen(req, timeout=self.timeout) as resp:  # nosec B310
                 data = json.loads(resp.read().decode("utf-8"))
         except HTTPError as e:
             body = e.read().decode("utf-8", errors="ignore")

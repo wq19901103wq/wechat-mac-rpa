@@ -5,7 +5,7 @@ Kimi LLM 客户端
 """
 
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 try:
     from openai import OpenAI
@@ -33,12 +33,12 @@ class KimiClient:
 
     def chat(
         self,
-        user_id: str = None,
-        message: str = None,
-        messages: List[Dict] = None,
-        temperature: float = None,
-        max_tokens: int = None,
-        system_prompt: str = None,
+        user_id: Optional[str] = None,
+        message: Optional[str] = None,
+        messages: Optional[List[Dict]] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        system_prompt: Optional[str] = None,
     ) -> str:
         """生成回复。
 

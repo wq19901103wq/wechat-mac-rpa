@@ -354,12 +354,12 @@ class LayoutParser:
             y_max = anchor_y + 85
 
             # 时间戳
-            for e in elems:
-                if not (y_min - 20 <= e.center.y <= y_max + 20):
+            for elem in elems:
+                if not (y_min - 20 <= elem.center.y <= y_max + 20):
                     continue
-                if e.bbox.x > chat_list_x_max * 0.70:
-                    if e.text in TIMESTAMP_PATTERNS or (len(e.text) >= 4 and e.text[1] == ':' and e.text[:1].isdigit() and e.text[2:].isdigit()):
-                        timestamp = e.text
+                if elem.bbox.x > chat_list_x_max * 0.70:
+                    if elem.text in TIMESTAMP_PATTERNS or (len(elem.text) >= 4 and elem.text[1] == ':' and elem.text[:1].isdigit() and elem.text[2:].isdigit()):
+                        timestamp = elem.text
 
             # 列表项的 rect
             all_elems = list(group)

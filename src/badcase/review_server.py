@@ -11,11 +11,14 @@ Badcase 审核台 - FastAPI + 原生 HTML/JS
 """
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import Body, FastAPI, Query
+
+_logger = logging.getLogger("src.badcase.review_server")
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 # 项目根目录
@@ -488,7 +491,8 @@ def api_list_drafts(
                 if module and item["module"] != module:
                     continue
                 drafts.append(item)
-            except Exception:
+            except Exception as e:
+                _logger.debug("[ReviewServer] 跳过 draft 项: %s", e)
                 continue
     return drafts
 

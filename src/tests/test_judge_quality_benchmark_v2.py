@@ -19,7 +19,7 @@ import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import pytest
 
@@ -73,7 +73,7 @@ class JudgeBenchmarkResult:
     predicted_confidence: float
     passed: bool
     overall_score: float = 0
-    dimensions: dict = None
+    dimensions: Optional[dict] = None
     n_runs: int = 1
     badcase_votes: int = 0
     notes: str = ""
@@ -155,7 +155,7 @@ def _load_gt_cases() -> List[JudgeBenchmarkCase]:
         tr_json = d.get("tool_results_json", "[]") or "[]"
 
         # session_input_messages（从 user_prompt 或 debug JSON 提取）
-        session_msgs = []
+        session_msgs: list = []
         if debug_files:
             try:
                 dbg = json.loads(debug_files[-1].read_text(encoding="utf-8"))
@@ -270,7 +270,8 @@ def test_judge_quality(case: JudgeBenchmarkCase, request):
 
     # 尝试读缓存
     cache_key = hashlib.md5(
-        json.dumps(case.tick_data, sort_keys=True, default=str).encode()
+        json.dumps(case.tick_data, sort_keys=True, default=str).encode(),
+        usedforsecurity=False,
     ).hexdigest()[:16]
     cache_path = CACHE_DIR / f"{case.case_name}_{cache_key}.json"
 
@@ -356,7 +357,8 @@ def main():
             runs = _run_judge_n_times(case.tick_data, args.n_runs)
         else:
             cache_key = hashlib.md5(
-                json.dumps(case.tick_data, sort_keys=True, default=str).encode()
+                json.dumps(case.tick_data, sort_keys=True, default=str).encode(),
+                usedforsecurity=False,
             ).hexdigest()[:16]
             cache_path = CACHE_DIR / f"{case.case_name}_{cache_key}.json"
             if cache_path.exists():

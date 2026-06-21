@@ -16,7 +16,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .tool_registry import get_registry
 
@@ -37,7 +37,7 @@ category_map = {
 }
 
 # 控制指令映射：code -> {on_value, off_value}
-_control_codes = {
+_control_codes: dict[str, dict[str, Any]] = {
     "dj": {"code": "switch_led", "on": True, "off": False},
     "kt": {"code": "switch", "on": True, "off": False},
     "cl": {"code": "control", "on": "open", "off": "close"},
@@ -63,7 +63,7 @@ def _load_config() -> Dict:
     # 环境变量覆盖
     env_mapping = {
         "access_id": "TUYA_ACCESS_ID",
-        "access_secret": "TUYA_ACCESS_SECRET",
+        "access_secret": "TUYA_ACCESS_SECRET",  # nosec B105
         "api_endpoint": "TUYA_ENDPOINT",
         "uid": "TUYA_UID",
     }
@@ -260,7 +260,7 @@ def tuya_list_devices() -> str:
     lines = [f"📱 发现 {len(devices)} 个设备："]
     for i, d in enumerate(devices, 1):
         status = "🟢" if d.get("online") else "⚫"
-        cat = category_map.get(d.get("category"), "📟 设备")
+        cat = category_map.get(str(d.get("category", "")), "📟 设备")
         lines.append(f"{i}. {status} {cat} {d.get('name', 'Unknown')}")
 
     return "\n".join(lines)

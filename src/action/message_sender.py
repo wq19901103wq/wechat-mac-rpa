@@ -6,11 +6,11 @@
 
 import logging
 import os
-import subprocess
 import threading
 import time
 from abc import ABC, abstractmethod
 
+from src.action.system_automation import MacOSSystemAutomation, SystemAutomation
 from src.models.base import ActionResult
 
 _logger = logging.getLogger("src.message_sender")
@@ -43,13 +43,22 @@ class WeChatMessageSender(MessageSender):
     2. 粘贴前验证 WeChat 是 frontmost 进程，防止消息发到其他应用。
     3. 异常内容熔断：verify 读到的内容长度超过预期 3 倍时立即中止，防止误删/误发其他窗口内容。
 
+    架构改进（2026-06-21）：
+    1. 所有系统 UI 调用通过 SystemAutomation 抽象，便于 mock 和跨平台扩展。
+    2. 移除 message_sender.py 中的直接 subprocess 调用。
+
     静默模式（2026-05-29）：
     - silent_mode=True 时不实际发送消息，只生成回复并记录日志
     - 用于数据收集、实验、调试，避免打扰用户
     """
 
-    def __init__(self, silent_mode: bool = False):
+    def __init__(
+        self,
+        silent_mode: bool = False,
+        automation: SystemAutomation | None = None,
+    ):
         self.silent_mode = silent_mode
+        self.automation = automation or MacOSSystemAutomation()
         # 白名单：静默模式下仍然实际发送的聊天（逗号分隔的聊天名）
         raw = os.environ.get("SILENT_WHITELIST", "")
         self._silent_whitelist = {n.strip() for n in raw.split(",") if n.strip()}
@@ -65,40 +74,15 @@ class WeChatMessageSender(MessageSender):
         """确保 WeChat 是当前 frontmost 进程，如果不是则重试激活。"""
         front_app = "unknown"
         for attempt in range(max_retries):
-            script = '''
-                tell application "System Events"
-                    tell process "WeChat"
-                        set frontmost to true
-                    end tell
-                    delay 0.3
-                    set frontApp to name of first application process whose frontmost is true
-                    return frontApp
-                end tell
-            '''
-            try:
-                r = subprocess.run(
-                    ["osascript", "-e", script],
-                    timeout=5,
-                    capture_output=True,
-                )
-                if r.returncode == 0:
-                    front_app = r.stdout.decode("utf-8", errors="replace").strip()
-                    if front_app == "WeChat":
-                        _logger.info(f"[Sender] 窗口激活验证通过 (attempt {attempt + 1}/{max_retries})")
-                        return True, ""
-                    else:
-                        _logger.warning(
-                            f"[Sender] frontmost 应用是 '{front_app}'，不是 WeChat "
-                            f"(attempt {attempt + 1}/{max_retries})"
-                        )
-                else:
-                    err = r.stderr.decode("utf-8", errors="replace")[:200]
-                    _logger.warning(f"[Sender] 查询 frontmost 失败: {err} (attempt {attempt + 1}/{max_retries})")
-            except subprocess.TimeoutExpired:
-                _logger.warning(f"[Sender] 窗口激活验证超时 (attempt {attempt + 1}/{max_retries})")
-            except Exception as e:
-                _logger.warning(f"[Sender] 窗口激活验证异常: {e} (attempt {attempt + 1}/{max_retries})")
-
+            is_front, info = self.automation.get_frontmost_app("WeChat")
+            if is_front:
+                _logger.info(f"[Sender] 窗口激活验证通过 (attempt {attempt + 1}/{max_retries})")
+                return True, ""
+            front_app = info
+            _logger.warning(
+                f"[Sender] frontmost 应用是 '{info}'，不是 WeChat "
+                f"(attempt {attempt + 1}/{max_retries})"
+            )
             if attempt < max_retries - 1:
                 time.sleep(0.3)
 
@@ -106,43 +90,24 @@ class WeChatMessageSender(MessageSender):
 
     def _focus_input(self) -> tuple[int, str]:
         """点击微信窗口底部中央（输入框大致位置）获取焦点。"""
-        focus_script = """
-            tell application "System Events"
-                tell process "WeChat"
-                    set frontmost to true
-                    delay 0.2
-                    -- 获取窗口大小，点击底部中央（输入框区域）
-                    tell window 1
-                        set winPos to position
-                        set winSize to size
-                        set clickX to (item 1 of winPos) + (item 1 of winSize) / 2
-                        set clickY to (item 2 of winPos) + (item 2 of winSize) - 60
-                    end tell
-                    click at {clickX, clickY}
-                    delay 0.2
-                end tell
-            end tell
-        """
-        r = subprocess.run(["osascript", "-e", focus_script], timeout=5, capture_output=True)
-        err = r.stderr.decode("utf-8", errors="replace")[:200] if r.stderr else ""
-        _logger.info(f"[Sender] focus脚本 returncode: {r.returncode}, stderr: {err}")
-        return r.returncode, err
+        ok, rect, err = self.automation.get_window_rect("WeChat")
+        if not ok or rect is None:
+            return 1, f"获取窗口坐标失败: {err}"
+        click_x = int(rect.x + rect.width / 2)
+        click_y = int(rect.y + rect.height - 60)
+        if not self.automation.click_at(click_x, click_y):
+            return 1, "点击输入框失败"
+        return 0, ""
 
     def _pbcopy(self, text: str) -> tuple[int, str]:
         """将文本复制到剪贴板。"""
-        r = subprocess.run(
-            ["pbcopy"],
-            input=text.encode("utf-8"),
-            timeout=2,
-            capture_output=True,
-        )
-        err = r.stderr.decode("utf-8", errors="replace")[:200] if r.stderr else ""
-        _logger.info(f"[Sender] pbcopy returncode: {r.returncode}, stderr: {err}")
-        return r.returncode, err
+        if self.automation.set_clipboard_text(text):
+            return 0, ""
+        return 1, "pbcopy 失败"
 
     def _paste(self, delay: float) -> tuple[int, str]:
         """执行 AppleScript Command+V 粘贴。"""
-        paste_script = f'''
+        script = f'''
             tell application "System Events"
                 tell process "WeChat"
                     keystroke "v" using command down
@@ -150,27 +115,19 @@ class WeChatMessageSender(MessageSender):
                 end tell
             end tell
         '''
-        r = subprocess.run(
-            ["osascript", "-e", paste_script],
-            timeout=5,
-            capture_output=True,
-        )
-        err = r.stderr.decode("utf-8", errors="replace")[:200] if r.stderr else ""
-        _logger.info(f"[Sender] paste returncode: {r.returncode}, delay={delay}s")
-        return r.returncode, err
+        rc, _, stderr = self.automation.run_applescript(script, timeout=5)
+        _logger.info(f"[Sender] paste returncode: {rc}, delay={delay}s")
+        return rc, stderr[:200]
 
     def _clear_clipboard(self) -> None:
         """清空剪贴板，防止 verify 读到旧内容。"""
-        try:
-            subprocess.run(["pbcopy"], input=b"", timeout=2, capture_output=True)
-        except Exception as e:
-            _logger.debug("[Sender] 清空剪贴板失败: %s", e)
+        self.automation.set_clipboard_text("")
 
     def _verify(self) -> tuple[str, int, int]:
         """验证输入框内容：Command+A + Command+C + pbpaste。
         返回 (pasted_text, verify_script_rc, pbpaste_rc)。
         """
-        verify_script = '''
+        script = '''
             tell application "System Events"
                 tell process "WeChat"
                     keystroke "a" using command down
@@ -180,25 +137,14 @@ class WeChatMessageSender(MessageSender):
                 end tell
             end tell
         '''
-        r_verify_script = subprocess.run(
-            ["osascript", "-e", verify_script],
-            timeout=5,
-            capture_output=True,
-        )
-        verify_rc = r_verify_script.returncode
+        rc_verify, _, stderr = self.automation.run_applescript(script, timeout=5)
+        verify_rc = rc_verify
 
-        try:
-            r_paste = subprocess.run(
-                ["pbpaste"],
-                timeout=2,
-                capture_output=True,
-            )
-            pasted_text = r_paste.stdout.decode("utf-8", errors="replace")
-            pbpaste_rc = r_paste.returncode
-        except Exception as e:
-            _logger.warning(f"[Sender] pbpaste 验证读取异常: {e}")
+        ok, pasted_text = self.automation.get_clipboard_text()
+        pbpaste_rc = 0 if ok else 1
+        if not ok:
+            _logger.warning(f"[Sender] pbpaste 验证读取异常: {pasted_text}")
             pasted_text = ""
-            pbpaste_rc = -1
 
         _logger.info(
             f"[Sender] verify: len={len(pasted_text)}, verify_rc={verify_rc}, "
@@ -208,7 +154,7 @@ class WeChatMessageSender(MessageSender):
 
     def _clear_input(self) -> None:
         """清空微信输入框内容。"""
-        clear_script = '''
+        script = '''
             tell application "System Events"
                 tell process "WeChat"
                     keystroke "a" using command down
@@ -218,17 +164,13 @@ class WeChatMessageSender(MessageSender):
                 end tell
             end tell
         '''
-        r = subprocess.run(
-            ["osascript", "-e", clear_script],
-            timeout=5,
-            capture_output=True,
-        )
-        _logger.info(f"[Sender] 清空输入框 returncode: {r.returncode}")
+        rc, _, _ = self.automation.run_applescript(script, timeout=5)
+        _logger.info(f"[Sender] 清空输入框 returncode: {rc}")
 
     def _keystroke(self, text: str) -> tuple[int, str]:
         """通过 AppleScript keystroke 逐字输入文本。"""
         escaped = text.replace('"', '\\"')
-        ks_script = f'''
+        script = f'''
             tell application "System Events"
                 tell process "WeChat"
                     keystroke "{escaped}"
@@ -236,18 +178,13 @@ class WeChatMessageSender(MessageSender):
                 end tell
             end tell
         '''
-        r = subprocess.run(
-            ["osascript", "-e", ks_script],
-            timeout=10,
-            capture_output=True,
-        )
-        err = r.stderr.decode("utf-8", errors="replace")[:200] if r.stderr else ""
-        _logger.info(f"[Sender] keystroke returncode: {r.returncode}, stderr: {err}")
-        return r.returncode, err
+        rc, _, stderr = self.automation.run_applescript(script, timeout=10)
+        _logger.info(f"[Sender] keystroke returncode: {rc}, stderr: {stderr[:200]}")
+        return rc, stderr[:200]
 
     def _send_return(self) -> tuple[int, str]:
         """按 Return 键发送消息（先取消全选避免替换为换行）。"""
-        return_script = '''
+        script = '''
             tell application "System Events"
                 tell process "WeChat"
                     key code 124
@@ -256,14 +193,9 @@ class WeChatMessageSender(MessageSender):
                 end tell
             end tell
         '''
-        r = subprocess.run(
-            ["osascript", "-e", return_script],
-            timeout=5,
-            capture_output=True,
-        )
-        err = r.stderr.decode("utf-8", errors="replace")[:200] if r.stderr else ""
-        _logger.info(f"[Sender] return 发送 returncode: {r.returncode}")
-        return r.returncode, err
+        rc, _, stderr = self.automation.run_applescript(script, timeout=5)
+        _logger.info(f"[Sender] return 发送 returncode: {rc}")
+        return rc, stderr[:200]
 
     # ------------------------------------------------------------------
     # 主发送方法
@@ -295,13 +227,9 @@ class WeChatMessageSender(MessageSender):
         original_clipboard = ""
         t0 = time.time()
         try:
-            r_clip = subprocess.run(
-                ["pbpaste"],
-                timeout=2,
-                capture_output=True,
-            )
-            if r_clip.returncode == 0:
-                original_clipboard = r_clip.stdout.decode("utf-8", errors="replace")
+            ok, cb_text = self.automation.get_clipboard_text()
+            if ok:
+                original_clipboard = cb_text
             perf["read_clipboard"] = (time.time() - t0) * 1000
         except Exception as e:
             _logger.warning(f"[Sender] 读取原始剪贴板异常: {e}")
@@ -452,15 +380,8 @@ class WeChatMessageSender(MessageSender):
         finally:
             # 恢复用户原始剪贴板内容
             try:
-                r_restore = subprocess.run(
-                    ["pbcopy"],
-                    input=original_clipboard.encode("utf-8"),
-                    timeout=2,
-                    capture_output=True,
-                )
-                _logger.info(
-                    f"[Sender] 恢复剪贴板 returncode: {r_restore.returncode}"
-                )
+                self.automation.set_clipboard_text(original_clipboard)
+                _logger.info("[Sender] 恢复剪贴板完成")
             except Exception as e:
                 _logger.warning(f"[Sender] 恢复剪贴板异常: {e}")
 
@@ -526,17 +447,12 @@ class WeChatMessageSender(MessageSender):
 
             # 4. 用 AppleScript 把文件复制到剪贴板
             safe_path = abs_path.replace('"', '\\"')
-            copy_script = f'''
+            script = f'''
                 set the clipboard to (POSIX file "{safe_path}")
             '''
-            r = subprocess.run(
-                ["osascript", "-e", copy_script],
-                timeout=5,
-                capture_output=True,
-            )
-            if r.returncode != 0:
-                err = r.stderr.decode("utf-8", errors="replace")[:200]
-                return ActionResult(success=False, error=f"复制文件到剪贴板失败: {err}")
+            rc, _, stderr = self.automation.run_applescript(script, timeout=5)
+            if rc != 0:
+                return ActionResult(success=False, error=f"复制文件到剪贴板失败: {stderr[:200]}")
 
             # 5. 粘贴（文件粘贴需要比文本更长的延迟）
             rc, err = self._paste(delay=0.8)

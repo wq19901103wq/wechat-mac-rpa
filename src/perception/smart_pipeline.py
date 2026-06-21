@@ -828,7 +828,7 @@ class SmartPerceptionPipeline:
     @staticmethod
     def _compute_hash(path: str) -> str:
         with open(path, "rb") as f:
-            return hashlib.md5(f.read()).hexdigest()
+            return hashlib.md5(f.read(), usedforsecurity=False).hexdigest()
 
     def _check_pixel_diff(self, prev_path: str, curr_path: str, region: tuple) -> float:
         """计算指定区域像素差异比例。"""

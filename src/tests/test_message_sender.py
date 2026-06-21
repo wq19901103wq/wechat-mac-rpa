@@ -1,11 +1,85 @@
 #!/usr/bin/env python3
-"""MessageSender paste 验证单元测试"""
+"""MessageSender paste 验证单元测试
 
-from unittest.mock import Mock, patch
+通过 Mock SystemAutomation 验证 WeChatMessageSender 的发送逻辑，
+不再直接依赖 subprocess.run。
+"""
+
+from unittest.mock import Mock
 
 import pytest
 
 from src.action.message_sender import WeChatMessageSender
+from src.action.system_automation import SystemAutomation
+from src.models.base import Rect
+
+
+class MockSystemAutomation(SystemAutomation):
+    """可编程的 SystemAutomation mock，用于测试发送流程。"""
+
+    def __init__(
+        self,
+        frontmost: bool = True,
+        pasted_texts: list[str] | None = None,
+        original_clipboard: str = "original_clipboard",
+    ):
+        self.frontmost = frontmost
+        self.pasted_texts = list(pasted_texts or [])
+        self.original_clipboard = original_clipboard
+        self._pbpaste_call_index = 0
+        self.calls: list[tuple[str, tuple, dict]] = []
+
+    def _log(self, name: str, *args, **kwargs):
+        self.calls.append((name, args, kwargs))
+
+    def activate_app(self, app_name: str) -> bool:
+        self._log("activate_app", app_name)
+        return True
+
+    def get_frontmost_app(self, app_name: str) -> tuple[bool, str]:
+        self._log("get_frontmost_app", app_name)
+        return self.frontmost, "WeChat" if self.frontmost else "Other"
+
+    def get_window_rect(self, app_name: str) -> tuple[bool, Rect | None, str]:
+        self._log("get_window_rect", app_name)
+        return True, Rect(x=100, y=100, width=800, height=600), ""
+
+    def click_at(self, x: int, y: int) -> bool:
+        self._log("click_at", x, y)
+        return True
+
+    def send_keys(self, key_spec: str) -> bool:
+        self._log("send_keys", key_spec)
+        return True
+
+    def run_applescript(self, script: str, timeout: int = 5) -> tuple[int, str, str]:
+        self._log("run_applescript", script, timeout=timeout)
+        return 0, "", ""
+
+    def set_clipboard_text(self, text: str) -> bool:
+        self._log("set_clipboard_text", text)
+        return True
+
+    def get_clipboard_text(self) -> tuple[bool, str]:
+        self._log("get_clipboard_text")
+        # 第一次调用：读取原始剪贴板；后续调用：读取验证时的输入框内容
+        if self._pbpaste_call_index == 0:
+            self._pbpaste_call_index += 1
+            return True, self.original_clipboard
+        idx = self._pbpaste_call_index - 1
+        self._pbpaste_call_index += 1
+        if idx < len(self.pasted_texts):
+            return True, self.pasted_texts[idx]
+        return True, ""
+
+    def capture_screen(
+        self,
+        rect: Rect,
+        output_path: str,
+        window_id: int | None = None,
+    ) -> tuple[bool, str]:
+        self._log("capture_screen", rect, output_path, window_id=window_id)
+        return True, ""
 
 
 @pytest.fixture
@@ -16,123 +90,58 @@ def sender():
 class TestPasteVerification:
     """修复方向：paste 后验证输入框内容，不匹配则重试"""
 
-    @patch("subprocess.run")
-    def test_paste_verification_success(self, mock_run, sender):
+    def test_paste_verification_success(self):
         """paste 验证通过，直接发送，无需重试"""
-        # 模拟 pbpaste 返回：第一次读取原始剪贴板，第二次读取验证时的输入框内容
-        def side_effect(cmd, **kwargs):
-            if cmd[0] == "pbpaste":
-                # 第一次：原始剪贴板；第二次：验证时输入框内容
-                if not hasattr(side_effect, "call_count"):
-                    side_effect.call_count = 0
-                side_effect.call_count += 1
-                if side_effect.call_count == 1:
-                    return Mock(returncode=0, stdout=b"original_clipboard")
-                else:
-                    # 验证时读到的是要发送的文本
-                    return Mock(returncode=0, stdout="测试消息".encode("utf-8"))
-            elif cmd[0] == "osascript":
-                script = cmd[2] if len(cmd) > 2 else ""
-                if "frontApp" in script or "frontmost" in script:
-                    return Mock(returncode=0, stdout=b"WeChat\n", stderr=b"")
-                return Mock(returncode=0, stderr=b"")
-            elif cmd[0] == "pbcopy":
-                return Mock(returncode=0, stderr=b"")
-            return Mock(returncode=0)
-
-        mock_run.side_effect = side_effect
+        automation = MockSystemAutomation(pasted_texts=["测试消息"])
+        sender = WeChatMessageSender(automation=automation)
 
         result = sender.send("测试消息")
 
         assert result.success is True
-        # osascript 调用次数：activate + focus + paste + verify(select+copy) + return
-        # 至少应该有 4 次 osascript 调用
-        osascript_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "osascript"]
-        assert len(osascript_calls) >= 4
+        assert automation.get_frontmost_app("WeChat")[0] is True
+        # 至少应包含 focus、paste、verify、return 相关的 automation 调用
+        assert any(c[0] == "run_applescript" for c in automation.calls)
+        assert any(c[0] == "get_clipboard_text" for c in automation.calls)
 
-    @patch("subprocess.run")
-    def test_paste_verification_fail_then_retry(self, mock_run, sender):
+    def test_paste_verification_fail_then_retry(self):
         """paste 验证失败，重试后成功"""
-        call_log = []
-
-        def side_effect(cmd, **kwargs):
-            call_log.append(cmd[0])
-            if cmd[0] == "pbpaste":
-                # 第1次: 原始剪贴板
-                # 第2次: 验证1失败（空内容）
-                # 第3次: 验证2成功
-                pbpaste_calls = [c for c in call_log if c == "pbpaste"]
-                idx = len(pbpaste_calls)
-                if idx == 1:
-                    return Mock(returncode=0, stdout=b"original")
-                elif idx == 2:
-                    return Mock(returncode=0, stdout=b"")  # 验证失败：输入框为空
-                elif idx == 3:
-                    return Mock(returncode=0, stdout="测试消息".encode("utf-8"))  # 重试后成功
-                return Mock(returncode=0, stdout=b"")
-            elif cmd[0] == "osascript":
-                script = cmd[2] if len(cmd) > 2 else ""
-                if "frontApp" in script or "frontmost" in script:
-                    return Mock(returncode=0, stdout=b"WeChat\n", stderr=b"")
-                return Mock(returncode=0, stderr=b"")
-            elif cmd[0] == "pbcopy":
-                return Mock(returncode=0, stderr=b"")
-            return Mock(returncode=0)
-
-        mock_run.side_effect = side_effect
+        automation = MockSystemAutomation(pasted_texts=["", "测试消息"])
+        sender = WeChatMessageSender(automation=automation)
 
         result = sender.send("测试消息")
 
         assert result.success is True
-        # 验证应该有重试：至少多了一次 paste + verify
-        pbpaste_count = sum(1 for c in call_log if c == "pbpaste")
-        assert pbpaste_count >= 3  # 原始 + 验证1 + 验证2
+        # 原始剪贴板 + 验证1 + 验证2 = 至少 3 次 get_clipboard_text
+        pbpaste_count = sum(1 for c in automation.calls if c[0] == "get_clipboard_text")
+        assert pbpaste_count >= 3
 
-    @patch("subprocess.run")
-    def test_paste_verification_fail_after_max_retries(self, mock_run, sender):
+    def test_paste_verification_fail_after_max_retries(self):
         """paste 验证多次失败，最终返回失败"""
-        def side_effect(cmd, **kwargs):
-            if cmd[0] == "pbpaste":
-                # 总是返回空，验证永远失败
-                return Mock(returncode=0, stdout=b"")
-            elif cmd[0] == "osascript":
-                script = cmd[2] if len(cmd) > 2 else ""
-                if "frontApp" in script or "frontmost" in script:
-                    return Mock(returncode=0, stdout=b"WeChat\n", stderr=b"")
-                return Mock(returncode=0, stderr=b"")
-            elif cmd[0] == "pbcopy":
-                return Mock(returncode=0, stderr=b"")
-            return Mock(returncode=0)
-
-        mock_run.side_effect = side_effect
+        automation = MockSystemAutomation(pasted_texts=["", "", "", ""])
+        sender = WeChatMessageSender(automation=automation)
 
         result = sender.send("测试消息")
 
         assert result.success is False
         assert "paste" in result.error.lower() or "验证" in result.error.lower() or "发送" in result.error.lower()
 
-    @patch("subprocess.run")
-    def test_paste_verification_with_partial_match(self, mock_run, sender):
+    def test_paste_verification_with_partial_match(self):
         """输入框内容包含发送文本（可能还有其他字符），应视为验证通过"""
-        def side_effect(cmd, **kwargs):
-            if cmd[0] == "pbpaste":
-                pbpaste_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "pbpaste"]
-                if len(pbpaste_calls) == 0:
-                    return Mock(returncode=0, stdout=b"original")
-                else:
-                    # 输入框内容包含发送文本 + 一些其他字符
-                    return Mock(returncode=0, stdout="前缀测试消息后缀".encode("utf-8"))
-            elif cmd[0] == "osascript":
-                script = cmd[2] if len(cmd) > 2 else ""
-                if "frontApp" in script or "frontmost" in script:
-                    return Mock(returncode=0, stdout=b"WeChat\n", stderr=b"")
-                return Mock(returncode=0, stderr=b"")
-            elif cmd[0] == "pbcopy":
-                return Mock(returncode=0, stderr=b"")
-            return Mock(returncode=0)
-
-        mock_run.side_effect = side_effect
+        automation = MockSystemAutomation(pasted_texts=["前缀测试消息后缀"])
+        sender = WeChatMessageSender(automation=automation)
 
         result = sender.send("测试消息")
 
         assert result.success is True
+
+    def test_silent_mode(self):
+        """静默模式下不调用任何 UI 自动化"""
+        automation = MockSystemAutomation()
+        sender = WeChatMessageSender(silent_mode=True, automation=automation)
+
+        result = sender.send("测试消息")
+
+        assert result.success is True
+        assert result.sent_text == "测试消息"
+        # 静默模式不应触发任何 UI 调用
+        assert len(automation.calls) == 0

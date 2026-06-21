@@ -221,7 +221,7 @@ def _load_all_cases() -> list[OCRBenchmarkCase]:
 
 def _file_hash(path: Path) -> str:
     """计算文件 MD5"""
-    h = hashlib.md5()
+    h = hashlib.md5(usedforsecurity=False)
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
@@ -308,7 +308,7 @@ def _call_api(screenshot_path: Path, api_key: str | None = None) -> dict:
     try:
         from src.perception.smart_pipeline import _QwenAPIClient
     except ImportError:
-        from perception.smart_pipeline import _QwenAPIClient
+        from perception.smart_pipeline import _QwenAPIClient  # type: ignore[no-redef]
 
     if api_key is None:
         api_key = _get_api_key()
@@ -464,7 +464,7 @@ def run_benchmark(use_api: bool = False, api_key: str | None = None) -> list[OCR
         raise RuntimeError("未找到任何 OCR benchmark case")
 
     print(f"\n加载了 {len(cases)} 个 case:")
-    cat_counts = {}
+    cat_counts: dict[str, int] = {}
     for c in cases:
         cat_counts[c.category] = cat_counts.get(c.category, 0) + 1
     for cat, count in sorted(cat_counts.items()):
@@ -568,7 +568,7 @@ def print_report(results: list[OCRBenchmarkResult], metrics: dict[str, Any]) -> 
     print("=" * 95)
 
     # 按 category 分组
-    categories = {}
+    categories: dict[str, list] = {}
     for r in results:
         categories.setdefault(r.category, []).append(r)
 

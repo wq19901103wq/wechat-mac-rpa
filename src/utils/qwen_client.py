@@ -7,7 +7,7 @@ import logging
 import os
 import time
 from collections import defaultdict
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 try:
     from openai import OpenAI
@@ -87,12 +87,12 @@ class QwenClient:
             _logger.info("[Qwen] request start: model=%s tools=%s timeout=%s",
                          kwargs.get("model"), bool(kwargs.get("tools")), kwargs.get("timeout"))
             t_req_start = time.time()
-            response = self.client.chat.completions.create(**kwargs)
+            response = self.client.chat.completions.create(**kwargs)  # type: ignore[arg-type]
             t_req_ms = (time.time() - t_req_start) * 1000
             # 记录 token 消耗
             usage = getattr(response, "usage", None)
             if usage:
-                model_key = kwargs.get("model", self.model)
+                model_key = str(kwargs.get("model", self.model))
                 self._token_stats[model_key]["prompt"] += getattr(usage, "prompt_tokens", 0) or 0
                 self._token_stats[model_key]["completion"] += getattr(usage, "completion_tokens", 0) or 0
                 self._token_stats[model_key]["total"] += getattr(usage, "total_tokens", 0) or 0
@@ -119,7 +119,7 @@ class QwenClient:
                 _logger.info("[Qwen] output: %s", text[:500])
             # 如果模型返回 tool_calls，也返回（让上层处理）
             if getattr(msg, "tool_calls", None):
-                return msg
+                return msg  # type: ignore[return-value]
             # DeepSeek 某些模型（如 v4-pro）在长 prompt 下会把输出放在 reasoning_content 而非 content
             if not text and reasoning:
                 text = reasoning
@@ -128,7 +128,7 @@ class QwenClient:
             print(f"Qwen LLM 错误: {e}")
             return ""
 
-    def _chat_with_user_id(self, user_id: str, message: str, system_prompt: str = None) -> str:
+    def _chat_with_user_id(self, user_id: str, message: str, system_prompt: Optional[str] = None) -> str:
         """简单封装"""
         messages = []
         if system_prompt:

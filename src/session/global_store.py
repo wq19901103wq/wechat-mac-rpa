@@ -86,7 +86,7 @@ def _msg_id(chat_name: str, msg: ChatMessage, is_group: bool = False) -> str:
     else:
         content = msg.text
     normalized = _normalize_text(content)
-    text_hash = hashlib.md5(normalized.encode()).hexdigest()[:16]
+    text_hash = hashlib.md5(normalized.encode(), usedforsecurity=False).hexdigest()[:16]
     normalized_sender = _normalize_sender(chat_name, msg, is_group)
     return f"{chat_name}|{normalized_sender}|{text_hash}"
 
@@ -230,7 +230,7 @@ def _lcs_match(history: List[ChatMessage], tick: List[ChatMessage], chat_name: s
 class GlobalStore:
     """全局存储：管理所有聊天的状态，统一去重、持久化."""
 
-    def __init__(self, max_messages: int = 200, state_file: str = None):
+    def __init__(self, max_messages: int = 200, state_file: Optional[str] = None):
         if state_file is None:
             state_file = str(Path(__file__).parent.parent.parent / "data" / "global_state.json")
         self.chats: Dict[str, ChatState] = {}
@@ -473,11 +473,13 @@ class GlobalStore:
             # Bot 自己发的消息，如果 text 已存在，更新 reply_time 而不是跳过
             if m.sender_type == SenderType.SELF and m.text in bot_entries:
                 existing = bot_entries[m.text]
-                if getattr(m, "reply_time", None) and (
-                    not getattr(existing, "reply_time", None)
-                    or m.reply_time > existing.reply_time
+                m_reply_time = getattr(m, "reply_time", None)
+                existing_reply_time = getattr(existing, "reply_time", None)
+                if m_reply_time and (
+                    not existing_reply_time
+                    or m_reply_time > existing_reply_time
                 ):
-                    existing.reply_time = m.reply_time
+                    existing.reply_time = m_reply_time
                 continue
             new_messages.append(m)
             if lid is not None:
@@ -767,7 +769,7 @@ class GlobalStore:
             except Exception as e:
                 _logger.error(f"GlobalStore save failed unexpectedly: {type(e).__name__}: {e}\n{traceback.format_exc()}")
 
-    def save_screenshot(self, image_path: str, session_id: str = None) -> str:
+    def save_screenshot(self, image_path: str, session_id: Optional[str] = None) -> str:
         """保存截图到 data/screenshots/ 目录。"""
         import shutil
         from datetime import datetime

@@ -5,7 +5,8 @@
 尝试自动点击登录按钮；若仍无法恢复，则提示用户扫码。
 """
 
-import subprocess
+import os
+import tempfile
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -13,6 +14,7 @@ from typing import List, Optional
 
 import Quartz
 
+from src.action.system_automation import MacOSSystemAutomation, SystemAutomation
 from src.models.base import OCRTextElement, Rect
 from src.ocr.vision_ocr import VisionOCREngine
 
@@ -35,15 +37,19 @@ class WeChatLoginHandler:
 
     def __init__(
         self,
-        capture_output: str = "/tmp/wechat_login_capture.png",
-        login_keywords: List[str] = None,
+        capture_output: Optional[str] = None,
+        login_keywords: Optional[List[str]] = None,
         min_effective_width: int = 800,
         min_effective_height: int = 600,
+        automation: SystemAutomation | None = None,
     ):
+        if capture_output is None:
+            capture_output = os.path.join(tempfile.gettempdir(), "wechat_login_capture.png")
         self.capture_output = capture_output
         self.login_keywords = login_keywords or ["登录", "进入微信", "确认登录"]
         self.min_effective_width = min_effective_width
         self.min_effective_height = min_effective_height
+        self.automation = automation or MacOSSystemAutomation()
         self.ocr = VisionOCREngine()
 
     def _find_window(self) -> Optional[Rect]:
@@ -76,12 +82,9 @@ class WeChatLoginHandler:
 
     def _capture_window(self, rect: Rect) -> str:
         """截图指定窗口"""
-        cmd = [
-            'screencapture',
-            '-R', f"{rect.x},{rect.y},{rect.width},{rect.height}",
-            '-x', self.capture_output
-        ]
-        subprocess.run(cmd, check=True, timeout=5)
+        ok, err = self.automation.capture_screen(rect, self.capture_output)
+        if not ok:
+            raise RuntimeError(f"截图失败: {err}")
         return self.capture_output
 
     def _detect_login_button(self, elements: List[OCRTextElement]) -> Optional[Rect]:
@@ -119,8 +122,8 @@ class WeChatLoginHandler:
                     end tell
                 end tell
             '''
-            subprocess.run(['osascript', '-e', script], timeout=5, capture_output=True)
-            return True
+            rc, _, _ = self.automation.run_applescript(script, timeout=5)
+            return rc == 0
         except Exception:
             return False
 

@@ -4,7 +4,7 @@
 import glob
 import logging
 import os
-import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,6 +13,7 @@ from typing import Optional
 import AppKit
 import Quartz
 
+from src.action.system_automation import MacOSSystemAutomation, SystemAutomation
 from src.models.base import Rect
 
 _logger = logging.getLogger("src.window_capture")
@@ -46,22 +47,24 @@ class WindowCapture:
 
     def __init__(
         self,
-        output_path: str = None,
+        output_path: Optional[str] = None,
         min_effective_width: int = 800,
         min_effective_height: int = 600,
+        automation: SystemAutomation | None = None,
     ):
         if output_path is None:
-            import os
-            from datetime import datetime
             ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
             pid = os.getpid()
-            output_path = f"/tmp/wechat_capture_{ts}_{pid}.png"
+            output_path = os.path.join(
+                tempfile.gettempdir(), f"wechat_capture_{ts}_{pid}.png"
+            )
         self.output_path = output_path
         self.app_names = ['WeChat', '微信']
         self.min_width = 200
         self.min_height = 200
         self.min_effective_width = min_effective_width
         self.min_effective_height = min_effective_height
+        self.automation = automation or MacOSSystemAutomation()
 
     def _find_window(self) -> Optional[tuple]:
         """使用 Quartz 查找微信窗口，返回面积最大的有效窗口 (Rect, window_id) 或 None"""
@@ -117,10 +120,7 @@ class WindowCapture:
 
     def _activate_wechat(self) -> None:
         """尝试激活微信应用"""
-        subprocess.run(
-            ['osascript', '-e', 'tell application "WeChat" to activate'],
-            timeout=3, capture_output=True
-        )
+        self.automation.activate_app("WeChat")
 
     def _get_scale_factor(self) -> float:
         """获取主屏幕的 Retina 缩放因子"""
@@ -142,20 +142,11 @@ class WindowCapture:
         优先使用 -l <windowid> 只截取指定窗口（不受其他窗口覆盖影响），
         fallback 到 -R 按坐标截取。
         """
-        if window_id:
-            cmd = [
-                'screencapture',
-                '-l', str(window_id),
-                '-o',  # 排除窗口阴影，只截取内容区域
-                '-x', self.output_path
-            ]
-        else:
-            cmd = [
-                'screencapture',
-                '-R', self._to_screencapture_region(rect),
-                '-x', self.output_path
-            ]
-        subprocess.run(cmd, check=True, timeout=5)
+        ok, err = self.automation.capture_screen(
+            rect, self.output_path, window_id=window_id if window_id else None
+        )
+        if not ok:
+            raise RuntimeError(f"截图失败: {err}")
 
     def _validate_wechat_screenshot(self, image_path: str) -> bool:
         """验证截图内容确实是微信窗口。
@@ -208,7 +199,7 @@ class WindowCapture:
         # 清理旧截图（超过1小时的临时文件，避免 /tmp 无限累积）
         try:
             cutoff = time.time() - 3600
-            for old in glob.glob("/tmp/wechat_capture_*.png"):
+            for old in glob.glob(os.path.join(tempfile.gettempdir(), "wechat_capture_*.png")):
                 try:
                     if os.path.getmtime(old) < cutoff:
                         os.remove(old)
@@ -221,7 +212,9 @@ class WindowCapture:
         # 这是 SmartPerceptionPipeline 像素 diff 正确工作的前提
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
         pid = os.getpid()
-        self.output_path = f"/tmp/wechat_capture_{ts}_{pid}.png"
+        self.output_path = os.path.join(
+            tempfile.gettempdir(), f"wechat_capture_{ts}_{pid}.png"
+        )
 
         t_find_start = time.time()
         result = self._find_window()
