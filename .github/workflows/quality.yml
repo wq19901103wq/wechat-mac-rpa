@@ -57,7 +57,7 @@ jobs:
       - run: pip install bandit
       # 目前安全扫描遗留问题较多，先只报告不阻塞 merge； issues 输出到日志。
       - run: bandit -r src -f json -o bandit-report.json || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: bandit-report
@@ -82,7 +82,7 @@ jobs:
             src/tests/test_message_extractor.py \
             src/tests/test_session_memory.py \
             --cov=src --cov-report=xml --cov-report=term
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-report
