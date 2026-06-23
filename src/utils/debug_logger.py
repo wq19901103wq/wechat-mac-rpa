@@ -8,12 +8,18 @@ Tick 级调试日志 —— 保存每个截图的完整处理链路，方便排�
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 _logger = logging.getLogger(__name__)
+
+# tick debug 文件保留策略：超过此秒数的旧文件将被清理（默认 1 天）
+DEBUG_MAX_AGE_SECONDS = 86400
+# 清理检查间隔：每这么多秒执行一次，避免每次保存都遍历目录
+_DEBUG_CLEANUP_INTERVAL = 600
 
 
 @dataclass
@@ -104,6 +110,7 @@ class DebugLogger:
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.current: Optional[TickDebugInfo] = None
+        self._last_cleanup = 0.0  # 上次清理 tick debug 文件的时间戳
 
     def start_tick(self, tick_id: int, screenshot_path: str) -> TickDebugInfo:
         self.current = TickDebugInfo(
@@ -123,7 +130,37 @@ class DebugLogger:
 
         # 同时保存完整 prompt 为 markdown（不截断，方便阅读）
         self._save_prompt_markdown(ts)
+        # 清理超过保留期的旧 tick debug 文件
+        self._cleanup_old_files()
         return path
+
+    def _cleanup_old_files(self) -> None:
+        """清理超过保留期的旧 tick debug JSON，避免 data/debug 无限膨胀。
+
+        每隔 _DEBUG_CLEANUP_INTERVAL 秒执行一次，删除修改时间早于
+        DEBUG_MAX_AGE_SECONDS 的 tick_*.json 文件（不含 prompts 子目录，
+        那里有独立的保留 50 个逻辑）。
+        """
+        now = time.time()
+        if now - self._last_cleanup < _DEBUG_CLEANUP_INTERVAL:
+            return
+        self._last_cleanup = now
+        cutoff = now - DEBUG_MAX_AGE_SECONDS
+        try:
+            removed = 0
+            for entry in self.base_dir.iterdir():
+                if not entry.is_file() or not entry.name.startswith("tick_") or entry.suffix != ".json":
+                    continue
+                try:
+                    if entry.stat().st_mtime < cutoff:
+                        entry.unlink()
+                        removed += 1
+                except OSError as e:
+                    _logger.debug("删除旧 debug 文件失败 %s: %s", entry.name, e)
+            if removed:
+                _logger.info("[DebugLogger] 清理旧 tick debug %d 个（保留期 %d 秒）", removed, DEBUG_MAX_AGE_SECONDS)
+        except OSError as e:
+            _logger.debug("[DebugLogger] 清理 debug 目录失败: %s", e)
 
     def _save_prompt_markdown(self, ts: str) -> None:
         """保存完整 prompt 到 markdown 文件，不截断。按实际发生顺序：OCR → 对话回复（多轮）。
