@@ -18,6 +18,11 @@ from src.utils.chat_utils import _is_group_chat_name
 
 _logger = logging.getLogger("src.global_store")
 
+# 截图保留策略：超过此秒数的旧截图将被清理（默认 1 天）
+SCREENSHOT_MAX_AGE_SECONDS = 86400
+# 清理检查间隔：每这么多秒执行一次清理，避免每次保存都遍历目录
+_SCREENSHOT_CLEANUP_INTERVAL = 600
+
 
 @dataclass
 class ChatState:
@@ -239,6 +244,7 @@ class GlobalStore:
         self._state_file.parent.mkdir(parents=True, exist_ok=True)
         self._screenshots_dir = self._state_file.parent / "screenshots"
         self._screenshots_dir.mkdir(exist_ok=True)
+        self._last_screenshot_cleanup = 0.0  # 上次截图清理的时间戳
         self._lock = threading.Lock()
         self._dirty: set = set()  # 有变化的聊天名，增量保存用
         self._load()
@@ -779,4 +785,32 @@ class GlobalStore:
         filename = f"wechat_{session_id}_{timestamp}.png"
         filepath = self._screenshots_dir / filename
         shutil.copy2(image_path, filepath)
+        self._cleanup_old_screenshots()
         return str(filepath)
+
+    def _cleanup_old_screenshots(self) -> None:
+        """清理超过保留期的旧截图，避免 data/screenshots 无限膨胀。
+
+        每隔 _SCREENSHOT_CLEANUP_INTERVAL 秒执行一次，删除修改时间早于
+        SCREENSHOT_MAX_AGE_SECONDS 的 png 文件。
+        """
+        now = time.time()
+        if now - self._last_screenshot_cleanup < _SCREENSHOT_CLEANUP_INTERVAL:
+            return
+        self._last_screenshot_cleanup = now
+        cutoff = now - SCREENSHOT_MAX_AGE_SECONDS
+        try:
+            removed = 0
+            for entry in self._screenshots_dir.iterdir():
+                if not entry.is_file() or entry.suffix != ".png":
+                    continue
+                try:
+                    if entry.stat().st_mtime < cutoff:
+                        entry.unlink()
+                        removed += 1
+                except OSError as e:
+                    _logger.debug("删除旧截图失败 %s: %s", entry.name, e)
+            if removed:
+                _logger.info("[GlobalStore] 清理旧截图 %d 张（保留期 %d 秒）", removed, SCREENSHOT_MAX_AGE_SECONDS)
+        except OSError as e:
+            _logger.debug("[GlobalStore] 清理截图目录失败: %s", e)

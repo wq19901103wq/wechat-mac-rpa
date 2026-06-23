@@ -1,7 +1,11 @@
 """工具注册表 - 管理所有可用工具"""
 
 import json
+import logging
+import threading
 from typing import Any, Callable, Dict, List
+
+_logger = logging.getLogger("src.tool_registry")
 
 
 class Tool:
@@ -36,7 +40,11 @@ class Tool:
             args = json.loads(arguments) if arguments else {}
             result = self.func(**args)
             return str(result) if result is not None else ""
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            _logger.warning("工具 %s 参数解析/执行失败: %s", self.name, e)
+            return f"工具执行出错: {e}"
         except Exception as e:
+            _logger.warning("工具 %s 执行异常: %s", self.name, e, exc_info=True)
             return f"工具执行出错: {e}"
 
 
@@ -72,9 +80,15 @@ class ToolRegistry:
         return [t.to_openai_schema() for t in self._tools.values()]
 
 
-# 全局单例
-_registry = ToolRegistry()
+# 全局单例（受 Lock 保护的双重检查锁定，见 AGENTS.md 3.6）
+_registry: "ToolRegistry | None" = None
+_registry_lock = threading.Lock()
 
 
 def get_registry() -> ToolRegistry:
+    global _registry
+    if _registry is None:
+        with _registry_lock:
+            if _registry is None:
+                _registry = ToolRegistry()
     return _registry

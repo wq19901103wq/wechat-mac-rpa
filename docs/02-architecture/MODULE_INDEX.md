@@ -46,8 +46,8 @@
 | 现象 | 可能原因 | 修改文件 |
 |------|---------|---------|
 | 不知道 Bot 为什么没回复 | execution.jsonl 缺少 decision 日志 | `src/logging/bot_logger.py` |
-| 历史记录丢失/找不到 | ChatHistory 路径或写入逻辑错误 | `src/storage/chat_history.py` |
-| 单文件过大加载慢 | 未按 chat_name 分片 jsonl | `src/storage/chat_history.py` |
+| 历史记录丢失/找不到 | GlobalStore 分片写入逻辑错误 | `src/session/global_store.py` |
+| 单文件过大加载慢 | 未按 chat_name 分片 jsonl | `src/session/global_store.py` |
 
 ### "Benchmark 回归失败"
 | 现象 | 可能原因 | 修改文件 |
@@ -161,7 +161,7 @@
 - **改什么**: Kimi 本地代理连接配置
 - **不改什么**: 业务逻辑
 
-### `src/llm/qwen_client.py`
+### `src/utils/qwen_client.py`
 - **定位**: L4 LLM 客户端
 - **改什么**: DashScope API 调用参数
 - **不改什么**: 业务逻辑
@@ -231,18 +231,24 @@
 - **不改什么**: 业务决策逻辑
 - **排查必读: [../03-guides/LOGGING_DESIGN.md](../03-guides/LOGGING_DESIGN.md)`
 
-### `src/storage/chat_history.py`
-- **定位**: L4 持久化
-- **改什么**: 分片策略、查询接口、HistoryRecord 字段、旧版迁移逻辑
-- **不改什么**: 去重算法（那是 Session 的事）
+### `src/session/global_store.py`
+- **定位**: L4 持久化 + 会话去重
+- **改什么**: 分片策略、查询接口、去重算法、旧版迁移逻辑、截图保留策略
+- **不改什么**: 业务决策逻辑
 - **排查必读: [../03-guides/LOGGING_DESIGN.md](../03-guides/LOGGING_DESIGN.md)`
+
+> 注：`src/storage/chat_history.py` 在 ARCHITECTURE.md 中标注为"待拆分/尚未创建"，当前持久化职责由 `src/session/global_store.py` 承担。
 
 ### Benchmark 测试文件
 - `src/tests/test_ocr_quality_benchmark.py` — OCR 质量评估（33 cases）
 - `src/tests/test_reply_quality_benchmark.py` — 回复质量评估（24 cases）
+- `src/tests/test_reply_quality_benchmark_v2.py` — 回复质量多维度评估
+- `src/tests/test_reply_stability_benchmark.py` — 回复稳定性一致性
 - `src/tests/test_tool_decision_benchmark.py` — 工具决策评估（27 cases）
 - `src/tests/test_memory_search_benchmark.py` — 记忆搜索评估（29 cases）
 - `src/tests/test_chat_list_unread_benchmark.py` — 未读角标评估（23 cases）
+- `src/tests/test_judge_quality_benchmark.py` — Judge 判定质量评估（18 cases）
+- `src/tests/test_judge_quality_benchmark_v2.py` — Judge 质量多维度 Rubric 评估
 
 ---
 
@@ -266,7 +272,7 @@ models/base.py
     │   session/global_store.py
     │   reply/policy.py
     │   llm/openclaw_client.py      ← Kimi 本地代理
-    │   llm/qwen_client.py          ← DashScope API
+    │   utils/qwen_client.py          ← DashScope API
     │       ↑
     │   reply/generator.py
     │   action/message_sender.py
@@ -279,9 +285,9 @@ models/base.py
     ├── badcase/                    ← L5 辅助，独立不进入生产链
     │
     ├── logging/bot_logger.py
-    └── storage/chat_history.py
+    └── session/global_store.py     ← L4 持久化+去重（storage/chat_history 待拆分）
 ```
 
 **注意**: 箭头方向表示 "被依赖"。没有循环依赖。
 
-**新增依赖规则**: `logging` 和 `storage/chat_history` 可被 Bot (L5) 直接依赖，但不可被 L1-L3 依赖。
+**新增依赖规则**: `logging` 和 `session/global_store` 可被 Bot (L5) 直接依赖，但不可被 L1-L3 依赖。

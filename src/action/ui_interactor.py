@@ -4,6 +4,7 @@
 基于坐标进行鼠标点击操作，用于切换聊天或聚焦输入框。
 """
 
+import logging
 from abc import ABC, abstractmethod
 
 from src.models.base import ChatListItem
@@ -12,6 +13,8 @@ try:
     import pyautogui
 except Exception:  # pragma: no cover
     pyautogui = None
+
+_logger = logging.getLogger("src.ui_interactor")
 
 
 class UIInteractor(ABC):
@@ -46,7 +49,8 @@ class PyAutoGUIInteractor(UIInteractor):
             center_y = item.rect.y + item.rect.height // 2
             pyautogui.click(center_x, center_y)
             return True
-        except Exception:
+        except (TypeError, AttributeError, OSError) as e:
+            _logger.warning("click_chat_item 失败: %s", e)
             return False
 
     def click_input_box(self) -> bool:
@@ -54,5 +58,6 @@ class PyAutoGUIInteractor(UIInteractor):
         try:
             pyautogui.click(self.DEFAULT_INPUT_BOX_X, self.DEFAULT_INPUT_BOX_Y)
             return True
-        except Exception:
+        except (TypeError, AttributeError, OSError) as e:
+            _logger.warning("click_input_box 失败: %s", e)
             return False

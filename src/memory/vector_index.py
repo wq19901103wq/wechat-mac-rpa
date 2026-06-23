@@ -11,7 +11,7 @@ CSR 的 data/indices/indptr/shape。
 """
 
 import json
-import re
+import string
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -124,8 +124,12 @@ class ChatVectorIndex:
         if not text:
             return ""
         text = text.lower().strip()
-        text = re.sub(r'[\s\.。，,！!？?~～]+', ' ', text)
-        return text
+        # 把空白和常见标点统一成空格，再规范化（Rule 3.4：用 str.translate 替代正则）
+        trans = str.maketrans({
+            ch: " " for ch in string.whitespace + " .。，,！!？?~～"
+        })
+        text = text.translate(trans)
+        return " ".join(text.split())
 
     def _load_cache_data(self, cache_file: Path) -> Dict[str, Any]:
         """从 JSON 缓存文件读取原始数据字典。"""

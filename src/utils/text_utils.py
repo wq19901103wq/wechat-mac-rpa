@@ -3,6 +3,9 @@
 
 import re
 
+# 关键词清理用的标点删除表（Rule 3.4：用 str.translate 替代正则字符集）
+_PUNCT_TO_STRIP = str.maketrans("", "", "，。！？、；：\"'（）【】[]{}")
+
 
 def _truncate_text(text: str, max_len: int, suffix: str = "\n\n... [truncated]") -> str:
     """截断文本到指定长度，保留尾部提示。"""
@@ -58,8 +61,7 @@ def extract_context_around_keywords(
     # 清理关键词：去空白、转小写、去除常见标点
     clean_kws = []
     for kw in keywords:
-        ck = kw.strip().lower()
-        ck = re.sub(r"[，。！？、；：\"'（）【】\[\]{}]", '', ck)
+        ck = kw.strip().lower().translate(_PUNCT_TO_STRIP)
         if ck and len(ck) >= 2:  # 忽略单字和空串
             clean_kws.append(ck)
 

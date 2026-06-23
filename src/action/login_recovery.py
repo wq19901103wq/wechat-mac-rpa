@@ -5,6 +5,7 @@
 尝试自动点击登录按钮；若仍无法恢复，则提示用户扫码。
 """
 
+import logging
 import os
 import tempfile
 import time
@@ -17,6 +18,8 @@ import Quartz
 from src.action.system_automation import MacOSSystemAutomation, SystemAutomation
 from src.models.base import OCRTextElement, Rect
 from src.ocr.vision_ocr import VisionOCREngine
+
+_logger = logging.getLogger("src.login_recovery")
 
 
 class LoginRecoveryStatus(Enum):
@@ -124,7 +127,8 @@ class WeChatLoginHandler:
             '''
             rc, _, _ = self.automation.run_applescript(script, timeout=5)
             return rc == 0
-        except Exception:
+        except (TypeError, AttributeError) as e:
+            _logger.warning("_click_login_button 坐标计算异常: %s", e)
             return False
 
     def handle(self) -> LoginRecoveryResult:

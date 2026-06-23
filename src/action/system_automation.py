@@ -5,11 +5,13 @@
 封装为统一接口，使 Bot 层和 Action 层可以面向接口编程，便于 mock、测试和跨平台扩展。
 """
 
-import re
+import logging
 import subprocess  # nosec B404
 from abc import ABC, abstractmethod
 
 from src.models.base import Rect
+
+_logger = logging.getLogger("src.system_automation")
 
 
 class SystemAutomation(ABC):
@@ -101,9 +103,12 @@ class MacOSSystemAutomation(SystemAutomation):
     def activate_app(self, app_name: str) -> bool:
         script = f'tell application "{app_name}" to activate'
         try:
-            rc, _, _ = self.run_applescript(script, timeout=3)
+            rc, _, stderr = self.run_applescript(script, timeout=3)
+            if rc != 0:
+                _logger.warning("activate_app(%s) 失败: %s", app_name, stderr)
             return rc == 0
-        except Exception:
+        except (subprocess.SubprocessError, OSError) as e:
+            _logger.warning("activate_app(%s) 异常: %s", app_name, e)
             return False
 
     def get_frontmost_app(self, app_name: str) -> tuple[bool, str]:
@@ -159,7 +164,8 @@ class MacOSSystemAutomation(SystemAutomation):
                 timeout=5,
             )
             return True
-        except Exception:
+        except (subprocess.SubprocessError, OSError) as e:
+            _logger.warning("click_at(%d,%d) 失败: %s", x, y, e)
             return False
 
     def send_keys(self, key_spec: str) -> bool:
@@ -171,9 +177,12 @@ class MacOSSystemAutomation(SystemAutomation):
             end tell
         '''
         try:
-            rc, _, _ = self.run_applescript(script, timeout=5)
+            rc, _, stderr = self.run_applescript(script, timeout=5)
+            if rc != 0:
+                _logger.warning("send_keys 失败: %s", stderr)
             return rc == 0
-        except Exception:
+        except (subprocess.SubprocessError, OSError) as e:
+            _logger.warning("send_keys 异常: %s", e)
             return False
 
     def run_applescript(self, script: str, timeout: int = 5) -> tuple[int, str, str]:
@@ -200,7 +209,8 @@ class MacOSSystemAutomation(SystemAutomation):
                 capture_output=True,
             )
             return True
-        except Exception:
+        except (subprocess.SubprocessError, OSError) as e:
+            _logger.warning("set_clipboard_text 失败: %s", e)
             return False
 
     def get_clipboard_text(self) -> tuple[bool, str]:
@@ -226,7 +236,8 @@ class MacOSSystemAutomation(SystemAutomation):
 
         对输出路径做基本校验，防止路径注入。
         """
-        if not output_path or "/" not in output_path or re.search(r"[&;|`$()]", output_path):
+        _SHELL_META = "&;|`$()"
+        if not output_path or "/" not in output_path or any(c in output_path for c in _SHELL_META):
             return False, f"非法截图输出路径: {output_path}"
         if window_id:
             cmd = [

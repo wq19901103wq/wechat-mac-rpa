@@ -85,10 +85,14 @@
 | Benchmark | Cases | 通过 | 准确率 | 核心指标 |
 |-----------|-------|------|--------|----------|
 | **Reply Quality** | 24 | **24/24** | **100%** | Rubric 评估（18 个自定义 rubric） |
+| **Reply Quality v2** | — | — | — | 回复质量多维度评估（test_reply_quality_benchmark_v2） |
+| **Reply Stability** | — | — | — | 回复稳定性一致性（test_reply_stability_benchmark） |
 | **Tool Decision** | 27 | **22/27** | **81.5%** | Precision 70.6% / Recall 100% |
 | **Memory Search** | 29 | **28/29** | **96.6%** | Precision/Recall/F1 |
 | **Chat List Unread** | 23 | **23/23** | **100%** | Precision/Recall |
 | **OCR Quality** | 33 | **8/33** | **24.2%** | Sender/ChatName/Text/Count |
+| **Judge Quality** | 18 | — | — | Judge 判定质量（test_judge_quality_benchmark） |
+| **Judge Quality v2** | — | — | — | Judge 质量多维度 Rubric 评估（test_judge_quality_benchmark_v2） |
 
 ### 评估模式
 - **LLM-as-a-Judge**: Reply Quality + Tool Decision 对抗性 case 使用 deepseek-v4-pro 做 Rubric 评估
@@ -167,20 +171,19 @@ python3 run_bot.py
 |------|------|
 | `src/bot/wechat_bot.py` | ⭐ 模块化架构机器人（当前唯一版本） |
 | `run_bot.py` | 一键启动脚本（双管道自动选择） |
-| `scripts/view_ocr_history.py` | 查看识别历史 |
+| `scripts/generate_ocr_benchmark_report.py` | OCR benchmark 报告生成 |
 
 ### 模块化架构（按 `ARCHITECTURE.md` 拆分）
 | 文件 | 说明 |
 |------|------|
 | `src/perception/smart_pipeline.py` | ⭐ L3.5 智能感知管道（主力：本地预判 + qwen3.6-flash API 兜底） |
 | `src/perception/vision_pipeline.py` | L3.5 纯本地 OCR 管道（备用回退） |
-| `src/session/chat_session.py` | L4 会话与去重 |
+| `src/session/global_store.py` | L4 会话与去重 |
 | `src/reply/policy.py` | L4 回复决策 |
 | `src/reply/generator.py` | L4 回复生成（支持双模型：OpenClaw/Kimi + Hermes） |
 | `src/action/message_sender.py` | L4 消息发送 |
 | `src/bot/wechat_bot.py` | ⭐ L5 主循环编排 |
 | `src/logging/bot_logger.py` | 运行时日志 |
-| `src/storage/chat_history.py` | 聊天记录持久化 |
 | `src/memory/engine.py` | Memory 引擎 |
 | `src/tools/` | Tool Registry & Built-in Tools |
 

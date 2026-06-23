@@ -4,7 +4,6 @@
 import json
 import logging
 import queue
-import re
 import sqlite3
 import threading
 from datetime import datetime
@@ -266,6 +265,33 @@ overall_score = max(0, overall_score_raw - checks_issue_count × 12)
 """
 
 
+def _strip_output_format_section(prompt: str) -> str:
+    """删除 prompt 中"### N. 输出格式"到下一个"### "之间的内容。
+
+    用字符串操作替代正则（Rule 3.4）。prompt 来自已存储的生产 Bot system
+    prompt，judge 作为消费者无法回到生成阶段加开关，属合理的消费端裁剪。
+    """
+    marker = "### "
+    search_from = 0
+    while True:
+        idx = prompt.find(marker, search_from)
+        if idx == -1:
+            break
+        after_marker = prompt[idx + len(marker):idx + len(marker) + 30]
+        # 严格匹配 "数字. 输出格式"（数字后必须紧跟 ". 输出格式"）
+        if after_marker and after_marker[0].isdigit() and after_marker[1:].startswith(". 输出格式"):
+            # 找到输出格式 section：删除从 idx 到下一个 ### 或结尾
+            next_section = prompt.find(marker, idx + len(marker))
+            if next_section == -1:
+                prompt = prompt[:idx]
+            else:
+                prompt = prompt[:idx] + prompt[next_section:]
+            search_from = idx  # idx 位置现在是下一个 section 的 marker
+        else:
+            search_from = idx + len(marker)
+    return prompt
+
+
 def _empty_judge_result(reason: str = "") -> dict:
     return {
         "is_badcase": False, "badcase_type": "none", "severity": "P2",
@@ -441,8 +467,10 @@ class JudgeWorker:
             truncated.append(cm)
         msgs_text = json.dumps(truncated, ensure_ascii=False, indent=2) if truncated else "(无)"
 
-        # 过滤 system prompt 输出格式（删除"### N. 输出格式"到下一个"###"之间的内容）
-        sp = re.sub(r'### \d+\. 输出格式[\s\S]*?(?=### |\Z)', '', sp)
+        # 过滤 system prompt 输出格式 section（删除"### N. 输出格式"到下一个"### "之间内容）。
+        # sp 来自 tick_log 存储的生产 Bot system prompt（已生成），judge 作为消费者无法
+        # 回到生成阶段加开关，只能用字符串处理消费端裁剪（非 Rule 1.6 的事后打补丁）。
+        sp = _strip_output_format_section(sp)
 
         # 注入人工标注的 few-shot（从 tick_log 读取最近的人工标注 case）
         human_shots = self._load_human_fewshot() if self.use_fewshot else ""
