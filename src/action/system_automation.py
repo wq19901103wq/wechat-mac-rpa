@@ -134,7 +134,7 @@ class MacOSSystemAutomation(SystemAutomation):
                     tell window 1
                         set winPos to position
                         set winSize to size
-                        return (item 1 of winPos) & "," & (item 2 of winPos) & "," & (item 1 of winSize) & "," & (item 2 of winSize)
+                        return ((item 1 of winPos) as text) & "," & ((item 2 of winPos) as text) & "," & ((item 1 of winSize) as text) & "," & ((item 2 of winSize) as text)
                     end tell
                 end tell
             end tell
