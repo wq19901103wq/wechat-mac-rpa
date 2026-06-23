@@ -11,7 +11,7 @@ jobs:
     name: Ruff Critical Checks
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
@@ -23,7 +23,7 @@ jobs:
     name: Ruff Style / Import Checks
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
@@ -36,7 +36,7 @@ jobs:
     name: Mypy Type Check
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
@@ -49,7 +49,7 @@ jobs:
     name: Bandit Security Scan
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
@@ -57,7 +57,7 @@ jobs:
       - run: pip install bandit
       # 使用 .bandit 配置：排除 tests 目录的 B101 assert_used，其余 Medium/High 阻塞。
       - run: bandit -c .bandit -r src -f json -o bandit-report.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: bandit-report
@@ -68,7 +68,7 @@ jobs:
     name: Test Coverage
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
@@ -86,7 +86,7 @@ jobs:
             src/tests/test_window_capture.py \
             src/tests/test_window_capture_recovery.py \
             --cov=src --cov-report=xml --cov-report=term
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-report

@@ -6,12 +6,13 @@ scikit-learn==1.2.1
 scipy>=1.10.0,<1.16
 Pillow>=12.2.0
 requests>=2.34.2
-httpx>=0.24.0
+httpx>=0.28.1
 beautifulsoup4>=4.11.0
 
 # 微信自动化与 OCR
 pyautogui>=0.9.53
 pytesseract>=0.3.10
+pyobjc-framework-Vision>=10.0
 
 # 智能家居工具
 tinytuya>=1.12.0
@@ -28,5 +29,5 @@ pytest-cov>=7.1.0
 
 # 代码质量 / CI
 ruff>=0.11.0
-mypy>=1.15.0
+mypy>=2.1.0
 bandit>=1.8.0
