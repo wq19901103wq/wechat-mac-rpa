@@ -2,7 +2,7 @@
 openai>=1.0.0
 numpy==1.24.3
 scikit-learn==1.2.1
-scipy>=1.10.0,<1.16
+scipy>=1.18.0,<1.19
 Pillow>=12.2.0
 requests>=2.34.2
 httpx>=0.28.1
