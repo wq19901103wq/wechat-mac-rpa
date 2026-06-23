@@ -5,7 +5,7 @@ scikit-learn==1.2.1
 scipy>=1.10.0,<1.16
 Pillow>=12.2.0
 requests>=2.34.2
-httpx>=0.24.0
+httpx>=0.28.1
 beautifulsoup4>=4.11.0
 
 # 微信自动化与 OCR
