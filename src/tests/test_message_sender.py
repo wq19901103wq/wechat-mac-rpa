@@ -5,8 +5,6 @@
 不再直接依赖 subprocess.run。
 """
 
-from unittest.mock import Mock
-
 import pytest
 
 from src.action.message_sender import WeChatMessageSender

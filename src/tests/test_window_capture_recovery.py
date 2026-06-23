@@ -2,7 +2,7 @@
 """WindowCapture 窗口异常恢复测试"""
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from src.action.system_automation import SystemAutomation
 from src.capture.window_capture import WeChatNotReadyError, WindowCapture, WindowNotFoundError
