@@ -156,6 +156,123 @@ class TestSearchLogic:
         assert boosted[0]["hit_message"]["id"] == "g_0"
 
 
+# ── keyword 路 + 两路融合 ──
+
+
+def _make_keyword_index():
+    """构造 keyword 优势场景：dense 难区分、keyword 精确命中。
+
+    查询向量 = [1,0,0,0]，三条消息 cosine 都很高（dense 难分高低），
+    但只有 m1 的文本含查询词"eenmf"（术语），keyword 路应把它顶上来。
+    """
+    idx = HistorySearchIndex.__new__(HistorySearchIndex)
+    messages = [
+        {
+            "id": "m0", "text": "粗排模型选型讨论", "sender": "王冰",
+            "is_self": False, "chat_name": "推荐群", "chat_type": "group",
+            "context_ids": ["m0"],
+        },
+        {
+            "id": "m1", "text": "你们的粗排先是用的eenmf 后来换的", "sender": "王冰",
+            "is_self": False, "chat_name": "推荐群", "chat_type": "group",
+            "context_ids": ["m1"],
+        },
+        {
+            "id": "m2", "text": "后来用了双塔", "sender": "王冰",
+            "is_self": False, "chat_name": "推荐群", "chat_type": "group",
+            "context_ids": ["m2"],
+        },
+    ]
+    idx.messages = messages
+    idx.msg_by_id = {m["id"]: m for m in messages}
+    idx.id_to_idx = {m["id"]: i for i, m in enumerate(messages)}
+    idx.sender_index = {"王冰": ["m0", "m1", "m2"]}
+    idx.chat_type_index = {"group": ["m0", "m1", "m2"]}
+    # 三条 cosine 都接近 1，dense 难分
+    idx.embeddings = _norm([
+        [0.99, 0.10, 0.0, 0.0],
+        [0.99, 0.05, 0.0, 0.0],
+        [0.99, 0.02, 0.0, 0.0],
+    ])
+
+    class _FakeEncoder:
+        def encode(self, texts):
+            v = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+            return (v / np.linalg.norm(v)).reshape(1, -1)
+
+    idx.encoder = _FakeEncoder()
+    return idx
+
+
+class TestKeywordAndFusion:
+    def test_keyword_recall_hits_exact_term(self):
+        """keyword 路应召回含精确术语的消息。"""
+        idx = _make_keyword_index()
+        kw = idx._keyword_search("eenmf", top_n=10)
+        hit_ids = {r["hit_message"]["id"] for r in kw}
+        assert "m1" in hit_ids
+        assert all(r["source"] == "keyword" for r in kw)
+
+    def test_keyword_no_hit_returns_empty(self):
+        """查询词未命中任何消息时 keyword 路返回空。"""
+        idx = _make_keyword_index()
+        assert idx._keyword_search("不存在的词xyz", top_n=10) == []
+
+    def test_both_source_when_dense_and_keyword_hit(self):
+        """同一 context 被 dense 和 keyword 都命中时 source 标记为 both。"""
+        idx = _make_keyword_index()
+        results = idx.search("eenmf", top_k=5)
+        m1_result = next(r for r in results if r["hit_message"]["id"] == "m1")
+        assert m1_result["source"] == "both"
+        assert m1_result["dense_score"] > 0
+        assert m1_result["keyword_score"] > 0
+
+    def test_keyword_boosts_exact_term_above_dense_tie(self):
+        """dense 三条近似平手时，keyword 命中应让 m1 排第一。"""
+        idx = _make_keyword_index()
+        results = idx.search("eenmf", top_k=5)
+        assert results[0]["hit_message"]["id"] == "m1"
+        # m1 是 both，应比纯 dense 的 m0/m2 分数高
+        m1_score = results[0]["score"]
+        others = [r["score"] for r in results[1:]]
+        assert all(m1_score > s for s in others)
+
+    def test_keyword_only_result_kept(self):
+        """keyword 命中但 dense 低分的消息仍应进入融合结果。"""
+        idx = _make_keyword_index()
+        # m2 文本"后来用了双塔"，dense cosine 0.99（很高），这里换个查询让 dense 低
+        # 用一个 dense 都低、只有 keyword 命中 m2 的场景
+        results = idx._fuse_results(
+            dense_results=[],  # dense 无召回
+            kw_results=[
+                {
+                    "score": 1.0, "source": "keyword",
+                    "hit_message": idx.msg_by_id["m2"],
+                    "context_messages": [idx.msg_by_id["m2"]],
+                    "context_key": ("m2",),
+                }
+            ],
+            top_k=5, min_score=0.0,
+        )
+        assert len(results) == 1
+        assert results[0]["source"] == "keyword"
+        assert results[0]["hit_message"]["id"] == "m2"
+
+    def test_fusion_empty_when_both_empty(self):
+        idx = _make_keyword_index()
+        assert idx._fuse_results([], [], top_k=5, min_score=0.0) == []
+
+    def test_fusion_score_fields_present(self):
+        """融合结果应含 score/dense_score/keyword_score/source 四字段。"""
+        idx = _make_keyword_index()
+        results = idx.search("eenmf", top_k=5)
+        for r in results:
+            assert "score" in r
+            assert "dense_score" in r
+            assert "keyword_score" in r
+            assert "source" in r
+
+
 # ── 格式化 ──
 
 

@@ -265,6 +265,12 @@ class HistorySearchIndex:
         _logger.info("[HistorySearch] 加载 BGE 编码器: %s", self.model_path)
         self.encoder = _BGEEncoder(self.model_path, backend)
 
+    # ── 召回参数 ──
+    # 融合权重：dense 主导（语义），keyword 补精确词；两路共识额外提升
+    _FUSE_ALPHA = 0.6  # fusion = alpha*dense + (1-alpha)*keyword
+    _BOTH_BOOST = 1.15  # 两路都命中的 context 乘以该系数
+    _RECALL_N = 20  # 每路召回数（大于 top_k，给 rerank 留余量）
+
     def search(
         self,
         query: str,
@@ -273,10 +279,16 @@ class HistorySearchIndex:
         chat_type: str = "",
         min_score: float = 0.01,
     ) -> List[Dict[str, Any]]:
-        """语义检索历史原文。
+        """两路召回 + 分数融合 rerank。
+
+        dense 向量路（语义相似）+ keyword 关键字路（精确词命中）各召回 top_n，
+        按 context_ids 合并、分数归一化加权融合后取 top_k。
 
         返回 top_k 条结果，每条含：
-            score             命中消息的相似度
+            score             融合分数（归一化后，含 both 加成）
+            dense_score       dense 路原始 cosine（未命中则为 0）
+            keyword_score     keyword 路归一化分（未命中则为 0）
+            source            "dense" / "keyword" / "both"
             hit_message       命中的单条消息
             context_messages  命中消息前后多轮上下文（含命中消息本身，按对话顺序）
 
@@ -287,7 +299,30 @@ class HistorySearchIndex:
         if self.embeddings is None or len(self.messages) == 0:
             return []
 
-        q_emb = self.encoder.encode([query.strip()])  # (1, 512)
+        q = query.strip()
+        recall_n = max(top_k, self._RECALL_N)
+        dense_results = self._dense_search(
+            q, top_n=recall_n, sender_name=sender_name, chat_type=chat_type,
+            min_score=min_score,
+        )
+        kw_results = self._keyword_search(
+            q, top_n=recall_n, sender_name=sender_name, chat_type=chat_type,
+        )
+        return self._fuse_results(dense_results, kw_results, top_k, min_score)
+
+    def _dense_search(
+        self,
+        query: str,
+        top_n: int = 20,
+        sender_name: str = "",
+        chat_type: str = "",
+        min_score: float = 0.01,
+    ) -> List[Dict[str, Any]]:
+        """dense 向量召回：BGE 语义相似度 top_n。"""
+        if self.embeddings is None or len(self.messages) == 0:
+            return []
+
+        q_emb = self.encoder.encode([query])  # (1, 512)
         # 已归一化，点积即 cosine
         scores = self.embeddings @ q_emb[0]
 
@@ -327,8 +362,153 @@ class HistorySearchIndex:
                     "score": score,
                     "hit_message": msg,
                     "context_messages": context_msgs,
+                    "context_key": context_key,
+                    "source": "dense",
                 }
             )
+            if len(results) >= top_n:
+                break
+        return results
+
+    def _keyword_search(
+        self,
+        query: str,
+        top_n: int = 20,
+        sender_name: str = "",
+        chat_type: str = "",
+    ) -> List[Dict[str, Any]]:
+        """keyword 关键字召回：精确词命中 top_n。
+
+        分词参照 MemoryEngine.search_keyword（按空格切，保留 len>=2 的词），但不做
+        wiki 别名扩展（那是 wiki 检索专有，原文检索不需要）。打分用命中词召回率
+        （命中词数 / 总查询词数），sender/chat_type 同向加权。
+        """
+        # 分词：按空格切，去掉太短的词
+        raw_keywords = [kw.strip() for kw in query.split() if len(kw.strip()) >= 2]
+        if not raw_keywords:
+            raw_keywords = [query.strip()]
+        keywords = list(dict.fromkeys(raw_keywords))
+        total_kw = len(keywords)
+        if total_kw == 0:
+            return []
+
+        kw_set_sender = (
+            set(self.sender_index.get(sender_name, [])) if sender_name else None
+        )
+        kw_set_chat = (
+            set(self.chat_type_index.get(chat_type, [])) if chat_type else None
+        )
+
+        scored: List[Dict[str, Any]] = []
+        for msg in self.messages:
+            text = msg.get("text") or ""
+            if not text:
+                continue
+            hit = sum(1 for kw in keywords if kw in text)
+            if hit == 0:
+                continue
+            # 命中词召回率（0~1）+ sender/chat_type 同向加权
+            score = hit / total_kw
+            mid = msg.get("id")
+            if kw_set_sender is not None and mid in kw_set_sender:
+                score += 0.05
+            if kw_set_chat is not None and mid in kw_set_chat:
+                score += 0.03
+            scored.append({"_score": score, "msg": msg})
+
+        if not scored:
+            return []
+        scored.sort(key=lambda x: x["_score"], reverse=True)
+
+        results: List[Dict[str, Any]] = []
+        seen_contexts: set = set()
+        for item in scored:
+            if len(results) >= top_n:
+                break
+            msg = item["msg"]
+            context_ids = msg.get("context_ids") or [msg["id"]]
+            context_key = tuple(context_ids)
+            if context_key in seen_contexts:
+                continue
+            seen_contexts.add(context_key)
+
+            context_msgs = [self.msg_by_id.get(cid) for cid in context_ids]
+            context_msgs = [m for m in context_msgs if m]
+            results.append(
+                {
+                    "score": item["_score"],
+                    "hit_message": msg,
+                    "context_messages": context_msgs,
+                    "context_key": context_key,
+                    "source": "keyword",
+                }
+            )
+        return results
+
+    def _fuse_results(
+        self,
+        dense_results: List[Dict[str, Any]],
+        kw_results: List[Dict[str, Any]],
+        top_k: int,
+        min_score: float,
+    ) -> List[Dict[str, Any]]:
+        """两路结果按 context_key 合并、分数归一化加权融合。
+
+        - dense 分数已是 cosine（约 0~1），直接用
+        - keyword 分数 max 归一化到 0~1（除以该路最高分）
+        - fusion = alpha*dense + (1-alpha)*keyword
+        - 两路都命中的 context（source="both"）额外乘 _BOTH_BOOST
+        - 按 fusion 降序取 top_k，min_score 作用于 fusion
+        """
+        if not dense_results and not kw_results:
+            return []
+
+        # keyword 路 max 归一化
+        kw_max = max((r["score"] for r in kw_results), default=0.0)
+        if kw_max <= 0:
+            kw_max = 1.0
+
+        merged: Dict[tuple, Dict[str, Any]] = {}
+        for r in dense_results:
+            key = r["context_key"]
+            merged[key] = {
+                "dense_score": r["score"],
+                "keyword_score": 0.0,
+                "source": "dense",
+                "hit_message": r["hit_message"],
+                "context_messages": r["context_messages"],
+            }
+        for r in kw_results:
+            key = r["context_key"]
+            if key in merged:
+                merged[key]["keyword_score"] = r["score"] / kw_max
+                merged[key]["source"] = "both"
+                # keyword 命中的消息若与 dense 不同，保留更靠前的命中（取 dense 优先）
+            else:
+                merged[key] = {
+                    "dense_score": 0.0,
+                    "keyword_score": r["score"] / kw_max,
+                    "source": "keyword",
+                    "hit_message": r["hit_message"],
+                    "context_messages": r["context_messages"],
+                }
+
+        alpha = self._FUSE_ALPHA
+        fused: List[Dict[str, Any]] = []
+        for item in merged.values():
+            fusion = alpha * item["dense_score"] + (1 - alpha) * item["keyword_score"]
+            if item["source"] == "both":
+                fusion *= self._BOTH_BOOST
+            item["score"] = fusion
+            fused.append(item)
+
+        fused.sort(key=lambda x: x["score"], reverse=True)
+
+        results: List[Dict[str, Any]] = []
+        for item in fused:
+            if item["score"] < min_score:
+                continue
+            results.append(item)
             if len(results) >= top_k:
                 break
         return results
@@ -344,8 +524,10 @@ class HistorySearchIndex:
         lines: List[str] = [f"【历史聊天原文检索】查询：{query}", f"共 {len(results)} 条相关片段："]
         for i, r in enumerate(results, 1):
             hit = r["hit_message"]
+            source = r.get("source")
+            source_tag = f"·{source}" if source else ""
             head = (
-                f"\n--- 片段 {i}（相似度 {r['score']:.3f}）"
+                f"\n--- 片段 {i}（相关度 {r['score']:.3f}{source_tag}）"
                 f" | 会话：{hit.get('chat_name', '?')}"
                 f" | 类型：{hit.get('chat_type', '?')} ---"
             )

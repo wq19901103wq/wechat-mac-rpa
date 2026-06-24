@@ -176,6 +176,13 @@ BENCHMARK_CASES: List[BenchmarkCase] = [
         notes="关键词+语义检索，结果应包含 eenmf 片段",
     ),
     BenchmarkCase(
+        case_name="keyword_eenmf_term",
+        query="eenmf",
+        expected_fragments=["eenmf"],
+        category="keyword_advantage",
+        notes="纯术语查询：dense 向量对生僻术语区分度低，keyword 路应靠精确词命中召回含 eenmf 的消息。含 eenmf 的消息有多条，故用 fragment 检查而非固定 id。",
+    ),
+    BenchmarkCase(
         case_name="fragment_tesla_text",
         query="特斯拉没砸死",
         expected_fragments=["特斯拉"],
