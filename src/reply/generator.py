@@ -116,6 +116,56 @@ class ReplyGenerator:
                 func=_search_memory_adapter,
             )
 
+        # 动态注册历史原文检索工具（可选，依赖 digital-twin 的 BGE 消息索引）
+        # 与 search_memory(wiki 摘要) 并列：search_history 检索历史聊天原文
+        # 仅当索引文件与编码器依赖就绪时才注册，否则 bot 行为零变化
+        try:
+            from src.memory.history_search import is_available as _history_available
+            from src.memory.history_search import search_history as _search_history
+        except Exception as e:  # pragma: no cover - 防御性
+            _logger.warning("[HistorySearch] 模块加载失败，跳过注册: %s", e)
+            _history_available = None
+            _search_history = None
+
+        if _history_available is not None and _history_available():
+            def _search_history_adapter(query: str = "", top_k: int = 5) -> str:
+                """适配器：调用 history_search 返回原文片段。"""
+                return _search_history(query, top_k=top_k)
+
+            self.tool_registry.register(
+                name="search_history",
+                description=(
+                    "搜索历史聊天原文（77万条历史微信消息的语义检索）。用于回忆"
+                    "过去某段对话具体说了什么：当对方提到'上次说的那件事''之前聊过的'"
+                    "'你忘了我们讨论过'、或你想复用某次具体对话的措辞/细节时调用。"
+                    "返回的是历史消息原文片段（含上下文），不是人物摘要。"
+                    "查询人是谁/关系/近况用 search_memory，查询当时说了什么用本工具。"
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "要检索的内容，用自然语言描述想找的那段对话。"
+                                "示例：'关于3D打印材料选择的讨论'、'王海说要去上海那次'、"
+                                "'谁推荐过那家日料'。不要只填单个泛词。"
+                            ),
+                        },
+                        "top_k": {
+                            "type": "integer",
+                            "description": "返回片段数量，默认 5，范围 1-20。",
+                            "default": 5,
+                        },
+                    },
+                    "required": ["query"],
+                },
+                func=_search_history_adapter,
+            )
+            print("[HistorySearch] search_history 工具已注册（懒加载，首次调用时载入索引）")
+        else:
+            print("[HistorySearch] 索引/依赖未就绪，search_history 未注册")
+
     def _submit_to_judge(self, tick_id: int, replies: List[str], unreplied: List[ChatMessage], all_messages: List[ChatMessage], is_group: bool):
         """把当前 tick 的数据提交给 JudgeWorker 异步判定"""
         import json

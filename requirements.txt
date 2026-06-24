@@ -22,6 +22,14 @@ paho-mqtt>=1.6.0
 fastapi>=0.137.1
 uvicorn>=0.23.0
 
+# 历史原文检索（search_history 工具，可选）
+# 复用 digital-twin 的 BGE 消息级索引（77万条历史微信消息原文）。
+# 仅当 tokenizers+onnxruntime 可 import 且索引文件存在时，generator 才注册
+# search_history 工具；否则跳过，bot 行为零变化。
+# 索引/模型路径见 src/memory/history_search.py 顶部默认值与环境变量。
+tokenizers>=0.13.0
+onnxruntime>=1.16.0
+
 # 测试依赖
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
