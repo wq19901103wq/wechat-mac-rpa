@@ -367,3 +367,100 @@ class TestLintMemory:
         engine.llm_client = object()
         engine.update_group_wiki("玲珑小番茄6.99一斤茅台路百果园", "x", [], [])
         assert engine._update_queue == []
+
+
+class TestLLMRerank:
+    """LLM rerank：BM25 候选用 LLM 按语义相关性重排 + 降级。"""
+
+    def test_fallback_when_no_llm_client(self, engine):
+        """llm_client 为 None 时应原样返回 scored（降级不阻断）。"""
+        engine._aliases = {}
+        scored = [("a", "内容a", False, 1.0, False), ("b", "内容b", False, 0.5, False)]
+        out = engine._llm_rerank(scored, "查询", ["查询"])
+        assert out == scored  # 原顺序不变
+
+    def test_rerank_reorders_by_llm_order(self, engine):
+        """LLM 返回 [2,1] 时，候选应按此顺序重排。"""
+        engine._aliases = {}
+
+        class _FakeLLM:
+            def chat(self, messages=None, tools=None, temperature=None, max_tokens=None, timeout=None):
+                return "[2, 1]"
+
+        engine.llm_client = _FakeLLM()
+        scored = [
+            ("a", "内容a", False, 1.0, False),
+            ("b", "内容b", False, 0.5, False),
+        ]
+        out = engine._llm_rerank(scored, "查询", ["查询"])
+        assert [x[0] for x in out] == ["b", "a"]  # LLM 顺序
+
+    def test_rerank_keeps_unlisted_at_tail(self, engine):
+        """LLM 未列出的候选应保留在后面（按原 BM25 顺序）。"""
+        engine._aliases = {}
+
+        class _FakeLLM:
+            def chat(self, messages=None, tools=None, temperature=None, max_tokens=None, timeout=None):
+                return "[3]"  # 只列了第3个
+
+        engine.llm_client = _FakeLLM()
+        scored = [
+            ("a", "内容a", False, 1.0, False),
+            ("b", "内容b", False, 0.8, False),
+            ("c", "内容c", False, 0.5, False),
+        ]
+        out = engine._llm_rerank(scored, "查询", ["查询"])
+        assert out[0][0] == "c"  # LLM 指定第3个排第一
+        # 其余按原顺序跟在后面
+        assert [x[0] for x in out[1:]] == ["a", "b"]
+
+    def test_rerank_fallback_on_parse_failure(self, engine):
+        """LLM 返回无法解析的内容时应回退 BM25。"""
+        engine._aliases = {}
+
+        class _FakeLLM:
+            def chat(self, messages=None, tools=None, temperature=None, max_tokens=None, timeout=None):
+                return "我觉得没法排序"
+
+        engine.llm_client = _FakeLLM()
+        scored = [("a", "内容a", False, 1.0, False), ("b", "内容b", False, 0.5, False)]
+        out = engine._llm_rerank(scored, "查询", ["查询"])
+        assert out == scored  # 回退原顺序
+
+    def test_rerank_fallback_on_exception(self, engine):
+        """LLM 调用抛异常时应回退 BM25。"""
+        engine._aliases = {}
+
+        class _BoomLLM:
+            def chat(self, **kw):
+                raise RuntimeError("LLM 挂了")
+
+        engine.llm_client = _BoomLLM()
+        scored = [("a", "内容a", False, 1.0, False), ("b", "内容b", False, 0.5, False)]
+        out = engine._llm_rerank(scored, "查询", ["查询"])
+        assert out == scored  # 回退原顺序
+
+    def test_rerank_relation_disambiguation(self, engine):
+        """关系消歧场景：搜'王芊妈妈'，LLM 应把母亲(秋水文章)排到岳母(枫叶)前面。
+
+        模拟 BM25 把岳母排前（词面'妈妈'匹配'艺涵妈妈'），LLM 理解语义后翻转。
+        """
+        engine._aliases = {}
+        # 模拟 wiki 内容
+        write_user_wiki(engine, "秋水文章", "- 母亲：王秋文（王芊的母亲）")
+        write_user_wiki(engine, "枫叶 艺涵妈妈", "- 王艺涵的妈妈（岳母，非王芊母亲）")
+        write_noise_user(engine, "噪声用户")
+
+        # LLM 理解"王芊妈妈=母亲"语义，把秋水文章（编号2）排前
+        class _SmartLLM:
+            def chat(self, messages=None, tools=None, temperature=None, max_tokens=None, timeout=None):
+                # 候选顺序：枫叶(1, BM25高分) 秋水文章(2)，LLM 翻转
+                return "[2, 1]"
+
+        engine.llm_client = _SmartLLM()
+        result = engine.search_keyword("王芊 妈妈", max_chars=5000)
+        # 秋水文章应排在枫叶前面
+        idx_qiushui = result.find("【秋水文章的记忆】")
+        idx_fengye = result.find("【枫叶 艺涵妈妈的记忆】")
+        assert idx_qiushui != -1, "秋水文章应被召回"
+        assert idx_qiushui < idx_fengye, "母亲(秋水文章)应排在岳母(枫叶)前面"

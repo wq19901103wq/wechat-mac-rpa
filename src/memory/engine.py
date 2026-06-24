@@ -1156,6 +1156,12 @@ class MemoryEngine:
         scored = adjusted
         scored.sort(key=lambda x: (not x[4], -x[3]))
 
+        # ── 2.5 LLM rerank：用 LLM 对 BM25 候选按语义相关性重排 ──
+        # BM25 子串匹配无法理解关系语义（如"妈妈"=母亲≠岳母），LLM rerank 补这个短板。
+        # llm_client 为 None（benchmark 未传）或调用失败时自动降级回 BM25 顺序。
+        all_kw = filtered_original + (expanded_aliases if use_alias_group else [])
+        scored = self._llm_rerank(scored, keyword.strip(), all_kw)
+
         # ── 3. 取 Top 10，组装结果 ──
         results = []
         primary_names = set()  # 记录本人的实际 wiki 名
@@ -1222,6 +1228,81 @@ class MemoryEngine:
             truncated = truncated + "\n" + snippet if truncated else snippet
         _logger.info(f"[Search] truncated results length={len(truncated)} chars")
         return truncated
+
+    def _llm_rerank(
+        self,
+        scored: List[Tuple[str, str, bool, float, bool]],
+        query: str,
+        keywords: List[str],
+    ) -> List[Tuple[str, str, bool, float, bool]]:
+        """用 LLM 对 BM25 召回的候选重排。
+
+        输入 scored（已按 BM25 排序的 (name, content, is_group, score, is_primary)），
+        提取每个候选的最相关 snippet，让 LLM 按与 query 的语义相关性重排。
+
+        降级：llm_client 为 None / 调用异常 / 解析失败 → 返回原 scored（不阻断）。
+        LLM 能理解 BM25 无法处理的语义，如"妈妈=母亲≠岳母"的关系消歧。
+        """
+        if not scored or self.llm_client is None:
+            return scored
+        # 候选过多时只取前 10（与最终 top10 一致）
+        candidates = scored[:10]
+        if len(candidates) <= 1:
+            return scored
+
+        # 为每个候选提取最相关 snippet（复用 _extract_all_snippets）
+        snippet_kws = keywords if keywords else [query]
+        cand_lines: List[str] = []
+        for i, (name, content, _is_group, _score, _is_primary) in enumerate(candidates, 1):
+            snippets = self._extract_all_snippets(content, snippet_kws, max_snippets=1)
+            snippet = snippets[0] if snippets else content[:100]
+            # 截断防 prompt 过长
+            snippet = snippet.replace("\n", " ").strip()[:100]
+            cand_lines.append(f"[{i}] {name}：{snippet}")
+
+        prompt = (
+            "查询：{q}\n候选历史记忆片段（编号-内容）：\n{cands}\n\n"
+            "请按与查询的相关性从高到低排序，返回编号数组（JSON，如 [3,1,2,5]）。\n"
+            "注意：区分关系（如查询'妈妈'指母亲而非岳母/婆婆），"
+            "优先返回直接相关的人/事，过滤无关或仅词面重叠的候选。\n"
+            "只返回 JSON 数组，不要解释。"
+        ).format(q=query, cands="\n".join(cand_lines))
+
+        try:
+            resp = self.llm_client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=200,
+                timeout=30,
+            )
+            text = resp if isinstance(resp, str) else getattr(resp, "content", str(resp))
+            # 解析 [n,n,...] 编号数组
+            import re as _re
+            m = _re.search(r"\[([0-9,\s]+)\]", text)
+            if not m:
+                _logger.warning("[Search][LLMRerank] 未解析到编号数组，回退 BM25: %s", text[:80])
+                return scored
+            order = [int(x.strip()) for x in m.group(1).split(",") if x.strip().isdigit()]
+            if not order:
+                return scored
+
+            # 按 LLM 顺序重排候选；LLM 未列出的候选保留在后面（按原 BM25 顺序）
+            seen = set()
+            reranked: List[Tuple[str, str, bool, float, bool]] = []
+            for idx in order:
+                if 1 <= idx <= len(candidates) and idx not in seen:
+                    seen.add(idx)
+                    reranked.append(candidates[idx - 1])
+            for i, c in enumerate(candidates, 1):
+                if i not in seen:
+                    reranked.append(c)
+            # 保留 scored 10 之后的（若有）
+            reranked.extend(scored[10:])
+            _logger.info("[Search][LLMRerank] rerank ok, new order: %s", order)
+            return reranked
+        except Exception as e:
+            _logger.warning("[Search][LLMRerank] 调用失败，回退 BM25: %s", e)
+            return scored
 
     def _start_worker(self) -> None:
         """启动后台 worker 线程，定期处理更新队列。"""
