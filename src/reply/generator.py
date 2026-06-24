@@ -6,7 +6,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from src.models.base import MEDIA_MESSAGE_TYPES, ChatMessage, SenderType
 from src.reply.session_memory import SessionMemory, _extract_query_key
@@ -76,24 +76,6 @@ class ReplyGenerator:
         self.last_llm_messages: List[Dict] = []
         # 短期记忆（跨 tick 缓存工具结果）
         self.session_memory = SessionMemory()
-        # 幽默聊天 RAG 索引（可选，依赖 sklearn/numpy）
-        # 使用消息级索引：检索最相似的消息，并拉出前后多轮完整上下文
-        self._humor_vector_index = None
-        try:
-            import numpy  # noqa: F401
-            from sklearn.feature_extraction.text import TfidfVectorizer  # noqa: F401
-
-            from src.memory.vector_index import MessageVectorIndex
-            index_path = Path(__file__).parent.parent.parent / "data" / "vector_indexes" / "humor_messages_index.json"
-            if index_path.exists():
-                self._humor_vector_index = MessageVectorIndex(cache_path=index_path)
-                if self._humor_vector_index.messages:
-                    print(f"[HumorRAG] 已加载 {len(self._humor_vector_index.messages)} 条消息级历史案例")
-            else:
-                print(f"[HumorRAG] 索引文件不存在: {index_path}")
-        except Exception as e:
-            _logger.warning("[HumorRAG] 索引初始化失败: %s", e)
-            self._humor_vector_index = None
         # 动态注册记忆搜索工具（如果 memory_engine 可用）
         if self.memory_engine is not None:
             def _search_memory_adapter(query: str = "") -> str:
@@ -119,15 +101,15 @@ class ReplyGenerator:
         # 动态注册历史原文检索工具（可选，依赖 digital-twin 的 BGE 消息索引）
         # 与 search_memory(wiki 摘要) 并列：search_history 检索历史聊天原文
         # 仅当索引文件与编码器依赖就绪时才注册，否则 bot 行为零变化
+        _history_available: Optional[Callable[[], bool]] = None
+        _search_history: Optional[Callable[..., str]] = None
         try:
             from src.memory.history_search import is_available as _history_available
             from src.memory.history_search import search_history as _search_history
         except Exception as e:  # pragma: no cover - 防御性
             _logger.warning("[HistorySearch] 模块加载失败，跳过注册: %s", e)
-            _history_available = None
-            _search_history = None
 
-        if _history_available is not None and _history_available():
+        if _history_available is not None and _search_history is not None and _history_available():
             def _search_history_adapter(query: str = "", top_k: int = 5) -> str:
                 """适配器：调用 history_search 返回原文片段。"""
                 return _search_history(query, top_k=top_k)
@@ -788,47 +770,6 @@ class ReplyGenerator:
             return "\n可用技能（系统会根据对话内容自动下发详细框架）：\n" + "\n".join(parts) + "\n"
         return ""
 
-    def _build_humor_query(self, all_messages: List[ChatMessage]) -> str:
-        """为 humor_chat 检索构建 query：取最近 3 轮非自己发的文本消息拼接。"""
-        if not all_messages:
-            return ""
-        # 从后往前找最近 3 条非自己且有文本的消息
-        recent_others = []
-        for m in reversed(all_messages):
-            if m.sender_type != SenderType.SELF and (m.text or "").strip():
-                recent_others.append(m)
-            if len(recent_others) >= 3:
-                break
-        if not recent_others:
-            return ""
-        # 转回时间正序
-        recent_others = list(reversed(recent_others))
-        return " | ".join(m.text.strip() for m in recent_others)
-
-    def _load_humor_retrieval_cases(self, query: str, sender_name: str, chat_type: str) -> str:
-        """为 humor_chat skill 检索相似历史对话片段（含完整上下文），格式化为 few-shot。"""
-        if not self._humor_vector_index:
-            return ""
-        try:
-            results = self._humor_vector_index.search(
-                query,
-                sender_name=sender_name or "",
-                chat_type="group" if chat_type == "group" else "single",
-                top_k=3,
-                context_radius=5,
-            )
-            if not results:
-                return ""
-            parts = []
-            for i, result in enumerate(results, 1):
-                context_text = self._humor_vector_index.format_context(result['context_messages'])
-                parts.append(f"--- 历史对话片段 {i} ---")
-                parts.append(context_text)
-            return "\n\n".join(parts)
-        except Exception as e:
-            _logger.warning("[HumorRAG] search failed: %s", e)
-            return ""
-
     def _hermes_system_prompt(self) -> str:
         """hermes 专用 system prompt：不含 tool 列表，只保留风格+格式。"""
         return (
@@ -893,22 +834,10 @@ class ReplyGenerator:
         )
         prompt = prompt.replace("{tools_description}", tools_desc)
 
-        # 注入检索 few-shot
-        dynamic_few_shot = "（无相关历史对话）"
-        if "humor_chat" in self.last_loaded_skills:
-            try:
-                query = self._build_humor_query(all_messages or unreplied or [])
-                sender_name = ""
-                if unreplied:
-                    sender_name = unreplied[-1].sender or ""
-                chat_type = "group" if is_group else "single"
-                if query:
-                    cases = self._load_humor_retrieval_cases(query, sender_name, chat_type)
-                    if cases:
-                        dynamic_few_shot = cases
-            except Exception as e:
-                _logger.warning("[HumorRAG] retrieval failed: %s", e)
-        prompt = prompt.replace("{dynamic_few_shot}", dynamic_few_shot)
+        # {dynamic_few_shot} 占位符：humor RAG 已移除（原 TF-IDF 索引废弃），
+        # 历史对话检索改由 search_history 工具按需调用。保留占位符替换以兼容
+        # 旧 skill prompt 模板。
+        prompt = prompt.replace("{dynamic_few_shot}", "（无相关历史对话）")
 
         # 保留 skill hint
         skill_hint = self._load_skill_one_liners()

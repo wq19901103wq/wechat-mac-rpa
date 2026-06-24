@@ -430,6 +430,8 @@ class WeChatBot:
                 ]
 
                 # 序列化原始消息数据供实验复跑使用
+                # NFR-5: input 只存最近 50 条上下文（足够复跑），不存全量 state.messages。
+                # 全量历史会在每个 tick 重复存（单 tick 曾达 2078 条/927KB）导致膨胀。
                 def _serialize_msgs(msgs):
                     from dataclasses import asdict
                     data = []
@@ -456,7 +458,7 @@ class WeChatBot:
                     _raw_with_thinking(getattr(self.generator, 'last_raw_response', '') or '', getattr(self.generator, 'last_thinking', '')),
                     _json.dumps(getattr(self.generator, 'last_tool_calls', []) or [], ensure_ascii=False),
                     _json.dumps(tool_results, ensure_ascii=False),
-                    _serialize_msgs(all_messages) if all_messages else '[]',
+                    _serialize_msgs(all_messages[-50:]) if all_messages else '[]',
                     _serialize_msgs(unreplied) if unreplied else '[]',
                     1,
                     _json.dumps(replies, ensure_ascii=False),

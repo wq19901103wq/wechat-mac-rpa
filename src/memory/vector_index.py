@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-语义检索索引构建器（兼容两种模式）
+语义检索索引构建器
 
-1. ChatVectorIndex: 基于 TF-IDF + 余弦相似度，检索 QA pair（问题-回复对）
-2. MessageVectorIndex: 消息级检索，检索最相似的消息并返回前后多轮完整上下文
+ChatVectorIndex: 基于 TF-IDF + 余弦相似度，检索 QA pair（问题-回复对）
+
+历史消息级原文检索由 src/memory/history_search.py（BGE dense + keyword 两路融合）
+承担，旧 MessageVectorIndex（TF-IDF，humor RAG）已移除。
 
 缓存使用 JSON 格式保存，避免 pickle 反序列化带来的安全风险（B301/B403）。
 TfidfVectorizer 通过保存 vocabulary_/idf_/初始化参数并在加载时重建，稀疏矩阵保存
@@ -315,112 +317,3 @@ class ChatVectorIndex:
                 results.append((float(weighted_scores[idx]), self.qa_pairs[idx]))
 
         return results
-
-
-class MessageVectorIndex:
-    """
-    消息级向量索引加载器
-    每条消息单独编码，检索后拉出前后多轮完整对话上下文
-    """
-
-    def __init__(self, cache_path: Path):
-        self.cache_path = Path(cache_path)
-        self.vectorizer = None
-        self.vectors = None
-        self.messages: List[Dict] = []
-        self.msg_by_id: Dict[int, Dict] = {}
-        self.sender_index: Dict[str, List[int]] = {}
-        self.chat_type_index: Dict[str, List[int]] = {}
-        self._load()
-
-    def _load(self):
-        if not self.cache_path.exists():
-            print(f"[MessageVectorIndex] 警告: 缓存不存在 {self.cache_path}")
-            return
-
-        print("[MessageVectorIndex] 加载消息级向量索引...")
-        with open(self.cache_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-
-        self.vectorizer = _vectorizer_from_json(data['vectorizer'])
-        self.vectors = _csr_from_json(data['vectors'])
-        self.messages = data['messages']
-        self.sender_index = data.get('sender_index', {})
-        self.chat_type_index = data.get('chat_type_index', {})
-        self.msg_by_id = {m['id']: m for m in self.messages}
-
-        print(f"[MessageVectorIndex] 加载完成: {len(self.messages)} 条消息, {self.vectors.shape[1]} 维")
-
-    def search(
-        self,
-        query: str,
-        sender_name: str = "",
-        chat_type: str = "",
-        top_k: int = 5,
-        context_radius: int = 5
-    ) -> List[Dict]:
-        """
-        消息级检索：检索最相似的消息，返回包含上下文的对话片段
-
-        Returns:
-            [{"score": float, "hit_message": msg, "context_messages": [msg, ...]}, ...]
-        """
-        if self.vectorizer is None or self.vectors is None:
-            return []
-
-        query_vec = self.vectorizer.transform([query])
-        scores = cosine_similarity(query_vec, self.vectors)[0]
-
-        # 加权：同发送者 +0.05，同聊天类型 +0.03
-        if sender_name and sender_name in self.sender_index:
-            for mid in self.sender_index[sender_name]:
-                if mid < len(scores):
-                    scores[mid] += 0.05
-
-        if chat_type and chat_type in self.chat_type_index:
-            for mid in self.chat_type_index[chat_type]:
-                if mid < len(scores):
-                    scores[mid] += 0.03
-
-        top_indices = np.argsort(scores)[::-1][:top_k * 2]
-
-        results = []
-        seen_contexts = set()
-
-        for idx in top_indices:
-            if scores[idx] < 0.01:
-                continue
-
-            msg = self.messages[idx]
-            context_ids = msg.get('context_ids', [msg['id']])
-            context_key = tuple(context_ids)
-
-            # 去重：避免返回相同的上下文窗口
-            if context_key in seen_contexts:
-                continue
-            seen_contexts.add(context_key)
-
-            context_msgs = [self.msg_by_id.get(cid, {}) for cid in context_ids]
-            context_msgs = [m for m in context_msgs if m]
-
-            results.append({
-                'score': float(scores[idx]),
-                'hit_message': msg,
-                'context_messages': context_msgs,
-            })
-
-            if len(results) >= top_k:
-                break
-
-        return results
-
-    @staticmethod
-    def format_context(context_messages: List[Dict]) -> str:
-        """把上下文消息格式化为对话文本"""
-        lines = []
-        for m in context_messages:
-            sender = m.get('sender', '对方')
-            role = "你" if m.get('is_self') else sender
-            text = m.get('text', '')
-            lines.append(f'{role}: "{text}"')
-        return "\n".join(lines)
