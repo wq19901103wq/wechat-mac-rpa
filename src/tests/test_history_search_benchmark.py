@@ -56,7 +56,7 @@ class BenchmarkCase:
     """
     case_name: str
     query: str
-    category: str  # "exact_recall" | "semantic" | "fragment" | "not_found" | "sender_filter" | "edge"
+    category: str  # "exact_recall" | "semantic" | "fragment" | "not_found" | "sender_filter" | "edge" | "composite" | "ambiguity" | "negative" | "noise"
     expected_ids: List[str] = field(default_factory=list)
     unexpected_ids: List[str] = field(default_factory=list)
     expected_fragments: List[str] = field(default_factory=list)
@@ -64,6 +64,7 @@ class BenchmarkCase:
     top_k: int = 5
     notes: str = ""
     known_issue: str = ""  # 非空=已知问题，FAIL 不计入 recall 惩罚，仅记录
+    expected_primary_id: str = ""  # 最该排前的消息 id（MRR 首选目标）；空则用 expected_ids[0]
 
 
 @dataclass
@@ -89,6 +90,10 @@ class BenchmarkResult:
     f1: float = 0.0
     known_issue: str = ""
     elapsed: float = 0.0
+    # 排序指标（order-aware）
+    first_rank: int = 0   # expected_primary_id 在结果中的 1-based 排名；0=未命中
+    hit_at_5: bool = False  # expected_primary_id 是否排进前 5
+    mrr: float = 0.0      # 1/first_rank（rank>5 或未命中算 0）
 
 
 # ========== Case Definitions ==========
@@ -230,6 +235,62 @@ BENCHMARK_CASES: List[BenchmarkCase] = [
         category="edge",
         notes="纯空白查询应返回空结果",
     ),
+
+    # ===== 复杂场景 case（composite / ambiguity / negative / noise）=====
+    # 基于 77 万真实消息实测标注，known_issue 标真实短板。
+
+    # ── composite：组合条件（多词），测多条件交集召回 + 排序 ──
+    BenchmarkCase(
+        case_name="comp_tesla_stock_drop",
+        query="特斯拉 股价 跌",
+        expected_ids=["b_群聊_📮美港股价值投资群_13195"],
+        expected_primary_id="b_群聊_📮美港股价值投资群_13195",
+        category="composite",
+        notes="组合查询应召回含'特斯拉+股价+下跌'的消息且排第1（实测 rank1）",
+    ),
+    BenchmarkCase(
+        case_name="comp_paopao_position",
+        query="泡泡玛特 港股 加仓",
+        expected_ids=["b_群聊_📮美港股价值投资群_46256"],
+        expected_primary_id="b_群聊_📮美港股价值投资群_46256",
+        category="composite",
+        notes="组合查询应召回'港股重仓泡泡玛特'消息且排第1",
+    ),
+
+    # ── ambiguity：短词/术语，测精确词召回不被近似词干扰 ──
+    BenchmarkCase(
+        case_name="amb_eenmf_term",
+        query="eenmf",
+        expected_ids=["b_私聊_幸福的矿工-卢卡斯-施梦圜_234"],
+        expected_primary_id="b_私聊_幸福的矿工-卢卡斯-施梦圜_234",
+        unexpected_ids=["b_私聊_Y_2187", "b_私聊_幸福的矿工-卢卡斯-施梦圜_2672"],
+        category="ambiguity",
+        notes="术语 eenmf 应召回含 eenmf 的消息，不应召回近似词'ee?''eesm?'",
+        known_issue="keyword 子串匹配把'ee?''eesm?'排进 top5（eenmf 含 ee 子串）。短术语近似词干扰，需词边界匹配。",
+    ),
+
+    # ── negative：不存在实体，测不误召回 ──
+    BenchmarkCase(
+        case_name="neg_nonexistent",
+        query="不存在xyz12345",
+        expected_ids=[],
+        unexpected_ids=["b_私聊_肖健_10859", "b_群聊_外滩玺睦邻友好群_3740"],
+        category="negative",
+        notes="查不存在的实体应返回空，不应召回含'不存在'/'不是'的消息",
+        known_issue="dense 路 min_score=0.01 太低，把含'不存在''不是'的语义相近消息召回。dense 对否定词理解弱，需提高阈值或加否定检测。",
+    ),
+
+    # ── noise：短消息噪声，测信息量低的短消息不占 top ──
+    BenchmarkCase(
+        case_name="noise_tesla_short",
+        query="特斯拉",
+        expected_ids=["b_私聊_夏晨风 少荃_1768"],
+        expected_primary_id="b_私聊_夏晨风 少荃_1768",
+        unexpected_ids=["b_私聊_Lisha 莉莎_5097"],
+        category="noise",
+        notes="搜特斯拉应召回有上下文的消息（如'30万一个特斯拉'），纯'特斯拉'两字无信息量不应排第1",
+        known_issue="纯'特斯拉'短消息因 keyword 命中+context 加权排第1，信息量低的短消息排序偏高。短消息需降权。",
+    ),
 ]
 
 
@@ -263,6 +324,24 @@ def _returned_senders(results: List[dict]) -> List[str]:
         if hit.get("sender"):
             senders.append(hit["sender"])
     return senders
+
+
+def _primary_rank_in_raw(primary_id: str, raw: List[dict]) -> int:
+    """返回 primary_id 在结果中的 1-based 排名；0=未命中。
+
+    在每个结果项的 hit_message 和 context_messages 里查找 primary_id，
+    返回第一个命中的结果项的位次（1-based）。
+    """
+    if not primary_id:
+        return 0
+    for rank, r in enumerate(raw, 1):
+        hit = r.get("hit_message") or {}
+        if hit.get("id") == primary_id:
+            return rank
+        for m in r.get("context_messages", []):
+            if m and m.get("id") == primary_id:
+                return rank
+    return 0
 
 
 def run_benchmark() -> List[BenchmarkResult]:
@@ -319,6 +398,12 @@ def run_benchmark() -> List[BenchmarkResult]:
         passed = (fp == 0 and fn == 0)
         is_known = bool(case.known_issue)
 
+        # 排序指标：expected_primary_id 在结果中的排名
+        primary = case.expected_primary_id or (case.expected_ids[0] if case.expected_ids else "")
+        first_rank = _primary_rank_in_raw(primary, raw) if primary else 0
+        hit_at_5 = 1 <= first_rank <= 5
+        mrr = (1.0 / first_rank) if (1 <= first_rank <= 5) else 0.0
+
         results.append(BenchmarkResult(
             case_name=case.case_name,
             query=case.query,
@@ -340,6 +425,9 @@ def run_benchmark() -> List[BenchmarkResult]:
             f1=f1,
             known_issue=case.known_issue,
             elapsed=elapsed,
+            first_rank=first_rank,
+            hit_at_5=hit_at_5,
+            mrr=mrr,
         ))
 
         if is_known and not passed:
@@ -351,9 +439,10 @@ def run_benchmark() -> List[BenchmarkResult]:
             extra += f" [缺片段: {','.join(missing_fragments)}]"
         if sender_violations:
             extra += f" [sender越界: {','.join(set(sender_violations))}]"
+        rank_str = f" rank={first_rank}" if primary else ""
         print(
             f"  [{case.case_name}] {status} "
-            f"(P={precision:.0%} R={recall:.0%} F1={f1:.0%}) [{elapsed:.2f}s]{extra}"
+            f"(P={precision:.0%} R={recall:.0%} F1={f1:.0%} MRR={mrr:.2f}) [{elapsed:.2f}s]{extra}{rank_str}"
         )
 
     return results
@@ -375,6 +464,11 @@ def compute_metrics(results: List[BenchmarkResult]) -> dict[str, Any]:
     accuracy = sum(1 for r in results if r.passed) / len(results) if results else 0.0
     known_fail = sum(1 for r in results if r.known_issue and not r.passed)
 
+    # 排序指标（排除 known_issue，与 P/R 一致）：MRR@5 + Hit@5
+    ranked = [r for r in results if not r.known_issue and r.expected_ids]
+    mrr_at_5 = sum(r.mrr for r in ranked) / len(ranked) if ranked else 0.0
+    hit_at_5 = sum(1 for r in ranked if r.hit_at_5) / len(ranked) if ranked else 0.0
+
     return {
         "tp": total_tp,
         "fp": total_fp,
@@ -386,6 +480,8 @@ def compute_metrics(results: List[BenchmarkResult]) -> dict[str, Any]:
         "total": len(results),
         "passed": sum(1 for r in results if r.passed),
         "known_fail": known_fail,
+        "mrr_at_5": mrr_at_5,
+        "hit_at_5": hit_at_5,
     }
 
 
@@ -422,6 +518,8 @@ def print_report(results: List[BenchmarkResult], metrics: dict[str, Any]) -> Non
     print(f"  Precision:     {metrics['precision']:.2%}")
     print(f"  Recall:        {metrics['recall']:.2%}  (排除 known_issue 后)")
     print(f"  F1 Score:      {metrics['f1']:.2%}")
+    print(f"  MRR@5:         {metrics['mrr_at_5']:.2%}  (排序质量，排除 known_issue)")
+    print(f"  Hit@5:         {metrics['hit_at_5']:.2%}  (primary 进前 5 比例)")
     print(f"  Accuracy:      {metrics['accuracy']:.2%}")
     print(f"  Passed:        {metrics['passed']}/{metrics['total']}")
 
@@ -519,6 +617,22 @@ def test_benchmark_exact_recall(benchmark_results):
         pytest.skip("无 exact_recall case")
     missed = [r.case_name for r in exact if r.missed_expected]
     assert not missed, f"exact_recall 漏召回: {missed}"
+
+
+def test_benchmark_mrr(benchmark_results):
+    """MRR@5（排序质量）不应低于 50%。"""
+    metrics = compute_metrics(benchmark_results)
+    assert metrics["mrr_at_5"] >= 0.5, (
+        f"MRR@5 不足: {metrics['mrr_at_5']:.1%}，primary 文档排序靠后"
+    )
+
+
+def test_benchmark_hit_at_5(benchmark_results):
+    """Hit@5（primary 进前 5 比例）不应低于 70%。"""
+    metrics = compute_metrics(benchmark_results)
+    assert metrics["hit_at_5"] >= 0.7, (
+        f"Hit@5 不足: {metrics['hit_at_5']:.1%}，primary 文档常排不进前 5"
+    )
 
 
 if __name__ == "__main__":
