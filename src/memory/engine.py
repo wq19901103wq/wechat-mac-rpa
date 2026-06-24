@@ -1267,16 +1267,20 @@ class MemoryEngine:
         cand_lines: List[str] = []
         for i, (name, content, _is_group, _score, _is_primary) in enumerate(candidates, 1):
             snippets = self._extract_all_snippets(content, snippet_kws, max_snippets=1)
-            snippet = snippets[0] if snippets else content[:100]
-            # 截断防 prompt 过长
-            snippet = snippet.replace("\n", " ").strip()[:100]
+            snippet = snippets[0] if snippets else content[:200]
+            # 截断防 prompt 过长：200 字让 LLM 看到完整关系描述（如"母亲"/"岳母"）
+            snippet = snippet.replace("\n", " ").strip()[:200]
             cand_lines.append(f"[{i}] {name}：{snippet}")
 
         prompt = (
             "查询：{q}\n候选历史记忆片段（编号-内容）：\n{cands}\n\n"
-            "请按与查询的相关性从高到低排序，返回编号数组（JSON，如 [3,1,2,5]）。\n"
-            "注意：区分关系（如查询'妈妈'指母亲而非岳母/婆婆），"
-            "优先返回直接相关的人/事，过滤无关或仅词面重叠的候选。\n"
+            "请按与查询的语义相关性从高到低排序，返回编号数组（JSON，如 [3,1,2,5]）。\n"
+            "排序原则：\n"
+            "1. 关系消歧：查询中的人物关系词（如妈妈=母亲、爸爸=父亲）指直系亲属，"
+            "不是配偶的父母（岳母/婆婆）或同名无关的人。候选 snippet 中明确写"
+            "'XX的妈妈/母亲'的优先于'XX配偶的母'。\n"
+            "2. 直接相关优先：候选内容直接描述查询对象本人的，优先于仅提及查询词的。\n"
+            "3. 过滤词面重叠：仅因群名/昵称含查询词而无实质关系的排最后。\n"
             "只返回 JSON 数组，不要解释。"
         ).format(q=query, cands="\n".join(cand_lines))
 
