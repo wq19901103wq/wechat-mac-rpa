@@ -1005,15 +1005,19 @@ class MemoryEngine:
         _logger.info(f"[Snippet] extracted {len(snippets)} snippets, hit_keywords={hit_keywords}")
         return snippets
 
-    def search_keyword(self, keyword: str, max_chars: int = 6000) -> str:
+    def search_keyword(self, keyword: str, max_chars: int = 6000, return_scored: bool = False) -> Any:
         """BM25 搜索：召回 + 排序，返回最相关的 wiki 内容。
 
         召回：遍历所有 wiki，找到包含任意关键词的文档。
         排序：BM25 打分，按相关性排序，只返回 Top 10。
         命中本人 → 返回完整 wiki；命中别人 → 返回片段。
+
+        return_scored=True（诊断用）：返回 (结果文本, scored)，scored 是 BM25
+        召回+primary 调整后、LLM rerank 前的候选池（含所有 score>0 的文档）。
+        benchmark 用它测召回阶段召回率，区分召回问题 vs 排序问题。
         """
         if not keyword or len(keyword.strip()) < 2:
-            return ""
+            return ("", []) if return_scored else ""
         # 按空格分词（去掉太短的词）
         raw_keywords = [kw.strip() for kw in keyword.split() if len(kw.strip()) >= 2]
         if not raw_keywords:
@@ -1053,7 +1057,8 @@ class MemoryEngine:
 
         _logger.info(f"[Search] retrieved {len(docs)} docs")
         if not docs:
-            return f"未在本地记忆中找到关于'{keyword}'的信息"
+            msg = f"未在本地记忆中找到关于'{keyword}'的信息"
+            return (msg, []) if return_scored else msg
 
         # ── 2. BM25 排序 ──
         N = len(docs)
@@ -1135,7 +1140,8 @@ class MemoryEngine:
             _logger.info(f"[Search] non-primary top: {name} score={score:.4f}")
 
         if not scored:
-            return f"未在本地记忆中找到关于'{keyword}'的信息"
+            msg = f"未在本地记忆中找到关于'{keyword}'的信息"
+            return (msg, []) if return_scored else msg
 
         # 本人优先，然后按 BM25 分数排序
         scored.sort(key=lambda x: (not x[4], -x[3]))
@@ -1155,6 +1161,9 @@ class MemoryEngine:
                 adjusted.append((name, content, is_group, score, False))
         scored = adjusted
         scored.sort(key=lambda x: (not x[4], -x[3]))
+
+        # 召回阶段候选池（rerank 前）的文档名列表，供 return_scored 诊断用
+        recall_pool_names = [name for name, _, _, _, _ in scored]
 
         # ── 2.5 LLM rerank：用 LLM 对 BM25 候选按语义相关性重排 ──
         # BM25 子串匹配无法理解关系语义（如"妈妈"=母亲≠岳母），LLM rerank 补这个短板。
@@ -1195,12 +1204,13 @@ class MemoryEngine:
                     results.append(tag + snippet)
 
         if not results:
-            return f"未在本地记忆中找到关于'{keyword}'的信息"
+            msg = f"未在本地记忆中找到关于'{keyword}'的信息"
+            return (msg, []) if return_scored else msg
 
         text = "\n".join(results)
         _logger.info(f"[Search] raw results length={len(text)} chars, max_chars={max_chars}")
         if len(text) <= max_chars:
-            return text
+            return (text, recall_pool_names) if return_scored else text
 
         # 优先保留本人的完整 wiki，其他人的 snippet 后截断
         primary_snippets = []
@@ -1227,6 +1237,8 @@ class MemoryEngine:
                 break
             truncated = truncated + "\n" + snippet if truncated else snippet
         _logger.info(f"[Search] truncated results length={len(truncated)} chars")
+        if return_scored:
+            return truncated, recall_pool_names
         return truncated
 
     def _llm_rerank(

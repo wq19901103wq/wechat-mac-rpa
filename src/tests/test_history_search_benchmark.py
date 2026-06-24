@@ -94,6 +94,9 @@ class BenchmarkResult:
     first_rank: int = 0   # expected_primary_id 在结果中的 1-based 排名；0=未命中
     hit_at_5: bool = False  # expected_primary_id 是否排进前 5
     mrr: float = 0.0      # 1/first_rank（rank>5 或未命中算 0）
+    # 召回阶段指标（融合 rerank 前）
+    in_recall_pool: bool = False  # primary 是否在 dense+keyword 召回候选池 top30 里
+    recall_pool_rank: int = 0   # primary 在召回池中的排名；0=未命中
 
 
 # ========== Case Definitions ==========
@@ -365,10 +368,15 @@ def run_benchmark() -> List[BenchmarkResult]:
                 sender_name=case.expected_sender or "",
             )
             formatted = HistorySearchIndex.format_results(raw, case.query, max_chars=50000)
+            # 召回阶段候选池（dense+keyword 并集，融合前）
+            recall_pool = idx.recall_candidate_ids(
+                case.query, top_n=30, sender_name=case.expected_sender or "",
+            )
         except Exception as e:
             print(f"  [{case.case_name}] 检索失败: {e}")
             raw = []
             formatted = ""
+            recall_pool = []
         elapsed = time.time() - start
 
         returned = _returned_ids(raw)
@@ -404,6 +412,10 @@ def run_benchmark() -> List[BenchmarkResult]:
         hit_at_5 = 1 <= first_rank <= 5
         mrr = (1.0 / first_rank) if (1 <= first_rank <= 5) else 0.0
 
+        # 召回阶段指标：primary 在 dense+keyword 召回池 top30 里吗（融合前）
+        in_recall_pool = primary in recall_pool if primary else False
+        recall_pool_rank = (recall_pool.index(primary) + 1) if in_recall_pool else 0
+
         results.append(BenchmarkResult(
             case_name=case.case_name,
             query=case.query,
@@ -428,6 +440,8 @@ def run_benchmark() -> List[BenchmarkResult]:
             first_rank=first_rank,
             hit_at_5=hit_at_5,
             mrr=mrr,
+            in_recall_pool=in_recall_pool,
+            recall_pool_rank=recall_pool_rank,
         ))
 
         if is_known and not passed:
@@ -440,9 +454,10 @@ def run_benchmark() -> List[BenchmarkResult]:
         if sender_violations:
             extra += f" [sender越界: {','.join(set(sender_violations))}]"
         rank_str = f" rank={first_rank}" if primary else ""
+        pool_str = f" pool={'Y'+str(recall_pool_rank) if in_recall_pool else 'N'}" if primary else ""
         print(
             f"  [{case.case_name}] {status} "
-            f"(P={precision:.0%} R={recall:.0%} F1={f1:.0%} MRR={mrr:.2f}) [{elapsed:.2f}s]{extra}{rank_str}"
+            f"(P={precision:.0%} R={recall:.0%} F1={f1:.0%} MRR={mrr:.2f}) [{elapsed:.2f}s]{extra}{rank_str}{pool_str}"
         )
 
     return results
@@ -468,6 +483,7 @@ def compute_metrics(results: List[BenchmarkResult]) -> dict[str, Any]:
     ranked = [r for r in results if not r.known_issue and r.expected_ids]
     mrr_at_5 = sum(r.mrr for r in ranked) / len(ranked) if ranked else 0.0
     hit_at_5 = sum(1 for r in ranked if r.hit_at_5) / len(ranked) if ranked else 0.0
+    recall_pool_hit = sum(1 for r in ranked if r.in_recall_pool) / len(ranked) if ranked else 0.0
 
     return {
         "tp": total_tp,
@@ -482,6 +498,7 @@ def compute_metrics(results: List[BenchmarkResult]) -> dict[str, Any]:
         "known_fail": known_fail,
         "mrr_at_5": mrr_at_5,
         "hit_at_5": hit_at_5,
+        "recall_pool_hit": recall_pool_hit,
     }
 
 
@@ -520,6 +537,7 @@ def print_report(results: List[BenchmarkResult], metrics: dict[str, Any]) -> Non
     print(f"  F1 Score:      {metrics['f1']:.2%}")
     print(f"  MRR@5:         {metrics['mrr_at_5']:.2%}  (排序质量，排除 known_issue)")
     print(f"  Hit@5:         {metrics['hit_at_5']:.2%}  (primary 进前 5 比例)")
+    print(f"  召回池Hit@30:  {metrics['recall_pool_hit']:.2%}  (primary 在 dense+keyword 召回池 top30，融合前)")
     print(f"  Accuracy:      {metrics['accuracy']:.2%}")
     print(f"  Passed:        {metrics['passed']}/{metrics['total']}")
 
@@ -632,6 +650,18 @@ def test_benchmark_hit_at_5(benchmark_results):
     metrics = compute_metrics(benchmark_results)
     assert metrics["hit_at_5"] >= 0.7, (
         f"Hit@5 不足: {metrics['hit_at_5']:.1%}，primary 文档常排不进前 5"
+    )
+
+
+def test_benchmark_recall_pool(benchmark_results):
+    """召回阶段召回率：primary 应在 dense+keyword 召回池 top30 里（融合前）。
+
+    区分召回问题（池里没有→需 query 改写/同义词）vs 排序问题（池里有但没排上→需 rerank）。
+    """
+    metrics = compute_metrics(benchmark_results)
+    assert metrics["recall_pool_hit"] >= 0.7, (
+        f"召回池命中率不足: {metrics['recall_pool_hit']:.1%}，"
+        f"primary 常在召回阶段就漏（需 query 改写而非 rerank）"
     )
 
 

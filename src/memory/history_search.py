@@ -310,6 +310,45 @@ class HistorySearchIndex:
         )
         return self._fuse_results(dense_results, kw_results, top_k, min_score)
 
+    def recall_candidate_ids(
+        self,
+        query: str,
+        top_n: int = 30,
+        sender_name: str = "",
+        chat_type: str = "",
+        min_score: float = 0.01,
+    ) -> List[str]:
+        """返回召回阶段候选池的 message id 列表（dense+keyword 并集，融合前）。
+
+        用于 benchmark 区分召回问题 vs 排序问题：
+        - primary 不在候选池 → 召回阶段漏（需 query 改写/同义词扩展）
+        - primary 在候选池但最终结果没排上 → 排序问题（需改进 rerank/融合）
+
+        返回 dense 路 + keyword 路各自 top_n 召回的所有 message id（含 context_ids），
+        未经融合排序，是 rerank 前的候选池。
+        """
+        if not query or not query.strip():
+            return []
+        if self.embeddings is None or len(self.messages) == 0:
+            return []
+        q = query.strip()
+        dense_results = self._dense_search(
+            q, top_n=top_n, sender_name=sender_name, chat_type=chat_type,
+            min_score=min_score,
+        )
+        kw_results = self._keyword_search(
+            q, top_n=top_n, sender_name=sender_name, chat_type=chat_type,
+        )
+        ids: List[str] = []
+        seen: set = set()
+        for r in dense_results + kw_results:
+            hit = r.get("hit_message") or {}
+            for m in [hit] + r.get("context_messages", []):
+                if m and m.get("id") and m["id"] not in seen:
+                    seen.add(m["id"])
+                    ids.append(m["id"])
+        return ids
+
     def _dense_search(
         self,
         query: str,
