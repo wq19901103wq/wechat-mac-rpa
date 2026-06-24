@@ -139,4 +139,7 @@ normalize_chat_name(name: str) -> str
 - ✅ P1 归一化+广告拦截（FR-13/14）— `normalize_chat_name` + 斤价模式不入库
 - ✅ P2: humor RAG 移除 — `MessageVectorIndex`（TF-IDF）索引已废弃、静默失效，删除 generator 注入逻辑与 vector_index.py 的 MessageVectorIndex 类；历史原文检索统一由 `search_history`（BGE dense + keyword 两路融合，见 history_search.py）承担
 - ✅ 召回质量 — 人名查询时 user wiki ×1.3 boost（避免 group wiki BM25 挤占），benchmark 5 个 known_issue 修 4 个；剩 multi_wangqiaosheng_biaoge 是 wiki 内容缺失（王海 wiki 未提王乔生）非排序问题
+- ✅ LLM rerank — search_keyword 的 BM25 top10 候选调 llm_client 按语义重排（temperature=0），降级完善（无 llm_client/异常→回退 BM25）。只修排序不修召回。
+- ✅ benchmark 三层指标 — 召回（P/R/F1）+ 排序（MRR@5/Hit@5）+ 召回阶段（召回池Hit@30，rerank 前）。wiki 68 case（MRR@5 77%/Hit@5 91%/召回池 100%），history 21 case（MRR@5 100%/Hit@5 100%/召回池 100%）。
 - ⏳ 残留: 6 组重复群（emoji-only 名）、8 广告群 wiki 待删
+- ⏳ 待办: LLM rerank 候选 top10→top30（捞回 pool=Y11-30 的 primary）；pool=N 真召回问题需 query 改写/同义词扩展（非 rerank）
