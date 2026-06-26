@@ -92,11 +92,15 @@ class WeChatMessageSender(MessageSender):
         """点击微信窗口底部中央（输入框大致位置）获取焦点。"""
         ok, rect, err = self.automation.get_window_rect("WeChat")
         if not ok or rect is None:
+            _logger.warning(f"[Sender] 获取窗口坐标失败: {err}")
             return 1, f"获取窗口坐标失败: {err}"
         click_x = int(rect.x + rect.width / 2)
         click_y = int(rect.y + rect.height - 60)
+        _logger.info(f"[Sender] focus 输入框: rect={rect}, click=({click_x}, {click_y})")
         if not self.automation.click_at(click_x, click_y):
+            _logger.warning("[Sender] 点击输入框失败")
             return 1, "点击输入框失败"
+        time.sleep(0.2)
         return 0, ""
 
     def _pbcopy(self, text: str) -> tuple[int, str]:
@@ -339,31 +343,36 @@ class WeChatMessageSender(MessageSender):
                     _logger.info("[Sender] fallback paste 发送成功")
                     return ActionResult(success=True, sent_text=text)
 
-            # fallback 2: keystroke 逐字输入
+            # fallback 2: pbcopy + Command+V 粘贴（比 keystroke 更可靠，支持中文）
             _logger.warning(
-                "[Sender] fallback paste 仍失败，尝试 keystroke 逐字输入"
+                "[Sender] fallback paste 仍失败，尝试 pbcopy+Command+V 粘贴"
             )
             ok, err = self._ensure_wechat_frontmost()
             if ok:
                 self._focus_input()
                 self._clear_input()
-                rc, err = self._keystroke(text)
+                rc, err = self._pbcopy(text)
                 if rc == 0:
-                    self._clear_clipboard()
-                    time.sleep(0.15)
-                    pasted_text, _, _ = self._verify()
-                    is_match = (text in pasted_text) or (
-                        pasted_text.strip() == text.strip()
-                    )
+                    rc_paste, err_paste = self._paste(0.8)
                     _logger.info(
-                        f"[Sender] keystroke verify: is_match={is_match}, "
-                        f"raw_repr={repr(pasted_text[:120])}"
+                        f"[Sender] fallback paste via pbcopy: paste_rc={rc_paste}, err={err_paste}"
                     )
-                    if is_match:
-                        rc2, err2 = self._send_return()
-                        if rc2 == 0:
-                            _logger.info("[Sender] keystroke 发送成功")
-                            return ActionResult(success=True, sent_text=text)
+                    if rc_paste == 0:
+                        self._clear_clipboard()
+                        time.sleep(0.15)
+                        pasted_text, _, _ = self._verify()
+                        is_match = (text in pasted_text) or (
+                            pasted_text.strip() == text.strip()
+                        )
+                        _logger.info(
+                            f"[Sender] fallback paste verify: is_match={is_match}, "
+                            f"raw_repr={repr(pasted_text[:120])}"
+                        )
+                        if is_match:
+                            rc2, err2 = self._send_return()
+                            if rc2 == 0:
+                                _logger.info("[Sender] fallback paste 发送成功")
+                                return ActionResult(success=True, sent_text=text)
 
             # 全部失败
             return ActionResult(
