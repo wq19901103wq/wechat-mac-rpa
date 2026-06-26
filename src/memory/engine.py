@@ -1510,7 +1510,8 @@ class MemoryEngine:
             for path in d.glob("*.md"):
                 try:
                     content = path.read_text(encoding="utf-8")
-                except Exception:
+                except Exception as e:
+                    _logger.warning("[lint_memory] 读取 wiki 失败 %s: %s", path, e)
                     continue
                 if len(content) > max_wiki_chars:
                     report["bloated"].append({

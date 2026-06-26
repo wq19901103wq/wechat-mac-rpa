@@ -221,7 +221,7 @@ class HistorySearchIndex:
         model_path: Optional[Path] = None,
         backend: Optional[str] = None,
     ):
-        import pickle
+        import pickle  # nosec B403
 
         self.index_path = index_path or _index_path()
         self.model_path = model_path or _model_path()
