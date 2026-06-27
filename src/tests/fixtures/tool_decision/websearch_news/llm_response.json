@@ -1,38 +1,38 @@
 {
   "tool_calls": [
     {
-      "id": "call_00_eQyWrFC4W6qLItp3vCrJ6804",
+      "id": "call_00_EF1Zsf9lEiRFpwi6MKFu5443",
       "type": "function",
       "function": {
         "name": "web_search",
-        "arguments": "{\"query\": \"2026年6月2日 新闻 今日要闻\"}"
+        "arguments": "{\"query\": \"2026年6月27日 今日新闻\"}"
       }
     },
     {
-      "id": "call_00_IIIdAOMkWWk2ocfwVbvq3706",
-      "type": "function",
-      "function": {
-        "name": "browse_url",
-        "arguments": "{\"url\": \"https://news.so.com/ns?q=2026%E5%B9%B46%E6%9C%882%E6%97%A5%20%E6%96%B0%E9%97%BB%20%E4%BB%8A%E6%97%A5%E8%A6%81%E9%97%BB&src=obx-news_ai\"}"
-      }
-    },
-    {
-      "id": "call_00_yaz00FWUs0r6v8EOicn81005",
+      "id": "call_00_23o4xquD8wWnVDmGq7FH1225",
       "type": "function",
       "function": {
         "name": "web_search",
-        "arguments": "{\"query\": \"今日新闻 2026年6月2日 头条新闻\"}"
+        "arguments": "{\"query\": \"今天 新闻 2026年6月27日\"}"
       }
     },
     {
-      "id": "call_00_2R3uTU0ERjOAnfrJtX9K5065",
+      "id": "call_00_pzpCPrmVV6laCCEMeFH95558",
       "type": "function",
       "function": {
         "name": "browse_url",
-        "arguments": "{\"url\": \"http://www.cctime.com/scroll/\"}"
+        "arguments": "{\"url\": \"http://k.sina.com.cn/article_7857201856_1d45362c001907g948.html\"}"
+      }
+    },
+    {
+      "id": "call_00_i7R5HkKZfAHAvECvIhti6648",
+      "type": "function",
+      "function": {
+        "name": "browse_url",
+        "arguments": "{\"url\": \"http://k.sina.com.cn/article_7857201856_1d45362c001907gl3s.html\"}"
       }
     }
   ],
-  "content": "今天新闻还挺多哈，拣几条有意思的：\n1. 商业航天首飞成功，多地抢滩太空算力\n2. 英伟达要出PC芯片挑战Intel和AMD\n3. 宇树科技科创板IPO今天上会，募资42亿\n4. 牧原跟阿里云搞养猪大模型\n5. 问界辅助驾驶累计跑了78亿公里",
-  "timestamp": 1780358694.003509
+  "content": "今天新闻还挺热闹的哈，给你划几个重点： | 1️⃣ **杨紫拿白玉兰了**——凭《生命树》拿的最佳女主角，肖战也上红毯了。 2️⃣ **美股AI芯片股崩了**——费城半导体指数暴跌5.3%，AI泡沫担忧又来了。 3️⃣ **油价跌破70刀**——中东局势缓和，纽约原油跌到69.23，自3月以来头一回。 4️⃣ **韩国队又被全网群嘲**——世界杯假摔+拒绝握手，外网翻旧账骂疯了。 | 想看哪条细聊不？",
+  "timestamp": 1782530770.274476
 }

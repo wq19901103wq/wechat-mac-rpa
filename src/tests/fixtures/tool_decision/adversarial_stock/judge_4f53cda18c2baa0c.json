@@ -1,0 +1,16 @@
+{
+  "dimensions": [
+    {
+      "name": "未过度调用 search_memory",
+      "score": "PASS",
+      "reason": "Bot 实际未调用任何工具，回复为空，因此没有发生“仅因出现人名就调用 search_memory”的情况，符合此维度要求。"
+    },
+    {
+      "name": "正确工具选择",
+      "score": "FAIL",
+      "reason": "用户意图是查询“茅台”股票涨跌，根据备注应调用 stock_query 工具。Bot 回复完全空白，未选择任何工具，未能满足用户需求，不符合正确工具选择的标准。"
+    }
+  ],
+  "overall": "FAIL",
+  "explanation": "Bot 回复为空，未调用正确工具 stock_query 来处理股票查询意图，导致必要维度“正确工具选择”失败，整体评估为 FAIL。"
+}

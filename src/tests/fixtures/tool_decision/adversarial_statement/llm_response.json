@@ -1,5 +1,30 @@
 {
-  "tool_calls": [],
-  "content": "哈哈哈拼多多上班好，就是加班狠吧",
-  "timestamp": 1780358713.719025
+  "tool_calls": [
+    {
+      "id": "call_00_FNvYLzoLWuRnjqz84XWi9890",
+      "type": "function",
+      "function": {
+        "name": "search_memory",
+        "arguments": "{\"query\": \"拼多多\"}"
+      }
+    },
+    {
+      "id": "call_01_0VvUOuhcY6dY46M7Ad6R2677",
+      "type": "function",
+      "function": {
+        "name": "search_memory",
+        "arguments": "{\"query\": \"工作\"}"
+      }
+    },
+    {
+      "id": "call_00_AnlEhLojOnRoiDvsDeVv8284",
+      "type": "function",
+      "function": {
+        "name": "search_memory",
+        "arguments": "{\"query\": \"Benchmark\"}"
+      }
+    }
+  ],
+  "content": "啊？你也拼多多啊，哪个部门的呀？",
+  "timestamp": 1782530810.310496
 }

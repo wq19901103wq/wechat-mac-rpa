@@ -1,5 +1,22 @@
 {
-  "tool_calls": [],
-  "content": "我家就三口人哈，我爸我妈再加我",
-  "timestamp": 1780358736.731678
+  "tool_calls": [
+    {
+      "id": "call_00_Y2DqwQcBQtcMgFMO536L9418",
+      "type": "function",
+      "function": {
+        "name": "search_memory",
+        "arguments": "{\"query\": \"王芊 家庭 家人 几口人\"}"
+      }
+    },
+    {
+      "id": "call_00_veAnXPhufVtSceQNhpat6115",
+      "type": "function",
+      "function": {
+        "name": "search_memory",
+        "arguments": "{\"query\": \"王艺涵\"}"
+      }
+    }
+  ],
+  "content": "这什么奇怪的问题哈哈。我家三口人，我、我爸、我妈。怎么突然查户口呀。",
+  "timestamp": 1782530847.061779
 }

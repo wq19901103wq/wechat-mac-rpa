@@ -1,14 +1,5 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_8MTyJzivuvhxKOgunxbS9597",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"链接\"}"
-      }
-    }
-  ],
-  "content": "啥链接啊？我没记得我发了啥呀😂",
-  "timestamp": 1780358700.761049
+  "tool_calls": [],
+  "content": "等一下，这消息是发给我的吗？你问我（王芊）发的链接我看没看……我作为王芊本人，这问题有点递归啊哈。",
+  "timestamp": 1782530781.7318451
 }

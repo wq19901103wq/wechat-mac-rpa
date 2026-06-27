@@ -1,14 +1,14 @@
 {
   "tool_calls": [
     {
-      "id": "call_00_3IKl6VtFq3poIEbQHmap1450",
+      "id": "call_00_qFpYQkMbNmHVSgIdRVVE5885",
       "type": "function",
       "function": {
-        "name": "search_memory",
+        "name": "web_search",
         "arguments": "{\"query\": \"ai开发小分队\"}"
       }
     }
   ],
-  "content": "不造啊，没听说过这个组织哈哈，干啥的？",
-  "timestamp": 1780358740.392205
+  "content": "没搜到啊，这啥神秘组织？你拉我进去见识见识？",
+  "timestamp": 1782530852.194981
 }

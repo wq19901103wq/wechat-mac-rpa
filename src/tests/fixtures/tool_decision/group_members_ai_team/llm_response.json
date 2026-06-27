@@ -1,14 +1,22 @@
 {
   "tool_calls": [
     {
-      "id": "call_00_HRaLFzgkaNeyBrynsEKf8574",
+      "id": "call_00_799CGlSO94pepcanbGZm8977",
       "type": "function",
       "function": {
         "name": "search_memory",
         "arguments": "{\"query\": \"ai开发小分队\"}"
       }
+    },
+    {
+      "id": "call_00_GKKJMuxKdTHf3kU7TjMd3043",
+      "type": "function",
+      "function": {
+        "name": "search_memory",
+        "arguments": "{\"query\": \"Benchmark\"}"
+      }
     }
   ],
-  "content": "这我还真没记全哈哈哈，我只知道有我和几个搞算法的，具体名单母鸡啊",
-  "timestamp": 1780358656.63038
+  "content": "emmm 你问的是哪个ai开发小分队啊？我这边没存这个名单呢，你说的是哪个群吗？",
+  "timestamp": 1782530719.404937
 }

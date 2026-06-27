@@ -1,14 +1,22 @@
 {
   "tool_calls": [
     {
-      "id": "call_00_JhaLoDeTXVUPI2DWzpd07183",
+      "id": "call_00_SdozOcQOpuJ15JOhs9tw4463",
       "type": "function",
       "function": {
         "name": "search_memory",
         "arguments": "{\"query\": \"小海哥\"}"
       }
+    },
+    {
+      "id": "call_00_BTXvFQzUCYmfgyy8NrGf4996",
+      "type": "function",
+      "function": {
+        "name": "search_memory",
+        "arguments": "{\"query\": \"王芊\"}"
+      }
     }
   ],
-  "content": "小海哥是谁啊……我咋没印象呢",
-  "timestamp": 1780358730.0209699
+  "content": "小海哥是谁啊，我认识吗？",
+  "timestamp": 1782530830.7836149
 }

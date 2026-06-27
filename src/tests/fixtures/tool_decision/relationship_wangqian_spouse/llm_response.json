@@ -1,22 +1,14 @@
 {
   "tool_calls": [
     {
-      "id": "call_00_QQwfBEuluVr9vU54VZEo3837",
+      "id": "call_00_bPdlecB9ytIdzRIRG9LX4688",
       "type": "function",
       "function": {
         "name": "search_memory",
-        "arguments": "{\"query\": \"王芊\"}"
-      }
-    },
-    {
-      "id": "call_00_F7Xp1J4PVgX4JZOsuglB4245",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"老婆\"}"
+        "arguments": "{\"query\": \"王芊 老婆\"}"
       }
     }
   ],
-  "content": "啊？问这个干嘛哈哈 | 母鸡啊，反正不是我",
-  "timestamp": 1780358662.80439
+  "content": "这个问题嘛……我得想想我老婆是谁。 | 等等，我要是知道我老婆是谁的话，也不至于在这跟你聊天了哈。",
+  "timestamp": 1782530726.993831
 }

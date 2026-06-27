@@ -1,7 +1,7 @@
 {
   "tool_calls": [
     {
-      "id": "call_00_mvpO9JfQSktRFcK0E4YV0409",
+      "id": "call_00_82YGTgfZMDPKgbIn4YKU5153",
       "type": "function",
       "function": {
         "name": "search_memory",
@@ -9,14 +9,22 @@
       }
     },
     {
-      "id": "call_00_rzZbZgr7TyPZpHsh9bAX7866",
+      "id": "call_00_6lw30cFVpEucgI5jEr3P9200",
       "type": "function",
       "function": {
         "name": "search_memory",
-        "arguments": "{\"query\": \"王芊\"}"
+        "arguments": "{\"query\": \"程立 王芊\"}"
+      }
+    },
+    {
+      "id": "call_00_OYIcRuXvd1Ia41Rb1nfy7000",
+      "type": "function",
+      "function": {
+        "name": "search_memory",
+        "arguments": "{\"query\": \"程立 关系\"}"
       }
     }
   ],
-  "content": "程立？谁啊，不认识哈",
-  "timestamp": 1780358643.521572
+  "content": "这谁啊，我不认识叫程立的人哈。你是不是记错名字了。",
+  "timestamp": 1782530696.56339
 }

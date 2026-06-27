@@ -1,5 +1,14 @@
 {
-  "tool_calls": [],
-  "content": "我啊？四海为家，哈哈。不过平时在上海晃悠比较多~",
-  "timestamp": 1780358647.994257
+  "tool_calls": [
+    {
+      "id": "call_00_ZwwR1h7g28jRAeKHRD6x0528",
+      "type": "function",
+      "function": {
+        "name": "search_memory",
+        "arguments": "{\"query\": \"王芊 住址\"}"
+      }
+    }
+  ],
+  "content": "查我户口啊？怎么，要来给我送温暖还是蹭住呀。",
+  "timestamp": 1782530704.287725
 }

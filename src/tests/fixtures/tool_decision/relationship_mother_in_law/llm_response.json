@@ -1,15 +1,7 @@
 {
   "tool_calls": [
     {
-      "id": "call_00_bxB6hn2mNcOKaF7Wca6I3137",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"王芊\"}"
-      }
-    },
-    {
-      "id": "call_00_gwlT4DdwZEzdbEAzQ4P17160",
+      "id": "call_00_L4pNrAwTKo15XYRt0hrM1725",
       "type": "function",
       "function": {
         "name": "search_memory",
@@ -17,6 +9,6 @@
       }
     }
   ],
-  "content": "这问题怎么怪怪的哈哈哈，我是女的啊哪来的岳母😂 | 你是想问婆婆吧？",
-  "timestamp": 1780358726.187844
+  "content": "你这个问法就很有灵性了哈。我一个女的，上哪找岳母去啊。",
+  "timestamp": 1782530824.761021
 }

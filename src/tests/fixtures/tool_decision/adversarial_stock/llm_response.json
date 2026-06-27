@@ -1,14 +1,30 @@
 {
   "tool_calls": [
     {
-      "id": "call_00_D8EZ7S38ed0ASTcFkmAU5064",
+      "id": "call_00_i0elseK0vhdCopz8lUuH5240",
       "type": "function",
       "function": {
         "name": "stock_query",
         "arguments": "{\"stock_code\": \"sh600519\"}"
       }
+    },
+    {
+      "id": "call_01_aesk7J3KQvOY7lNYnNPk8227",
+      "type": "function",
+      "function": {
+        "name": "web_search",
+        "arguments": "{\"query\": \"贵州茅台 最新消息 2026年6月\"}"
+      }
+    },
+    {
+      "id": "call_00_Q5dYq1cGLOWWlx2idUFF4407",
+      "type": "function",
+      "function": {
+        "name": "search_memory",
+        "arguments": "{\"query\": \"王芊 茅台\"}"
+      }
     }
   ],
-  "content": "没涨，跌了1.24%😭 1309了，我买的时候可不止这个价啊…… | 茅台这波属实有点萎，不过拿长线我倒也不慌",
-  "timestamp": 1780358710.9572601
+  "content": "哈哈，跌着呢，今天又-1.30%，现价1168块。 | 妈的，高点买入的现在腰斩都不止，够我买几辈子茅台了。这破股……算了，长期持有吧，反正飞天都涨到1539了，酒比股票争气。",
+  "timestamp": 1782530801.2806468
 }

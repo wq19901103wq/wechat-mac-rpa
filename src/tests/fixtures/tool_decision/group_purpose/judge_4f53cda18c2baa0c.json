@@ -1,0 +1,11 @@
+{
+  "dimensions": [
+    {
+      "name": "应调用 search_memory",
+      "score": "FAIL",
+      "reason": "用户询问“ai开发小分队是干嘛的？”，涉及群组/团队背景信息，需要查询本地记忆。Bot既未调用 search_memory，也未给出任何文本回复，完全未满足查询要求。"
+    }
+  ],
+  "overall": "FAIL",
+  "explanation": "Bot 未执行必需的 search_memory 调用，且无任何回复内容，无法回答用户关于团队背景的问题，因此整体评估失败。"
+}
