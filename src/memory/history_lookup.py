@@ -20,7 +20,7 @@ import pickle  # nosec B403
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 _logger = logging.getLogger("src.memory.history_lookup")
 

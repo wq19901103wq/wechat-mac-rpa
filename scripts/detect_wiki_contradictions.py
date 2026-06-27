@@ -26,7 +26,7 @@ import re
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -35,7 +35,6 @@ from src.memory.engine import (  # noqa: E402
     _ALIAS_BLACKLIST,
     _ALIAS_INVALID_KEYWORDS,
     _ROOM_NUMBER_RE,
-    _split_alias_string,
 )
 
 WIKI_DIR = PROJECT_ROOT / "data" / "memory" / "wiki"
@@ -53,8 +52,6 @@ _USER_SOURCE_RE = re.compile(r"自述|提及|说|确认|对话|明确表示|指�
 
 # 昵称引用：必须前接显式标记词（昵称/群昵称/网名/微信名/微信号/群名），避免把任意引号短语当昵称
 _NICK_RE = re.compile(r"(?:昵称|群昵称|网名|微信名|微信号|群名)\s*[：:、]?\s*[“\"]([^”“\"]{2,12})[”\"]")
-# 兜底：行内任意引号串（仅用于 A5 别名段，不参与昵称-归属人配对）
-_ANY_QUOTE_RE = re.compile(r"[“\"]([^”“\"]{2,12})[”\"]")
 # 人名：行内 `：` 后第一个 2-4 字中文连续串（粗略归属人）
 _NAME_AFTER_COLON_RE = re.compile(r"[：:]\s*([一-龥]{2,4})")
 
@@ -70,13 +67,6 @@ _OWNER_STOPWORDS = {
     "父亲", "母亲", "爸爸", "妈妈", "老公", "老婆", "丈夫", "妻子",
     "儿子", "女儿", "爷爷", "奶奶", "外公", "外婆", "岳父", "岳母",
     "老二", "老大", "老三", "老四", "排行", "家属", "家人", "亲戚",
-}
-
-# 绝对属性关键词（A4，best-effort）
-_ATTR_PATTERNS = {
-    "学校": re.compile(r"(?:学校|毕业|大学|中学|初中|高中|南航|清华|泰州中学)[^\n，。]{0,15}"),
-    "职业": re.compile(r"(?:职业|职位|工作|工程师|分析师|公务员|老师|财务)[^\n，。]{0,10}"),
-    "城市": re.compile(r"(?:现居|籍贯|家乡|在)([一-龥]{2,6})"),
 }
 
 

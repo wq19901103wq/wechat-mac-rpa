@@ -65,7 +65,7 @@ def _strip_nick_from_line(line: str, nick: str) -> str:
     out = out.replace(f"“{nick}”", "").replace(f"\"{nick}\"", "")
     # 清理孤立逗号/顿号
     out = re.sub(r"[，,]{2,}", "，", out)
-    out = re.sub(r"[，,]\s*([）)）])", r"\1", out)
+    out = re.sub(r"[，,]\s*([）)])", r"\1", out)
     return out
 
 
@@ -196,12 +196,10 @@ def _resolve_targets(args) -> List[tuple]:
         return [(args.group, True)]
     if args.pilot:
         if not PILOT_LIST.exists():
-            print(f"✗ pilot_list.json 不存在: {PILOT_LIST}", file=sys.stderr)
-            sys.exit(2)
+            raise FileNotFoundError(f"pilot_list.json 不存在: {PILOT_LIST}")
         data = json.loads(PILOT_LIST.read_text(encoding="utf-8"))
         return [(it["name"], it.get("is_group", False)) for it in data["items"]]
-    print("✗ 请指定 --user / --group / --pilot", file=sys.stderr)
-    sys.exit(2)
+    raise ValueError("请指定 --user / --group / --pilot")
 
 
 def _apply_decisions(stamp: str) -> int:
@@ -296,7 +294,11 @@ def main() -> int:
     if args.apply_decisions:
         return _apply_decisions(time.strftime("%Y%m%d"))
 
-    targets = _resolve_targets(args)
+    try:
+        targets = _resolve_targets(args)
+    except (FileNotFoundError, ValueError) as err:
+        print(f"✗ {err}", file=sys.stderr)
+        return 2
     plans = []
     all_review = []
     stamp = time.strftime("%Y%m%d")
