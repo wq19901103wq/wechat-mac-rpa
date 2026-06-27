@@ -174,19 +174,37 @@ Prompt = 工作记忆（最近对话原文） + 会话记忆（人物 / 关系 /
 
 #### 长期记忆（Long-term Memory）
 
-长期记忆跨越单次会话，保存时间线更长的背景知识。它把 **WeFlow 初始化**和**运行时对话**当作原始输入数据，向上抽象出两个索引层：
+长期记忆跨越单次会话，保存时间线更长的背景知识。它把 **历史聊天记录** 当作原始输入数据，向上抽象出两个索引层：
 
-- **LLM Wiki**：由 LLM 从原始对话中提炼、结构化的长期事实（按联系人/群聊独立维护），增量更新，标注来源，严禁删除已有内容。
-- **向量数据库**：对原始对话做切片和嵌入，提供语义级检索能力。
+- **LLM Wiki**：由 LLM 从原始对话中提炼、结构化的长期事实（按联系人/群聊独立维护），增量更新，标注来源。
+- **BGE 语义索引**：对原始对话做 `BAAI/bge-small-zh-v1.5` 嵌入，提供语义级历史原文检索。
 
 **原始输入数据**
-- **WeFlow 初始化**：Bot 启动时从微信数据库导出全量历史聊天记录，作为初始语料。
-- **运行时对话**：每个 tick 感知到的新消息，持续追加到原始数据流中。
+- **历史导出**：`data/exports/b/` 下的 JSON 消息导出文件。
+- **运行时对话**：Bot 收到的新消息，可通过 `history_search.add_message()` 实时加入检索。
 
-**线上多路召回 + Rerank**
-- **LLM Wiki 关键字召回**：从结构化 wiki 中做关键词/实体匹配，召回精准事实。
-- **向量数据库 向量召回**：从向量索引中做语义相似度召回，捕获同义、上下文相关片段。
-- **Rerank 融合排序**：两路结果汇总后，综合 **BM25** 文本相关性和**向量相似度**重新打分，选出 top-k 注入会话记忆或直接使用。
+**索引构建**
+
+```bash
+# 首次全量构建（约 1 小时，78 万条）
+python3 scripts/update_history_index.py
+
+# 后续单条增量（管理工具）
+python3 scripts/update_history_index.py \
+  --add-one '{"id":"...","text":"...","sender":"...","chat_type":"single"}'
+python3 scripts/update_history_index.py --remove-one "MSG_ID"
+```
+
+- 编码器使用 **ONNX Runtime**，无需 `torch` / `transformers`。
+- 默认模型路径指向本地 `wechat-digital-twin/models/bge-small-zh-v1.5`，可通过 `WECHAT_BGE_MODEL_PATH` 覆盖。
+- 输出 `data/memory/cache/vector_index_dense_messages.pkl`，可通过 `WECHAT_HISTORY_INDEX_PATH` 覆盖。
+
+**线上召回**
+
+- **`search_memory` 工具**：同时召回：
+  - **LLM Wiki 摘要**：人物/群聊的关键事实与关系。
+  - **历史聊天原文**：语义相似的原始对话片段（含上下文）。
+- 语义索引支持运行时单条增量：`history_search.add_message(msg)` 先写入内存缓冲区，检索时与持久化主索引合并；需要持久化时可通过 `--add-one` 写回 pkl。
 
 **人工 Overrides**：通过外挂 JSON 实现任意字段覆写，LLM 更新时不会破坏人工修改。
 
@@ -197,7 +215,7 @@ graph TB
     subgraph Prompt["Prompt 上下文 = 三层记忆"]
         WM[工作记忆<br/>最近 N 条原文]
         SM[会话记忆<br/>人物卡 / 关系 / 偏好]
-        LM[长期记忆片段<br/>Wiki / 向量召回]
+        LM[长期记忆片段<br/>Wiki 摘要 + 历史原文]
     end
 
     WM --> Context[注入 LLM 上下文]
@@ -205,24 +223,24 @@ graph TB
     LM --> Context
 
     subgraph LongTerm["长期记忆生产"]
-        WeFlow["WeFlow 初始化<br/>历史全量聊天记录"]
+        Export["历史导出<br/>data/exports/b"]
         Runtime["运行时对话<br/>增量消息"]
         Wiki["LLM Wiki<br/>结构化 Markdown"]
-        VectorDB["向量数据库<br/>语义嵌入"]
+        VectorDB["BGE 语义索引<br/>ONNX / 512dim"]
         KeywordRecall["LLM Wiki 关键字召回"]
-        VectorRecall["向量数据库 向量召回"]
-        Rerank["Rerank<br/>BM25 + 向量相似度"]
+        VectorRecall["BGE 语义召回"]
+        Merge["search_memory<br/>Wiki + 历史原文"]
     end
 
-    WeFlow --> Wiki
-    WeFlow --> VectorDB
+    Export --> Wiki
+    Export --> VectorDB
     Runtime --> Wiki
-    Runtime --> VectorDB
+    Runtime -.增量.-> VectorDB
     Wiki --> KeywordRecall
     VectorDB --> VectorRecall
-    KeywordRecall --> Rerank
-    VectorRecall --> Rerank
-    Rerank --> LM
+    KeywordRecall --> Merge
+    VectorRecall --> Merge
+    Merge --> LM
 ```
 
 ---
@@ -387,6 +405,7 @@ wechat-mac-rpa/
 │   ├── logs/              # 运行日志
 │   ├── screenshots/       # 截图存档
 │   ├── memory/wiki/       # 用户/群聊/话题 wiki
+│   ├── memory/cache/      # BGE 语义索引（vector_index_dense_messages.pkl）
 │   ├── benchmark_history/ # Benchmark 历史数据
 │   ├── experiments/       # 实验结果归档
 │   └── cases.db           # Badcase 核心数据库
