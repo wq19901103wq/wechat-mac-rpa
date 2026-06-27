@@ -22,10 +22,13 @@
 import logging
 import os
 import threading
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+
+from src.memory.message_index_store import MessageIndexStore
 
 _logger = logging.getLogger("src.memory.history_search")
 
@@ -165,7 +168,8 @@ class _BGEEncoder:
     def _tokenize(self, texts: List[str]):
         """返回 (input_ids, attention_mask)，均为 np.int64 数组。"""
         tok = self._tok
-        assert tok is not None  # _init_tokenizer 已保证赋值
+        if tok is None:
+            raise RuntimeError("tokenizer 未初始化")
         if self._tokenizer_kind == "tokenizers":
             encs = tok.encode_batch(texts)
             input_ids = np.array([e.ids for e in encs], dtype=np.int64)
@@ -221,7 +225,7 @@ class HistorySearchIndex:
         model_path: Optional[Path] = None,
         backend: Optional[str] = None,
     ):
-        import pickle
+        import pickle  # nosec B403
 
         self.index_path = index_path or _index_path()
         self.model_path = model_path or _model_path()
@@ -265,6 +269,9 @@ class HistorySearchIndex:
         _logger.info("[HistorySearch] 加载 BGE 编码器: %s", self.model_path)
         self.encoder = _BGEEncoder(self.model_path, backend)
 
+        # 运行时增量缓冲区：单条 add/remove 先写内存，flush 时再回写 pkl
+        self.incremental = MessageIndexStore(dim=self.embeddings.shape[1])
+
     # ── 召回参数 ──
     # 融合权重：dense 主导（语义），keyword 补精确词；两路共识额外提升
     _FUSE_ALPHA = 0.6  # fusion = alpha*dense + (1-alpha)*keyword
@@ -305,6 +312,11 @@ class HistorySearchIndex:
             q, top_n=recall_n, sender_name=sender_name, chat_type=chat_type,
             min_score=min_score,
         )
+        inc_results = self._incremental_dense_search(
+            q, top_n=recall_n, sender_name=sender_name, chat_type=chat_type,
+            min_score=min_score,
+        )
+        dense_results = self._merge_dense_results(dense_results, inc_results, recall_n)
         kw_results = self._keyword_search(
             q, top_n=recall_n, sender_name=sender_name, chat_type=chat_type,
         )
@@ -336,6 +348,11 @@ class HistorySearchIndex:
             q, top_n=top_n, sender_name=sender_name, chat_type=chat_type,
             min_score=min_score,
         )
+        inc_results = self._incremental_dense_search(
+            q, top_n=top_n, sender_name=sender_name, chat_type=chat_type,
+            min_score=min_score,
+        )
+        dense_results = self._merge_dense_results(dense_results, inc_results, top_n)
         kw_results = self._keyword_search(
             q, top_n=top_n, sender_name=sender_name, chat_type=chat_type,
         )
@@ -408,6 +425,76 @@ class HistorySearchIndex:
             if len(results) >= top_n:
                 break
         return results
+
+    def _incremental_dense_search(
+        self,
+        query: str,
+        top_n: int = 20,
+        sender_name: str = "",
+        chat_type: str = "",
+        min_score: float = 0.01,
+    ) -> List[Dict[str, Any]]:
+        """在内存增量缓冲区中做 dense 检索。"""
+        incremental = getattr(self, "incremental", None)
+        if incremental is None or incremental.is_empty():
+            return []
+        q_emb = self.encoder.encode([query])
+        return incremental.search(
+            q_emb[0],
+            top_k=top_n,
+            sender_name=sender_name,
+            chat_type=chat_type,
+            min_score=min_score,
+        )
+
+    @staticmethod
+    def _merge_dense_results(
+        main_results: List[Dict[str, Any]],
+        inc_results: List[Dict[str, Any]],
+        top_n: int,
+    ) -> List[Dict[str, Any]]:
+        """合并主索引 dense 结果与增量区 dense 结果，按 score 取 top_n。"""
+        merged = {r["context_key"]: r for r in main_results}
+        for r in inc_results:
+            key = r["context_key"]
+            if key in merged:
+                # 增量区结果更新为更高分
+                if r["score"] > merged[key]["score"]:
+                    merged[key] = r
+            else:
+                merged[key] = r
+        sorted_results = sorted(merged.values(), key=lambda x: x["score"], reverse=True)
+        return sorted_results[:top_n]
+
+    def add_message(self, msg: Dict[str, Any]) -> None:
+        """运行时添加/更新单条消息到内存增量缓冲区。"""
+        self.incremental.add_or_update(msg, self.encoder)
+        _logger.info("[HistorySearch] 增量添加消息: %s", msg.get("id"))
+
+    def remove_message(self, msg_id: str) -> bool:
+        """运行时删除消息。优先删增量区；若在主索引则原地删除并重建索引。"""
+        if self.incremental.remove(msg_id):
+            _logger.info("[HistorySearch] 从增量区删除消息: %s", msg_id)
+            return True
+
+        if msg_id not in self.msg_by_id:
+            return False
+
+        idx = self.id_to_idx[msg_id]
+        self.messages.pop(idx)
+        self.embeddings = np.delete(self.embeddings, idx, axis=0)
+
+        # 重建辅助索引
+        self.msg_by_id = {m["id"]: m for m in self.messages}
+        self.id_to_idx = {m["id"]: i for i, m in enumerate(self.messages)}
+        self.sender_index = defaultdict(list)
+        self.chat_type_index = defaultdict(list)
+        for m in self.messages:
+            self.sender_index[m["sender"]].append(m["id"])
+            self.chat_type_index[m["chat_type"]].append(m["id"])
+
+        _logger.info("[HistorySearch] 从主索引删除消息: %s", msg_id)
+        return True
 
     def _keyword_search(
         self,
@@ -590,25 +677,51 @@ class HistorySearchIndex:
 
 _singleton: Optional[HistorySearchIndex] = None
 _singleton_lock = threading.Lock()
+_last_index_mtime: float = 0.0
+
+
+def _update_index_mtime() -> None:
+    """记录当前索引文件 mtime，用于自动感知外部更新。"""
+    global _last_index_mtime
+    index_path = _index_path()
+    if index_path.exists():
+        _last_index_mtime = index_path.stat().st_mtime
 
 
 def get_history_index() -> Optional[HistorySearchIndex]:
     """获取全局 HistorySearchIndex 单例，首次调用时懒加载。
 
+    自动检测索引文件 mtime 变化；若外部已更新 pkl，则重新加载。
     任何加载失败都返回 None 并记日志——调用方（工具 adapter）应优雅降级。
     """
     global _singleton
     if _singleton is not None:
-        return _singleton
+        index_path = _index_path()
+        if index_path.exists() and index_path.stat().st_mtime > _last_index_mtime:
+            _logger.info("[HistorySearch] 检测到索引文件已更新，准备重新加载")
+            with _singleton_lock:
+                _singleton = None
+        else:
+            return _singleton
+
     with _singleton_lock:
         if _singleton is not None:
             return _singleton
         try:
             _singleton = HistorySearchIndex()
+            _update_index_mtime()
             return _singleton
         except Exception as e:
             _logger.warning("[HistorySearch] 索引加载失败，search_history 将不可用: %s", e, exc_info=True)
             return None
+
+
+def reload_index() -> Optional[HistorySearchIndex]:
+    """强制重新加载索引（例如外部 pkl 已更新或增量已 flush）。"""
+    global _singleton
+    with _singleton_lock:
+        _singleton = None
+    return get_history_index()
 
 
 def reset_singleton() -> None:

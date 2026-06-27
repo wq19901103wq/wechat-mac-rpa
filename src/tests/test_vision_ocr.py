@@ -13,6 +13,7 @@ SMALL_SCENE_PATH = os.path.join(FIXTURES_DIR, "small_scene.png")
 
 
 class TestVisionOCREngine:
+    @pytest.mark.skipif(not os.path.exists(SMALL_SCENE_PATH), reason="fixture image not available")
     def test_recognize_real_fixture(self):
         """使用真实 fixture 图片测试 OCR 识别"""
         engine = VisionOCREngine()

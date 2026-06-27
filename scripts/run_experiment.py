@@ -12,6 +12,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List
 
+from src.models.base import ChatMessage
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 env_file = Path(__file__).parent.parent / ".env"
@@ -266,8 +268,8 @@ def run_experiment(exp_config: BotConfig, tick_ids: list):
         try:
             all_messages = _deserialize_messages(session_input_json)
             unreplied = _deserialize_messages(session_unreplied_json)
-        except Exception as e:
-            print(f"  #{tid}: 跳过（反序列化失败: {e}）")
+        except Exception as err:
+            print(f"  #{tid}: 跳过（反序列化失败: {err}）")
             continue
 
         if not all_messages or not unreplied:
@@ -389,7 +391,10 @@ def main():
         # 等距采样，跨实验可对比
         total = conn.execute("SELECT COUNT(*) FROM tick_log WHERE should_reply=1").fetchone()[0]
         step = max(1, total // args.n_samples)
-        all_ids = [r[0] for r in conn.execute(f"SELECT tick_id FROM tick_log WHERE should_reply=1 ORDER BY id LIMIT {args.n_samples * step}").fetchall()[::step]]
+        all_ids = [r[0] for r in conn.execute(
+            "SELECT tick_id FROM tick_log WHERE should_reply=1 ORDER BY id LIMIT ?",
+            (args.n_samples * step,),
+        ).fetchall()[::step]]
         conn.close()
         tick_ids = all_ids
 
