@@ -76,52 +76,48 @@ class ReplyGenerator:
         self.last_llm_messages: List[Dict] = []
         # 短期记忆（跨 tick 缓存工具结果）
         self.session_memory = SessionMemory()
-        # 动态注册记忆搜索工具（如果 memory_engine 可用）
-        if self.memory_engine is not None:
-            def _search_memory_adapter(query: str = "") -> str:
-                """适配器：工具参数名 query → 引擎参数名 keyword"""
-                return self.memory_engine.search_keyword(query)
-
-            self.tool_registry.register(
-                name="search_memory",
-                description="搜索本地长期记忆（wiki）。用于查询身边的人：亲友、同事、同学、家族关系、熟人旧事。当你遇到某个人名但不知道 TA 是谁、和对方什么关系、TA 的近况/在哪/做什么、或对方提到的旧事背景时，必须调用此工具查询，禁止直接说'不知道''好久没联系了'。不要用于公众人物、公司、产品、新闻八卦。",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "搜索关键词。必须是单个具体的人名、昵称或名词，不要组合多个词，不要包含'关系''称呼''是谁''什么'等泛词。正确示例：'王海'、'小海哥'、'王璇'。错误示例：'王璇 王海 关系 称呼'",
-                        },
-                    },
-                    "required": ["query"],
-                },
-                func=_search_memory_adapter,
-            )
-
-        # 动态注册历史原文检索工具（可选，依赖 digital-twin 的 BGE 消息索引）
-        # 与 search_memory(wiki 摘要) 并列：search_history 检索历史聊天原文
-        # 仅当索引文件与编码器依赖就绪时才注册，否则 bot 行为零变化
+        # 动态注册统一记忆搜索工具（如果 memory_engine 可用）
+        # 同时返回两路结果：wiki 摘要 + 历史聊天原文（如果索引就绪）
         _history_available: Optional[Callable[[], bool]] = None
         _search_history: Optional[Callable[..., str]] = None
         try:
             from src.memory.history_search import is_available as _history_available
             from src.memory.history_search import search_history as _search_history
         except Exception as e:  # pragma: no cover - 防御性
-            _logger.warning("[HistorySearch] 模块加载失败，跳过注册: %s", e)
+            _logger.warning("[HistorySearch] 模块加载失败，仅启用 wiki 记忆搜索: %s", e)
 
-        if _history_available is not None and _search_history is not None and _history_available():
-            def _search_history_adapter(query: str = "", top_k: int = 5) -> str:
-                """适配器：调用 history_search 返回原文片段。"""
-                return _search_history(query, top_k=top_k)
+        if self.memory_engine is not None:
+            def _search_memory_adapter(query: str = "", top_k: int = 5) -> str:
+                """适配器：同时搜索 wiki 摘要和历史聊天原文，合并返回。"""
+                parts: List[str] = []
+
+                # 1. wiki 长期记忆
+                wiki_result = self.memory_engine.search_keyword(query, max_chars=3000)
+                if wiki_result and "未在本地记忆中找到" not in wiki_result:
+                    parts.append(f"【人物/群聊摘要】\n{wiki_result}")
+
+                # 2. 历史聊天原文（可选，依赖索引）
+                if _history_available is not None and _search_history is not None and _history_available():
+                    try:
+                        history_result = _search_history(query, top_k=top_k)
+                        if history_result and "未找到" not in history_result:
+                            parts.append(f"【历史聊天原文】\n{history_result}")
+                    except Exception as e:
+                        _logger.warning("[search_memory] 历史原文检索失败: %s", e)
+
+                if not parts:
+                    return "未找到相关记忆。"
+                return "\n\n".join(parts)
 
             self.tool_registry.register(
-                name="search_history",
+                name="search_memory",
                 description=(
-                    "搜索历史聊天原文（77万条历史微信消息的语义检索）。用于回忆"
-                    "过去某段对话具体说了什么：当对方提到'上次说的那件事''之前聊过的'"
-                    "'你忘了我们讨论过'、或你想复用某次具体对话的措辞/细节时调用。"
-                    "返回的是历史消息原文片段（含上下文），不是人物摘要。"
-                    "查询人是谁/关系/近况用 search_memory，查询当时说了什么用本工具。"
+                    "搜索本地记忆。同时返回两路结果："
+                    "(1) 人物/群聊摘要（wiki）：用于查身边的人是谁、什么关系、近况/在哪/做什么；"
+                    "(2) 历史聊天原文：用于回忆过去某段对话具体说了什么。"
+                    "当你遇到某个人名但不知道 TA 是谁、和对方什么关系、TA 提到的旧事背景、"
+                    "或对方说'上次说的那件事''之前聊过'时，必须调用此工具。"
+                    "不要用于公众人物、公司、产品、新闻八卦。"
                 ),
                 parameters={
                     "type": "object",
@@ -129,24 +125,26 @@ class ReplyGenerator:
                         "query": {
                             "type": "string",
                             "description": (
-                                "要检索的内容，用自然语言描述想找的那段对话。"
-                                "示例：'关于3D打印材料选择的讨论'、'王海说要去上海那次'、"
-                                "'谁推荐过那家日料'。不要只填单个泛词。"
+                                "搜索关键词。用自然语言描述你想查的人或事，"
+                                "可以是具体人名、昵称，也可以是事件描述。"
+                                "示例：'王海'、'小海哥'、'关于3D打印材料选择的讨论'、"
+                                "'王海说要去上海那次'。"
                             ),
                         },
                         "top_k": {
                             "type": "integer",
-                            "description": "返回片段数量，默认 5，范围 1-20。",
+                            "description": "历史原文返回片段数量，默认 5，范围 1-20。wiki 摘要不受此参数影响。",
                             "default": 5,
                         },
                     },
                     "required": ["query"],
                 },
-                func=_search_history_adapter,
+                func=_search_memory_adapter,
             )
-            print("[HistorySearch] search_history 工具已注册（懒加载，首次调用时载入索引）")
-        else:
-            print("[HistorySearch] 索引/依赖未就绪，search_history 未注册")
+            if _history_available is not None and _history_available():
+                print("[MemoryTool] search_memory 已注册（wiki + 历史原文）")
+            else:
+                print("[MemoryTool] search_memory 已注册（仅 wiki，历史索引未就绪）")
 
     def _submit_to_judge(self, tick_id: int, replies: List[str], unreplied: List[ChatMessage], all_messages: List[ChatMessage], is_group: bool):
         """把当前 tick 的数据提交给 JudgeWorker 异步判定"""

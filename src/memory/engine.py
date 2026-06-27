@@ -153,7 +153,7 @@ _UPDATE_PROMPT = """请根据以下对话记录，更新用户 {user_name} 的 w
    - 超过 7 天的"近期动态"**必须删除**或并入"说过的话"
    - "本次对话未提及" ≠ "信息已过期"，但近期动态到期必须清理
 3. 标注日期：时间敏感的信息必须带日期（格式：YYYY-MM-DD），日期必须严格来自对话记录开头的时间戳。禁止编造、推测、推断任何日期
-4. 信息来源标注：所有事实信息（姓名、职业、城市、日期、关系等）都必须标注信息来源，格式 `（来源：某群/私聊/某人提及/日期）`，没有例外
+4. 信息来源标注：所有事实信息（姓名、职业、城市、日期、关系等）都必须标注信息来源，格式 `（来源：某群/私聊/某人提及/日期）`，没有例外。**关键：Bot 自己的回复（对话中以"我："或"【Bot回复】"开头的行）不是有效事实来源**——只有当前用户本人或群里其他人明确陈述的内容才能记为事实。Bot 的推测/猜测/回应，若用户未明确确认，不得写入 wiki，或标 `[待验证]`
 5. 时间戳缺失：无法确定日期时不标注或用 [待验证] 标记
 6. 过期处理：超过 7 天的"近期动态"移到"说过的话"或删除
 7. 冲突处理：新信息覆盖旧信息
@@ -167,6 +167,8 @@ _UPDATE_PROMPT = """请根据以下对话记录，更新用户 {user_name} 的 w
 15. 控制长度：个人 wiki 不超过 4000 字（代码层有兜底截断，但仍请主动精简）
 16. 保持 Markdown 格式
 17. 别名发现（严格）：只记录当前用户本人的其他称呼。严禁记录其他人的名字。格式：`- 别名：xxx`
+18. **沉默≠确认（严格）**：用户"未否认"、"未反驳"、"没回应"绝对不能当作确认事实的依据。只有用户或他人明确陈述/肯定的内容才是 confirmed。Bot 自答后用户沉默的，标 `[待验证]` 或不记录
+19. **昵称/微信号唯一归属**：同一昵称/群昵称/微信号只能归属一个人。若现有 wiki 已把某昵称归给 A，对话中又出现该昵称指 B，必须核对清楚再记，不确定时标 `[待验证]`，严禁把同一昵称同时分给两人
 
 【现有 wiki】
 {current_wiki}
@@ -275,6 +277,9 @@ class MemoryEngine:
             try:
                 data = json.loads(aliases_path.read_text(encoding="utf-8"))
                 for user, cfg in data.get("users", {}).items():
+                    if not self._is_valid_main_name(user):
+                        _logger.warning(f"aliases.json 中非法主名，跳过: {user}")
+                        continue
                     self._aliases[user] = cfg.get("aliases", [])
             except Exception as e:
                 _logger.warning(f"加载 aliases 失败: {e}")
@@ -404,6 +409,9 @@ class MemoryEngine:
         """把更新任务加入队列，后台异步执行。"""
         if not user_name or self.llm_client is None:
             return
+        if not self._is_valid_main_name(user_name):
+            _logger.warning(f"非法用户名，跳过 wiki 更新: {user_name}")
+            return
         resolved = self._resolve_alias(user_name)
         with self._queue_lock:
             self._update_queue.append({
@@ -419,6 +427,9 @@ class MemoryEngine:
                           messages: List, bot_replies: List[str]) -> None:
         """把群聊 wiki 更新任务加入队列，后台异步执行。"""
         if not group_name or self.llm_client is None:
+            return
+        if not self._is_valid_main_name(group_name):
+            _logger.warning(f"非法群名，跳过 wiki 更新: {group_name}")
             return
         # 广告群拦截（FR-14）：群名带具体斤价的团购广告不生成 wiki
         if any(p.search(group_name) for p in _AD_GROUP_PATTERNS):
@@ -532,9 +543,58 @@ class MemoryEngine:
     def _save_wiki(self, path: Path, content: str) -> None:
         try:
             content = self._enforce_wiki_limits(content)
+            content = self._sanitize_wiki_aliases(content, path.stem)
             path.write_text(content, encoding="utf-8")
         except Exception as e:
             _logger.warning(f"保存 wiki 失败 {path}: {e}")
+
+    def _sanitize_wiki_aliases(self, content: str, main_name: str) -> str:
+        """落盘前清洗 wiki 别名行（运行期护栏，防止 LLM 再积垃圾 token）。
+
+        对 ## 别名 段及任意"别名："开头的行：按顿号拆分，去掉 ** 和 （来源：…）
+        注解后逐条过 _is_valid_alias，剔除黑名单/描述性/房号等脏 token，保留合法别名。
+        """
+        try:
+            existing_mains = set(self._aliases.keys())
+        except Exception:
+            existing_mains = set()
+        lines = content.split("\n")
+        in_alias_section = False
+        changed = False
+        for i, raw in enumerate(lines):
+            if raw.startswith("## "):
+                in_alias_section = "别名" in raw
+                continue
+            # 捕获列表标记前缀（"- " / "* " 及前置空格）
+            lead_m = re.match(r"^(\s*[-*]\s*)", raw)
+            lead = lead_m.group(1) if lead_m else ""
+            body = raw[len(lead):]
+            is_alias_line = in_alias_section or body.startswith("别名")
+            if not is_alias_line:
+                continue
+            if not body.strip() or body.strip().startswith("（暂无"):
+                continue
+            m = re.match(r"^(别名[/／昵称]*\s*[：:])", body)
+            if not m:
+                continue
+            prefix = m.group(1)
+            rest = body[len(prefix):]
+            # 只按顿号拆（保留 （来源：…） 注解附着在别名上）
+            tokens = [t.strip() for t in rest.split("、") if t.strip()]
+            kept: List[str] = []
+            for tok in tokens:
+                core = re.sub(r"\*+", "", tok).strip()
+                core = re.sub(r"[（(].*[）)]", "", core).strip()
+                if not core:
+                    kept.append(tok)
+                    continue
+                if self._is_valid_alias(core, main_name, existing_mains):
+                    kept.append(tok)
+            if len(kept) != len(tokens):
+                new_body = prefix + "、".join(kept) if kept else prefix + "（暂无）"
+                lines[i] = lead + new_body
+                changed = True
+        return "\n".join(lines) if changed else content
 
     def _save_prompt(self, path: Path, prompt: str) -> None:
         """保存生成该 wiki 使用的 prompt，方便排查。截断过长的 conversation 部分。"""
@@ -776,6 +836,22 @@ class MemoryEngine:
                 _logger.debug(f"解析群别名失败: {e}")
 
     # ── 别名自动发现 ──
+
+    def _is_valid_main_name(self, name: str) -> bool:
+        """主名（wiki 文件名 stem / aliases.json 的 key）合法性校验。
+
+        拒绝：空 / 带文件系统非法字符 / 以点开头 / 过长。
+        用于防止 OCR 把 "白:" 这类脏文件名当作合法用户进入记忆系统。
+        """
+        name = name.strip()
+        if not name or name.startswith("."):
+            return False
+        if len(name) > 64:
+            return False
+        # Windows/macOS/Linux 非法文件名字符
+        if any(c in name for c in '\\/:*?"<>|'):
+            return False
+        return True
 
     def _is_valid_alias(self, alias: str, main_name: str, existing_mains: set) -> bool:
         """单条别名的统一校验。两个提取器共用，保证入库口径一致。
@@ -1035,6 +1111,9 @@ class MemoryEngine:
         docs: List[Tuple[str, str, bool]] = []  # (name, content, is_group)
         for path in (self.wiki_dir / "users").glob("*.md"):
             user = path.stem
+            if not self._is_valid_main_name(user):
+                _logger.warning(f"非法主名 wiki 文件，跳过搜索: {path.name}")
+                continue
             resolved_user = self._resolve_alias(user)
             wiki = self._load_wiki(path)
             facts = self._facts.get(resolved_user, [])
@@ -1433,7 +1512,7 @@ class MemoryEngine:
                 try:
                     content = path.read_text(encoding="utf-8")
                 except Exception as e:
-                    _logger.warning("读取 wiki 文件失败: %s, 错误: %s", path, e)
+                    _logger.warning("[lint_memory] 读取 wiki 失败 %s: %s", path, e)
                 if content and len(content) > max_wiki_chars:
                     report["bloated"].append({
                         "path": str(path.relative_to(self.wiki_dir)),

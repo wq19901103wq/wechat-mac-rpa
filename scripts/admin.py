@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """wechat-twin Admin — 统一开发者后台"""
+import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import asyncio
 import html
 import json as _json
-import subprocess
+import subprocess  # nosec B404
+from typing import Any, Dict, Optional
+
+_logger = logging.getLogger("scripts.admin")
 
 
 from fastapi import FastAPI, Query, Request
@@ -19,6 +24,9 @@ WORK_DIR = str(Path(__file__).parent.parent)
 KIMI_BIN = "/Users/yihanwang/.local/bin/kimi"
 
 app = FastAPI(title="wechat-twin Admin")
+
+# 截图列表页缓存（模块级，首次扫描后复用）
+_screenshot_cache: Optional[Dict[str, Any]] = None
 
 HEADER = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>wechat-twin Admin</title>
 <style>:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--muted:#8b949e;--green:#3fb950;--red:#f85149;--yellow:#d29922;--blue:#58a6ff}
@@ -86,7 +94,7 @@ document.addEventListener('dblclick',function(e){
 
 def _page(title: str, content: str, active: str = "") -> str:
     nav = HEADER
-    for href, label in [("/", "📊 Dashboard"), ("/ticks", "🔍 Tick"), ("/gt", "🏷️ GT"), ("/review", "🧑‍⚖️ 审核"), ("/screenshots", "📸 截图OCR"), ("/benchmark/judge", "📊 Judge"), ("/benchmark/reply", "🤖 回复"), ("/experiments", "🧪 实验"), ("/code-audit", "🐛 审计")]:
+    for href, label in [("/", "📊 Dashboard"), ("/ticks", "🔍 Tick"), ("/gt", "🏷️ GT"), ("/review", "🧑‍⚖️ 审核"), ("/screenshots", "📸 截图OCR"), ("/benchmark/judge", "📊 Judge"), ("/benchmark/reply", "🤖 回复"), ("/experiments", "🧪 实验"), ("/code-audit", "🐛 审计"), ("/wiki-review", "🧠 Wiki审核")]:
         cls = ' class="active"' if href == active else ""
         nav += f'<a href="{href}"{cls}>{label}</a>'
     nav += "</nav><main>"
@@ -121,8 +129,21 @@ def tick_list(page: int = Query(1), filter: str = Query("all")):
     db = get_db()
     conn = db._get_conn()
     offset = (page - 1) * 20
-    where = "" if filter == "all" else f"WHERE skip_reason IS NOT NULL" if filter == "skipped" else f"WHERE should_reply=1" if filter == "replied" else ""
-    rows = conn.execute(f"SELECT id, session_id, tick_id, chat_name, messages_count, new_messages_count, should_reply, skip_reason, judge_score, human_is_badcase, human_badcase_type, replies_sent_json, duration_ms, created_at FROM tick_log {where} ORDER BY created_at DESC, tick_id DESC LIMIT 20 OFFSET {offset}").fetchall()
+    if filter == "skipped":
+        rows = conn.execute(
+            "SELECT id, session_id, tick_id, chat_name, messages_count, new_messages_count, should_reply, skip_reason, judge_score, human_is_badcase, human_badcase_type, replies_sent_json, duration_ms, created_at FROM tick_log WHERE skip_reason IS NOT NULL ORDER BY created_at DESC, tick_id DESC LIMIT ? OFFSET ?",
+            (20, offset),
+        ).fetchall()
+    elif filter == "replied":
+        rows = conn.execute(
+            "SELECT id, session_id, tick_id, chat_name, messages_count, new_messages_count, should_reply, skip_reason, judge_score, human_is_badcase, human_badcase_type, replies_sent_json, duration_ms, created_at FROM tick_log WHERE should_reply=1 ORDER BY created_at DESC, tick_id DESC LIMIT ? OFFSET ?",
+            (20, offset),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, session_id, tick_id, chat_name, messages_count, new_messages_count, should_reply, skip_reason, judge_score, human_is_badcase, human_badcase_type, replies_sent_json, duration_ms, created_at FROM tick_log ORDER BY created_at DESC, tick_id DESC LIMIT ? OFFSET ?",
+            (20, offset),
+        ).fetchall()
     conn.close()
 
     rows_html = ""
@@ -141,7 +162,8 @@ def tick_list(page: int = Query(1), filter: str = Query("all")):
                 import json as _j2
                 arr = _j2.loads(rp)
                 reply_preview = " | ".join(str(x) for x in (arr if isinstance(arr, list) else []))
-            except: pass
+            except Exception as e:
+                _logger.debug("解析 replies_sent_json 失败: %s", e)
         rows_html += f"""<tr>
           <td><a href="/ticks/{r['id']}" style="color:var(--blue)">{html.escape(r['session_id'] or '')}:#{r['tick_id']}</a></td>
           <td>{html.escape(r['chat_name'] or '-')}</td><td>{r['new_messages_count'] or r['messages_count'] or 0}条</td>
@@ -149,7 +171,12 @@ def tick_list(page: int = Query(1), filter: str = Query("all")):
           <td style="font-size:11px;color:var(--muted)">{html.escape(r['created_at'] if r['created_at'] else '')}</td></tr>"""
 
     conn = db._get_conn()
-    total = conn.execute(f"SELECT COUNT(*) FROM tick_log {where}").fetchone()[0]
+    if filter == "skipped":
+        total = conn.execute("SELECT COUNT(*) FROM tick_log WHERE skip_reason IS NOT NULL").fetchone()[0]
+    elif filter == "replied":
+        total = conn.execute("SELECT COUNT(*) FROM tick_log WHERE should_reply=1").fetchone()[0]
+    else:
+        total = conn.execute("SELECT COUNT(*) FROM tick_log").fetchone()[0]
     conn.close()
     total_pages = (total + 19) // 20
     content = f"""<p style="margin-bottom:12px"><a href="?filter=all">全部({total})</a> | <a href="?filter=replied">已回复</a> | <a href="?filter=skipped">跳过</a> | <span style="color:var(--muted);font-size:12px">每页20条</span></p>
@@ -223,13 +250,15 @@ def tick_detail(id: int):
                 try:
                     args_obj = _j3.loads(targs) if isinstance(targs, str) else targs
                     targs = ' '.join(f'{k}={v}' for k,v in (args_obj.items() if isinstance(args_obj, dict) else []))
-                except: pass
+                except Exception as e:
+                    _logger.debug("解析工具参数失败: %s", e)
                 tools_html += f"""<div style="margin:8px 0;padding:10px;background:rgba(255,255,255,.03);border-left:3px solid var(--yellow);border-radius:4px">
                   <div style="font-size:12px;margin-bottom:4px"><b style="color:var(--yellow)">{html.escape(tname)}</b> <span style="color:var(--muted);font-size:10px">{html.escape(targs)}</span></div>
                   <pre style="font-size:11px;max-height:250px;overflow:auto;white-space:pre-wrap;background:rgba(0,0,0,.3);padding:8px;border-radius:4px;margin:0">{html.escape(tresult)}</pre>
                 </div>"""
             content += f"""<div class="card" style="border-left:3px solid var(--yellow)"><b>🔧 工具调用 & 结果 ({len(all_tools)}项)</b>{tools_html}</div>"""
-    except: pass
+    except Exception as e:
+        _logger.warning("渲染工具调用失败: %s", e)
     # === 新增：Judge 评分 ===
     judge_dims = ""
     if d.get("judge_dimensions_json"):
@@ -241,7 +270,8 @@ def tick_detail(id: int):
                 filled = min(s // 10, 10)
                 bar = "█"*filled + "░"*(10-filled)
                 judge_dims += f'<div style="margin:2px 0;font-size:11px">{bar} {html.escape(name)}: {html.escape(str(dd.get("score","?")))}/100 — {html.escape(dd.get("comment",""))}</div>'
-        except: pass
+        except Exception as e:
+            _logger.debug("解析 judge_dimensions_json 失败: %s", e)
     js = d.get("judge_score")
     js_str = f"{js:.0f}" if js is not None else "?"
     content += f"""
@@ -355,9 +385,9 @@ def serve_screenshot(filename: str):
     # lgtm[py/path-injection] path 来自 _safe_path，已验证为允许目录下的纯文件名
     if path and path.exists():
         return FileResponse(str(path), media_type="image/png")
-    # 2. /tmp（只允许 /tmp 下的文件）
-    tmp_path = _safe_path(Path("/tmp"), filename)
-    # lgtm[py/path-injection] tmp_path 来自 _safe_path，已验证为 /tmp 下的纯文件名
+    # 2. 系统临时目录
+    tmp_path = _safe_path(Path(tempfile.gettempdir()), filename)
+    # lgtm[py/path-injection] tmp_path 来自 _safe_path，已验证为临时目录下的纯文件名
     if tmp_path and tmp_path.exists():
         return FileResponse(str(tmp_path), media_type="image/png")
     return JSONResponse({"error": "not found"}, status_code=404)
@@ -408,7 +438,8 @@ def screenshots_list(page: int = Query(1, ge=1), limit: int = Query(20, ge=5, le
             all_debug.append((tid, sp, chat_name, ocr_summary, has_api, fpath))
             if len(all_debug) >= MAX_SCAN:
                 break
-        except Exception:
+        except Exception as e:
+            _logger.debug("读取截图 debug 文件 %s 失败: %s", fname, e)
             continue
 
     total = len(all_debug)
@@ -491,8 +522,8 @@ def screenshot_detail(id: int):
         if not db_chat_name:
             raw_chat = dbg.get("perception_chat_name", "") or dbg.get("bot_chat_name", "") or ""
         ts = dbg.get("timestamp", "")
-    except Exception:
-        pass
+    except Exception as e:
+        _logger.debug("读取 debug JSON 失败: %s", e)
 
     ocr_html = "<span style='color:var(--muted)'>无 OCR 数据</span>"
     layout_html = "<span style='color:var(--muted)'>无 Layout 数据</span>"
@@ -549,8 +580,8 @@ def screenshot_detail(id: int):
                 for m in msgs:
                     msgs_html += f"<tr><td>{html.escape(m.get('sender',''))}</td><td>{html.escape(m.get('text',''))}</td><td>{html.escape(m.get('chat_name',''))}</td></tr>"
                 layout_parts.append(f"<div class='card'><b>提取的消息</b> ({len(msgs)}):<table><tr><th>发送者</th><th>文本</th><th>聊天</th></tr>{msgs_html}</table></div>")
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.debug("渲染截图详情失败: %s", e)
 
     fname = Path(sp).name if sp else ""
     img_html = f'<img src="/api/screenshot-image/{html.escape(fname)}" style="max-width:100%;border-radius:4px;border:1px solid var(--border)" onerror="this.style.display=\'none\'">' if fname else '<span style="color:var(--muted)">无截图</span>'
@@ -615,14 +646,12 @@ def benchmark_reply():
 
 @app.post("/api/refresh-benchmark")
 def refresh_benchmark():
-    import subprocess
-    import logging
     script = str(Path(__file__).parent.parent / "scripts" / "generate_benchmark_dashboard.py")
     try:
-        subprocess.run(["python3", script], timeout=60, capture_output=True)
+        subprocess.run(["python3", script], timeout=60, capture_output=True)  # nosec
         return JSONResponse({"success": True})
     except Exception as e:
-        logging.getLogger("admin").warning(f"刷新 benchmark 失败: {e}")
+        _logger.warning("刷新 benchmark 失败: %s", e)
         return JSONResponse({"success": False, "error": "刷新失败，请查看服务端日志"})
 
 
@@ -777,7 +806,11 @@ def experiment_detail(exp_id: int):
     ctx_data = {}
     if tick_ids:
         placeholders = ','.join('?' * len(tick_ids))
-        ctx_rows = conn2.execute(f"SELECT tick_id, system_prompt, user_prompt, tool_calls_json FROM tick_log WHERE tick_id IN ({placeholders})", tick_ids).fetchall()
+        ctx_rows = conn2.execute(
+            "SELECT tick_id, system_prompt, user_prompt, tool_calls_json FROM tick_log "
+            "WHERE tick_id IN (" + placeholders + ")",  # nosec B608
+            tick_ids,
+        ).fetchall()
         for cr in ctx_rows:
             d = dict(cr)
             ctx_data[d['tick_id']] = d
@@ -1464,8 +1497,10 @@ async def _analyze_with_kimi(issue: dict, notes: str, timeout: int = 300) -> dic
             return {"success": False, "error": "Kimi 分析失败，请查看服务端日志"}
         return {"success": True, "reply": reply}
     except asyncio.TimeoutError:
-        try: proc.kill()
-        except: pass
+        try:
+            proc.kill()
+        except Exception as e:
+            logger.debug("终止 Kimi 子进程失败: %s", e)
         return {"success": False, "error": f"分析超时（>{timeout}秒）"}
     except Exception as e:
         logger.warning(f"Kimi 分析异常: {e}")
@@ -1585,7 +1620,224 @@ async def api_reject_code_audit(key: str, request: Request):
     return JSONResponse({"success": True})
 
 
+# ── Wiki 事实审核台（消费 review.json / decisions.json）──
+WIKI_AUDIT_DIR = Path(__file__).parent.parent / "data" / "memory" / "wiki_audit"
+WIKI_USERS_DIR = Path(__file__).parent.parent / "data" / "memory" / "wiki" / "users"
+WIKI_GROUPS_DIR = Path(__file__).parent.parent / "data" / "memory" / "wiki" / "groups"
+
+
+def _load_review_items() -> list:
+    p = WIKI_AUDIT_DIR / "review.json"
+    if not p.exists():
+        return []
+    return _json.loads(p.read_text(encoding="utf-8"))
+
+
+def _load_decisions() -> dict:
+    """返回 {id: decision}。"""
+    p = WIKI_AUDIT_DIR / "decisions.json"
+    if not p.exists():
+        return {}
+    return {d["id"]: d for d in _json.loads(p.read_text(encoding="utf-8"))}
+
+
+def _wiki_line_context(name: str, is_group: bool, needle: str, span: int = 2) -> str:
+    """返回 needle 所在行 ±span 的上下文（带行号），帮助定位。"""
+    d = WIKI_GROUPS_DIR if is_group else WIKI_USERS_DIR
+    path = d / f"{name}.md"
+    if not path.exists():
+        return "(wiki 文件不存在)"
+    lines = path.read_text(encoding="utf-8").split("\n")
+    idx = -1
+    for i, ln in enumerate(lines):
+        if needle and needle[:30] in ln:
+            idx = i
+            break
+    if idx < 0:
+        return "(行未找到，可能已被清洗)"
+    lo, hi = max(0, idx - span), min(len(lines), idx + span + 1)
+    out = []
+    for i in range(lo, hi):
+        mark = "▶" if i == idx else " "
+        out.append(f"{mark} {i+1:3d} | {html.escape(lines[i])}")
+    return "\n".join(out)
+
+
+@app.get("/wiki-review", response_class=HTMLResponse)
+def wiki_review_list():
+    items = _load_review_items()
+    decisions = _load_decisions()
+    # 统计
+    n_total = len(items)
+    n_decided = len(decisions)
+    n_pending = n_total - n_decided
+    # 按 wiki 分组计数
+    by_wiki: dict = {}
+    for it in items:
+        by_wiki.setdefault(it["wiki"], 0)
+        by_wiki[it["wiki"]] += 1
+    wiki_chips = " ".join(f'<span class="wchip" data-w="{html.escape(w)}">{html.escape(w)} ({c})</span>' for w, c in sorted(by_wiki.items()))
+
+    rows = ""
+    for it in items:
+        dec = decisions.get(it["id"])
+        status = '<span class="st st-done">已确认</span>' if dec else '<span class="st st-pending">待确认</span>'
+        reason = html.escape(it.get("reason", ""))
+        fact = html.escape(it.get("fact", "") or it.get("line", "") or it.get("wiki_excerpt", ""))
+        action_badge = ""
+        if dec:
+            a = dec.get("action")
+            label = {"delete": "🗑删除", "fix": "✏️修正", "mark": "❓标待验证", "skip": "⏭️跳过"}.get(a, a)
+            action_badge = f'<span class="badge badge-{a}">{label}</span>'
+            if a == "fix":
+                action_badge += f'<span style="color:var(--green);font-size:11px"> → {html.escape(dec.get("new_value","")[:40])}</span>'
+        rows += f"""<tr class="rrow" data-w="{html.escape(it['wiki'])}">
+          <td>{html.escape(it['id'])}</td>
+          <td>{html.escape(it['wiki'])}{'(群)' if it.get('is_group') else ''}</td>
+          <td>{reason}</td>
+          <td style="font-size:12px">{fact[:80]}</td>
+          <td>{status}</td>
+          <td>{action_badge}</td>
+          <td><a href="/wiki-review/{it['id']}" style="color:var(--blue)">处理 →</a></td>
+        </tr>"""
+
+    content = f"""
+    <div class="metrics">
+      <div class="metric"><div class="value">{n_total}</div><div class="label">总条目</div></div>
+      <div class="metric"><div class="value" style="color:var(--yellow)">{n_pending}</div><div class="label">待确认</div></div>
+      <div class="metric"><div class="value" style="color:var(--green)">{n_decided}</div><div class="label">已确认</div></div>
+    </div>
+    <div class="card"><b>按 wiki：</b> {wiki_chips}</div>
+    <div class="card" style="border-left:3px solid var(--blue)">
+      <b>写回 wiki：</b> 确认完毕后，在服务器执行
+      <code style="background:#1c2128;padding:2px 6px;border-radius:4px">python3 scripts/clean_wiki_errors.py --apply-decisions</code>
+      （带备份，仅写已确认非 skip 项）
+    </div>
+    <div style="margin:8px 0">
+      <label style="font-size:12px;color:var(--muted)"><input type="checkbox" id="only-pending" checked> 只看待确认</label>
+    </div>
+    <table id="rtable"><tr><th>ID</th><th>Wiki</th><th>类型</th><th>内容</th><th>状态</th><th>决策</th><th></th></tr>{rows}</table>
+    <script>
+    document.querySelectorAll('.wchip').forEach(c=>c.addEventListener('click',function(){{document.querySelectorAll('.rrow').forEach(r=>{{r.style.display=(!this.dataset.w||r.dataset.w===this.dataset.w)?'':'none'}})}}));
+    document.getElementById('only-pending').addEventListener('change',function(){{document.querySelectorAll('.rrow').forEach(r=>{{const done=r.querySelector('.st-done');r.style.display=(this.checked&&done)?'none':''}})}});
+    </script>
+    <style>.wchip{{display:inline-block;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:3px 10px;font-size:11px;margin:2px;cursor:pointer}}.wchip:hover{{border-color:var(--blue)}}.st{{font-size:11px;padding:2px 6px;border-radius:4px}}.st-pending{{background:rgba(210,153,34,.15);color:var(--yellow)}}.st-done{{background:rgba(63,185,80,.15);color:var(--green)}}.badge{{font-size:11px;padding:2px 6px;border-radius:4px;margin-right:4px}}.badge-delete{{background:rgba(248,81,73,.15);color:var(--red)}}.badge-fix{{background:rgba(88,166,255,.15);color:var(--blue)}}.badge-mark{{background:rgba(210,153,34,.15);color:var(--yellow)}}.badge-skip{{background:rgba(139,148,158,.15);color:var(--muted)}}</style>
+    """
+    return HTMLResponse(_page("Wiki 事实审核", content, "/wiki-review"))
+
+
+@app.get("/wiki-review/{item_id}", response_class=HTMLResponse)
+def wiki_review_detail(item_id: str):
+    items = _load_review_items()
+    it = next((x for x in items if x["id"] == item_id), None)
+    if not it:
+        return HTMLResponse(_page("未找到", "<p>条目不存在</p>", "/wiki-review"), status_code=404)
+    decisions = _load_decisions()
+    dec = decisions.get(item_id)
+    needle = it.get("line") or it.get("wiki_excerpt") or it.get("fact", "")
+    ctx = _wiki_line_context(it["wiki"], it.get("is_group", False), needle)
+    # 当前决策
+    cur_action = dec.get("action") if dec else ""
+    cur_value = dec.get("new_value", "") if dec else ""
+
+    evidence = ""
+    if it.get("evidence"):
+        hal = it.get("hallucinated_evidence", False)
+        hal_badge = ' <span style="color:var(--red);font-size:11px">⚠️ 证据疑似LLM编造（不在检索片段中），已降级 unverified</span>' if hal else ""
+        border = "var(--red)" if hal else "var(--muted)"
+        evidence = f'<div class="card" style="border-left:3px solid {border}"><b>audit 证据：</b>{hal_badge}<pre style="font-size:12px;white-space:pre-wrap">{html.escape(it["evidence"])}</pre></div>'
+
+    # 原始检索片段：让用户逐字核对 LLM 引用的证据是否真实存在
+    raw_ev_block = ""
+    if it.get("raw_evidence"):
+        raw_ev_block = f'<div class="card" style="border-left:3px solid var(--green)"><b>原始检索片段（逐字核对用，LLM 引用的证据必须在此段内）：</b><pre style="font-size:10px;white-space:pre-wrap;max-height:300px;overflow:auto">{html.escape(it["raw_evidence"])}</pre></div>'
+
+    content = f"""
+    <div class="card"><b>{html.escape(it['id'])}</b> · <b>{html.escape(it['wiki'])}</b>{'(群)' if it.get('is_group') else ''}
+      · <span style="color:var(--yellow)">{html.escape(it.get('reason',''))}</span></div>
+    <div class="card" style="border-left:3px solid var(--blue)">
+      <b>涉及事实：</b><br><span style="font-size:13px">{html.escape(it.get('fact','') or '')}</span>
+      {"<br><br><b>wiki 原文片段：</b><br><code style='font-size:12px'>"+html.escape(it.get('wiki_excerpt','') or '')+"</code>" if it.get('wiki_excerpt') else ''}
+      {"<br><br><b>整行：</b><br><code style='font-size:12px'>"+html.escape(it.get('line','') or '')+"</code>" if it.get('line') else ''}
+    </div>
+    {evidence}
+    {raw_ev_block}
+    <div class="card" style="border-left:3px solid var(--green)">
+      <b>wiki 上下文（▶ 标记目标行）：</b>
+      <pre style="font-size:11px;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">{ctx}</pre>
+    </div>
+    <div class="card" id="decision-panel">
+      <b>你的确认：</b>
+      <div style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="dbtn" data-action="delete" style="background:rgba(248,81,73,.15);color:var(--red);border:1px solid var(--red)">🗑 删除整行</button>
+        <button class="dbtn" data-action="fix" style="background:rgba(88,166,255,.15);color:var(--blue);border:1px solid var(--blue)">✏️ 修正为</button>
+        <input id="new-value" placeholder="修正后的正确内容（如：高中同学）" value="{html.escape(cur_value)}"
+          style="flex:1;min-width:200px;background:#1c2128;border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px">
+        <button class="dbtn" data-action="mark" style="background:rgba(210,153,34,.15);color:var(--yellow);border:1px solid var(--yellow)">❓ 标[待验证]</button>
+        <button class="dbtn" data-action="skip" style="background:rgba(139,148,158,.15);color:var(--muted);border:1px solid var(--muted)">⏭ 确认无误跳过</button>
+      </div>
+      <div id="msg" style="font-size:12px;margin-top:6px"></div>
+      <div style="margin-top:8px"><a href="/wiki-review" style="color:var(--blue);font-size:13px">← 返回列表</a></div>
+    </div>
+    <script>
+    const id={_json.dumps(item_id)};
+    const curAction={_json.dumps(cur_action)};
+    const allIds={_json.dumps([x["id"] for x in items])};
+    const decidedIds={_json.dumps(list(decisions.keys()))};
+    function nextPendingId(){{const i=allIds.indexOf(id);for(let k=i+1;k<allIds.length;k++){{if(!decidedIds.includes(allIds[k]))return allIds[k]}}for(let k=0;k<i;k++){{if(!decidedIds.includes(allIds[k]))return allIds[k]}}return null}}
+    function highlight(){{document.querySelectorAll('.dbtn').forEach(b=>{{b.style.outline=b.dataset.action===curAction?'2px solid #fff':'none'}})}}
+    highlight();
+    document.querySelectorAll('.dbtn').forEach(b=>b.addEventListener('click',async()=>{{
+      const action=b.dataset.action;
+      const nv=document.getElementById('new-value').value.trim();
+      if(action==='fix'&&!nv){{document.getElementById('msg').innerHTML='<span style="color:var(--red)">请填写修正值</span>';return}}
+      document.getElementById('msg').innerHTML='<span style="color:var(--muted)">提交中...</span>';
+      const r=await fetch('/api/wiki-review/'+id,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:_json.stringify({{action,new_value:nv}})}});
+      const j=await r.json();
+      if(j.success){{
+        decidedIds.push(id);
+        const nxt=nextPendingId();
+        const link=nxt?`<a href="/wiki-review/${{nxt}}" style="color:var(--blue)">下一条 →</a>`:'<a href="/wiki-review" style="color:var(--green)">全部确认完毕 →</a>';
+        document.getElementById('msg').innerHTML=`<span style="color:var(--green)">✅ 已保存（${{action}}）。</span> ${{link}}`;
+        highlight();
+      }}else{{document.getElementById('msg').innerHTML='<span style="color:var(--red)">失败</span>'}}
+    }}));
+    </script>
+    """
+    return HTMLResponse(_page("Wiki 审核 · " + it["wiki"], content, "/wiki-review"))
+
+
+@app.post("/api/wiki-review/{item_id}")
+async def wiki_review_save(item_id: str, request: Request):
+    body = await request.json()
+    action = body.get("action")
+    if action not in ("delete", "fix", "mark", "skip"):
+        return JSONResponse({"success": False, "error": "非法 action"}, status_code=400)
+    items = _load_review_items()
+    it = next((x for x in items if x["id"] == item_id), None)
+    if not it:
+        return JSONResponse({"success": False, "error": "条目不存在"}, status_code=404)
+    dec = {
+        "id": item_id,
+        "wiki": it["wiki"],
+        "is_group": it.get("is_group", False),
+        "line": it.get("line") or it.get("wiki_excerpt") or it.get("fact", ""),
+        "action": action,
+        "new_value": body.get("new_value", ""),
+        "decided_at": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    # 合并到 decisions.json（去重）
+    p = WIKI_AUDIT_DIR / "decisions.json"
+    existing = []
+    if p.exists():
+        existing = _json.loads(p.read_text(encoding="utf-8"))
+    existing = [d for d in existing if d["id"] != item_id]
+    existing.append(dec)
+    p.write_text(_json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+    return JSONResponse({"success": True})
+
+
 if __name__ == "__main__":
     import uvicorn
     print("wechat-twin Admin → http://localhost:8765")
-    uvicorn.run(app, host="0.0.0.0", port=8766)
+    uvicorn.run(app, host="127.0.0.1", port=8766)
