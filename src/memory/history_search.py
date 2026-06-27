@@ -32,9 +32,10 @@ from src.memory.message_index_store import MessageIndexStore
 
 _logger = logging.getLogger("src.memory.history_search")
 
-# ── 默认路径：指向 digital-twin 已建好的资产，可用环境变量覆盖 ──
-_DEFAULT_INDEX_PATH = Path(
-    "/Users/yihanwang/wechat-digital-twin/outputs/cache/vector_index_dense_messages.pkl"
+# ── 默认路径：指向项目 data/memory/cache，可用环境变量覆盖 ──
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_INDEX_PATH = (
+    _PROJECT_ROOT / "data" / "memory" / "cache" / "vector_index_dense_messages.pkl"
 )
 _DEFAULT_MODEL_PATH = Path(
     "/Users/yihanwang/wechat-digital-twin/models/bge-small-zh-v1.5"
