@@ -1508,12 +1508,12 @@ class MemoryEngine:
             if not d.exists():
                 continue
             for path in d.glob("*.md"):
+                content = ""
                 try:
                     content = path.read_text(encoding="utf-8")
                 except Exception as e:
                     _logger.warning("[lint_memory] 读取 wiki 失败 %s: %s", path, e)
-                    continue
-                if len(content) > max_wiki_chars:
+                if content and len(content) > max_wiki_chars:
                     report["bloated"].append({
                         "path": str(path.relative_to(self.wiki_dir)),
                         "chars": len(content),
