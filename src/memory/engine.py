@@ -1429,11 +1429,12 @@ class MemoryEngine:
             if not d.exists():
                 continue
             for path in d.glob("*.md"):
+                content = ""
                 try:
                     content = path.read_text(encoding="utf-8")
-                except Exception:
-                    continue
-                if len(content) > max_wiki_chars:
+                except Exception as e:
+                    _logger.warning("读取 wiki 文件失败: %s, 错误: %s", path, e)
+                if content and len(content) > max_wiki_chars:
                     report["bloated"].append({
                         "path": str(path.relative_to(self.wiki_dir)),
                         "chars": len(content),
