@@ -48,17 +48,22 @@ _AD_GROUP_PATTERNS = [
     re.compile(r"\d+\.?\d*\s*[元块].*斤"),
     re.compile(r"\d+\.?\d*\s*一斤"),
 ]
-# emoji 范围（常见 Unicode emoji 块，用于群名归一化剥离；各区间互不重叠）
-_EMOJI_RE = re.compile(
-    "["
-    "\U000024C2"             # 带圈 M
-    "\U00002702-\U000027B0"  # 装饰符号
-    "\U0001F1E6-\U0001F1FF"  # 国旗
-    "\U0001F300-\U0001F5FF"  # 杂项符号与象形文字
-    "\U0001F600-\U0001F64F"  # 表情符号
-    "\U0001F680-\U0001F6FF"  # 交通与地图符号
-    "]+",
+# 常见 emoji Unicode 码点集合（用于群名归一化剥离）
+_EMOJI_CODEPOINTS: frozenset[int] = frozenset(
+    [0x24C2]
+    + list(range(0x2702, 0x27B0 + 1))
+    + list(range(0x1F1E6, 0x1F1FF + 1))
+    + list(range(0x1F300, 0x1F5FF + 1))
+    + list(range(0x1F600, 0x1F64F + 1))
+    + list(range(0x1F680, 0x1F6FF + 1))
+    + list(range(0x1F900, 0x1F9FF + 1))
+    + list(range(0x1FA00, 0x1FAFF + 1))
 )
+
+
+def _strip_emoji(name: str) -> str:
+    """去除常见 emoji 字符。"""
+    return "".join(c for c in name if ord(c) not in _EMOJI_CODEPOINTS)
 
 
 def normalize_chat_name(name: str) -> str:
@@ -73,7 +78,7 @@ def normalize_chat_name(name: str) -> str:
     """
     if not name:
         return ""
-    n = _EMOJI_RE.sub("", name)
+    n = _strip_emoji(name)
     n = re.sub(r"\s+", " ", n).strip()
     return n
 
