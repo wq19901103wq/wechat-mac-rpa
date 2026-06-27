@@ -400,7 +400,15 @@ def _call_llm(case: BenchmarkCase, api_key: str | None = None) -> dict:
             return f"[记忆搜索结果] {query}"
         registry.register(
             name="search_memory",
-            description="搜索本地长期记忆。当你不确定某个人是谁、某件事的背景、或者某个关系时，调用此工具查询本地 wiki 记忆库。",
+            description=(
+                "搜索本地记忆。同时返回两路结果："
+                "(1) 人物/群聊摘要（wiki）：用于查身边的人是谁、什么关系、近况/在哪/做什么；"
+                "(2) 历史聊天原文：用于回忆过去某段对话具体说了什么。"
+                " ONLY 在以下场景调用：用户明确询问某个具体人/群的身份、关系、背景、属性、成员；"
+                "或对话中提到'上次''之前说过''你记得吗'等需要回忆旧事的语境。"
+                "不要用于：天气、股票、时间、新闻、网页搜索、纯闲聊、陈述句；"
+                "也不要仅因消息里出现人名、公司名、地名就调用。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {

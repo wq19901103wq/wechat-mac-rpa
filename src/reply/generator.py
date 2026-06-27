@@ -3,6 +3,7 @@
 
 import logging
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -30,6 +31,39 @@ def _get_judge_worker():
                 except Exception as e:
                     _logger.warning("JudgeWorker init failed: %s", e)
     return _judge_worker
+
+
+# 简单规则：哪些消息明显不该提供 search_memory，避免 LLM 过度调用
+_NON_MEMORY_QUERY_PATTERNS = [
+    re.compile(r"天气|气温|温度|下雨|下雪"),
+    re.compile(r"股票|股价|股市|大盘|涨了吗|跌了吗|涨跌"),
+    re.compile(r"几点|现在时间|今天星期|几号"),
+    re.compile(r"搜一下|搜索|新闻|百度|谷歌"),
+    re.compile(r"讲个笑话|说个笑话"),
+]
+_QUESTION_MARKS = set("?？")
+_QUESTION_WORDS = {"吗", "呢", "谁", "什么", "哪里", "哪儿", "怎么", "多少", "哪些",
+                   "几点", "干嘛", "干什么", "做什么", "住哪", "在哪", "是谁", "有谁"}
+
+
+def _should_offer_search_memory(text: str) -> bool:
+    """基于简单规则判断是否为明显非记忆查询。
+
+    仅用于在把 tools 传给 LLM 前临时隐藏 search_memory，减少过度调用。
+    真正需要调用时（人物身份/关系/背景/属性/群成员），仍保留该工具。
+    """
+    if not text:
+        return False
+    lower = text.lower()
+    for pat in _NON_MEMORY_QUERY_PATTERNS:
+        if pat.search(lower):
+            return False
+    has_question = any(c in text for c in _QUESTION_MARKS)
+    has_question_word = any(w in lower for w in _QUESTION_WORDS)
+    # 短陈述句（无疑问词/问号）→ 不主动提供记忆搜索
+    if len(text) <= 18 and not has_question and not has_question_word:
+        return False
+    return True
 
 
 class ReplyGenerator:
@@ -115,9 +149,10 @@ class ReplyGenerator:
                     "搜索本地记忆。同时返回两路结果："
                     "(1) 人物/群聊摘要（wiki）：用于查身边的人是谁、什么关系、近况/在哪/做什么；"
                     "(2) 历史聊天原文：用于回忆过去某段对话具体说了什么。"
-                    "当你遇到某个人名但不知道 TA 是谁、和对方什么关系、TA 提到的旧事背景、"
-                    "或对方说'上次说的那件事''之前聊过'时，必须调用此工具。"
-                    "不要用于公众人物、公司、产品、新闻八卦。"
+                    " ONLY 在以下场景调用：用户明确询问某个具体人/群的身份、关系、背景、属性、成员；"
+                    "或对话中提到'上次''之前说过''你记得吗'等需要回忆旧事的语境。"
+                    "不要用于：天气、股票、时间、新闻、网页搜索、纯闲聊、陈述句；"
+                    "也不要仅因消息里出现人名、公司名、地名就调用。"
                 ),
                 parameters={
                     "type": "object",
@@ -282,6 +317,10 @@ class ReplyGenerator:
         self.last_user_prompt = user_prompt
 
         tools = self.tool_registry.to_openai_schemas()
+        # 简单规则兜底：对明显非记忆查询隐藏 search_memory，避免 LLM 过度调用
+        if tools and not _should_offer_search_memory(route_text):
+            tools = [t for t in tools if t.get("function", {}).get("name") != "search_memory"]  # type: ignore[arg-type]
+            _logger.info("[ToolFilter] 当前消息非记忆查询，隐藏 search_memory: %s", route_text[:50])
 
         llm_calls: List[Dict] = []
         tool_calls: List[Dict] = []

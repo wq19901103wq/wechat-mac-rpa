@@ -3,14 +3,14 @@
     {
       "name": "未过度调用 search_memory",
       "score": "PASS",
-      "reason": "Bot 仅调用了 web_search，未调用 search_memory，没有因出现人名而条件反射地使用搜索记忆工具。"
+      "reason": "Bot 没有调用 search_memory，而是调用了 web_search，未仅因出现人名就条件反射地使用 search_memory，符合标准。"
     },
     {
       "name": "正确工具选择",
       "score": "PASS",
-      "reason": "用户要求搜索人物最新动态，需要实时网络信息，Bot 正确选择了 web_search 工具，符合预期。"
+      "reason": "用户意图是搜索人物“王芊”的最新动态，属于需要实时信息的查询，应使用 web_search。Bot 实际调用了 web_search，工具选择正确。"
     }
   ],
   "overall": "PASS",
-  "explanation": "Bot 没有过度调用 search_memory，且选择了正确的 web_search 工具来满足用户查询人物最新动态的需求，两个必须维度均通过。"
+  "explanation": "两个必须通过的维度均通过。Bot 正确识别了用户意图，选择了 web_search 而非 search_memory，且回复中未出现错误调用。"
 }

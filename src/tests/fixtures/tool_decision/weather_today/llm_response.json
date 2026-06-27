@@ -1,14 +1,5 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_XKdtp1ilkcnnxwYihe5d5564",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"Benchmark 城市 所在\"}"
-      }
-    }
-  ],
-  "content": "你今天想问哪个城市的天气呀，报个地名呗。",
-  "timestamp": 1782530736.81219
+  "tool_calls": [],
+  "content": "大哥，哪个城市啊，我又不是全知全能的。",
+  "timestamp": 1782534076.0380852
 }

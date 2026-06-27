@@ -1,7 +1,15 @@
 {
   "tool_calls": [
     {
-      "id": "call_00_XEq5C2BXqPbzD8QjcaDV8116",
+      "id": "call_00_FYKu18Kwdanw8RBt89gi9966",
+      "type": "function",
+      "function": {
+        "name": "search_memory",
+        "arguments": "{\"query\": \"王艺涵 MBTI\"}"
+      }
+    },
+    {
+      "id": "call_00_nTh1uPOMbRzGxBVtlo3T3903",
       "type": "function",
       "function": {
         "name": "search_memory",
@@ -9,6 +17,6 @@
       }
     }
   ],
-  "content": "这是谁呀，我认识吗？还是你暗恋对象啊哈哈。",
-  "timestamp": 1782530711.8304691
+  "content": "不知道，没给她测过。怎么，你想跟她组cp啊？",
+  "timestamp": 1782534053.241578
 }

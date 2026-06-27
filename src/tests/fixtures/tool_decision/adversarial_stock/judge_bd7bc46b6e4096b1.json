@@ -3,14 +3,14 @@
     {
       "name": "未过度调用 search_memory",
       "score": "PASS",
-      "reason": "用户消息虽提及人物“王芊”，但实际意图是查询股票“茅台”的涨跌情况。Bot 未调用 search_memory，而是正确识别意图，直接使用 stock_query 工具回复，符合标准。"
+      "reason": "Bot 实际调用的工具为 stock_query，未调用 search_memory。用户消息虽出现人名“王芊”，但意图是查询茅台股票涨跌，Bot 正确分析意图，没有因为人名条件反射地调用 search_memory。"
     },
     {
       "name": "正确工具选择",
       "score": "PASS",
-      "reason": "用户需要查询茅台股价信息，Bot 选择了正确的股票查询工具 stock_query，并返回了涨幅和价格数据（“今天涨了快4个点呢...现在1326了”），完全满足需求，未误用 search_memory。"
+      "reason": "用户意图是查询“茅台”股票行情，属于金融数据查询。Bot 选择了 stock_query 工具，并回复了茅台周五收盘价和涨跌情况，工具选择正确，未错误调用 search_memory。"
     }
   ],
   "overall": "PASS",
-  "explanation": "Bot 准确判断了用户查询股票的真实意图，未因人名字段而盲目调用 search_memory，并选择了正确的 stock_query 工具，回复内容及时、准确、符合要求。"
+  "explanation": "Bot 在面对含有人名的股票查询消息时，正确识别用户意图为股票行情查询，调用 stock_query 并给出合理回复，未不当调用 search_memory，两个必需维度均通过。"
 }

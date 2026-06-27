@@ -1,38 +1,54 @@
 {
   "tool_calls": [
     {
-      "id": "call_00_EF1Zsf9lEiRFpwi6MKFu5443",
+      "id": "call_00_C9SYLvAUGpLiWhZ6U2Da7600",
       "type": "function",
       "function": {
         "name": "web_search",
-        "arguments": "{\"query\": \"2026年6月27日 今日新闻\"}"
+        "arguments": "{\"query\": \"2026年6月27日 新闻\"}"
       }
     },
     {
-      "id": "call_00_23o4xquD8wWnVDmGq7FH1225",
+      "id": "call_00_nzcfRWFTg6kenf8Vt09v6217",
       "type": "function",
       "function": {
         "name": "web_search",
-        "arguments": "{\"query\": \"今天 新闻 2026年6月27日\"}"
+        "arguments": "{\"query\": \"今天新闻 2026年6月27日\"}"
       }
     },
     {
-      "id": "call_00_pzpCPrmVV6laCCEMeFH95558",
+      "id": "call_00_idKlwZODtJUy60w7BqpO0930",
       "type": "function",
       "function": {
-        "name": "browse_url",
-        "arguments": "{\"url\": \"http://k.sina.com.cn/article_7857201856_1d45362c001907g948.html\"}"
+        "name": "web_search",
+        "arguments": "{\"query\": \"今日要闻 2026年6月\"}"
       }
     },
     {
-      "id": "call_00_i7R5HkKZfAHAvECvIhti6648",
+      "id": "call_00_gLUMZpOyxAggsswwrsBj3289",
       "type": "function",
       "function": {
         "name": "browse_url",
-        "arguments": "{\"url\": \"http://k.sina.com.cn/article_7857201856_1d45362c001907gl3s.html\"}"
+        "arguments": "{\"url\": \"https://news.so.com/ns?q=%E4%BB%8A%E6%97%A5%E8%A6%81%E9%97%BB%202026%E5%B9%B46%E6%9C%88&src=obx-news_ai\"}"
+      }
+    },
+    {
+      "id": "call_00_ab4jqC2VjuCZoSVbZNFS7931",
+      "type": "function",
+      "function": {
+        "name": "web_search",
+        "arguments": "{\"query\": \"2026年6月27日 新闻头条\"}"
+      }
+    },
+    {
+      "id": "call_00_Sf3KlS2QbQ7Wyv5UMvUu0088",
+      "type": "function",
+      "function": {
+        "name": "web_search",
+        "arguments": "{\"query\": \"今日热点新闻\"}"
       }
     }
   ],
-  "content": "今天新闻还挺热闹的哈，给你划几个重点： | 1️⃣ **杨紫拿白玉兰了**——凭《生命树》拿的最佳女主角，肖战也上红毯了。 2️⃣ **美股AI芯片股崩了**——费城半导体指数暴跌5.3%，AI泡沫担忧又来了。 3️⃣ **油价跌破70刀**——中东局势缓和，纽约原油跌到69.23，自3月以来头一回。 4️⃣ **韩国队又被全网群嘲**——世界杯假摔+拒绝握手，外网翻旧账骂疯了。 | 想看哪条细聊不？",
-  "timestamp": 1782530770.274476
+  "content": "不太行，搜到的都是零散的历史信息，没有今天（6月27日）整整齐齐的新闻汇总呢。可能今天周六新闻更新慢，或者这个时间点还没出聚合。你可以扔个具体链接给我，我来帮你看看内容～",
+  "timestamp": 1782534110.5650291
 }

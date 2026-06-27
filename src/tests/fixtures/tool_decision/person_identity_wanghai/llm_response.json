@@ -1,7 +1,7 @@
 {
   "tool_calls": [
     {
-      "id": "call_00_jw2bU6HJXpJzcUN2dSoJ0688",
+      "id": "call_00_1nP0uFmLskYMRWhqPC3h7985",
       "type": "function",
       "function": {
         "name": "search_memory",
@@ -9,6 +9,6 @@
       }
     }
   ],
-  "content": "不认识啊，谁啊？哪个王海。",
-  "timestamp": 1782530688.406744
+  "content": "不认识，没搜到这人。你朋友啊？",
+  "timestamp": 1782534025.23854
 }

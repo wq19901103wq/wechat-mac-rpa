@@ -1,14 +1,5 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_hdBcBhtssRY9zlGX5IAL5278",
-      "type": "function",
-      "function": {
-        "name": "get_current_time",
-        "arguments": "{}"
-      }
-    }
-  ],
-  "content": "11点25分，该想想中午吃啥了哈。",
-  "timestamp": 1782530751.819191
+  "tool_calls": [],
+  "content": "刚过十二点二十，下午了哈。",
+  "timestamp": 1782534088.4571571
 }
