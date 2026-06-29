@@ -92,12 +92,22 @@ class TestWeChatMessageSender:
         assert result.success is False
         assert "不存在" in result.error
 
-    def test_send_file_silent_mode_returns_success(self, tmp_path):
+    def test_send_file_silent_mode_returns_failure(self, tmp_path):
+        # 静默模式跳过发送应返回 success=False（未真实发送），
+        # 避免调用方误 mark_replied 导致对方消息被永久跳过
         sender = WeChatMessageSender(silent_mode=True)
         result = sender.send_file(str(tmp_path / "nonexistent_file_12345.txt"))
         assert isinstance(result, ActionResult)
-        assert result.success is True
+        assert result.success is False
         assert "[文件]" in result.sent_text
+
+    def test_send_text_silent_mode_returns_failure(self):
+        # 文本静默跳过同样返回 success=False（核心修复：王勇奇消息不回复的根因）
+        sender = WeChatMessageSender(silent_mode=True)
+        result = sender.send("测试消息", chat_name="不在白名单的聊天")
+        assert isinstance(result, ActionResult)
+        assert result.success is False
+        assert result.sent_text == "测试消息"
 
     def test_send_file_invokes_copy_and_paste_scripts(self):
         import tempfile

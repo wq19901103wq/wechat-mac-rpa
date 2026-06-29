@@ -49,7 +49,7 @@ class PyAutoGUIInteractor(UIInteractor):
             center_y = item.rect.y + item.rect.height // 2
             pyautogui.click(center_x, center_y)
             return True
-        except (TypeError, AttributeError, OSError) as e:
+        except Exception as e:
             _logger.warning("click_chat_item 失败: %s", e)
             return False
 
@@ -58,6 +58,6 @@ class PyAutoGUIInteractor(UIInteractor):
         try:
             pyautogui.click(self.DEFAULT_INPUT_BOX_X, self.DEFAULT_INPUT_BOX_Y)
             return True
-        except (TypeError, AttributeError, OSError) as e:
+        except Exception as e:
             _logger.warning("click_input_box 失败: %s", e)
             return False

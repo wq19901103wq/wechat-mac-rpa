@@ -523,6 +523,7 @@ class WeChatBot:
                 return
 
             # 逐条发送回复，间隔 1.5 秒
+            send_failed = False
             for i, reply in enumerate(replies):
                 action_result = self.sender.send(reply, chat_name=chat_name)
                 if action_result.success:
@@ -542,13 +543,18 @@ class WeChatBot:
                 else:
                     self.logger.log_send(tick_id, success=False, text=reply, error=action_result.error)
                     self.debug_logger.log_action("send", action_input=reply, success=False, error=action_result.error or "")
+                    send_failed = True
                     break
                 if i < len(replies) - 1:
                     time.sleep(1.5)
 
-            # 标记所有 to_reply 的消息为已回复（用最后一条回复文本）
-            for msg in to_reply:
-                self.global_store.mark_replied(chat_name, msg, reply_text)
+            # 只在发送成功时标记 to_reply 为已回复。
+            # 发送失败（含静默跳过）不 mark_replied，否则对方消息被永久跳过。
+            if not send_failed:
+                for msg in to_reply:
+                    self.global_store.mark_replied(chat_name, msg, reply_text)
+            else:
+                self.logger.info("[Bot] 发送失败/静默跳过，未 mark_replied，下轮仍会重试 %s", chat_name)
 
             # Judge 评分已由 generator._submit_to_judge 异步处理（唯一路径）
 
