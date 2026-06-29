@@ -503,7 +503,14 @@ class WeChatBot:
             )
 
             if not replies:
-                self.debug_logger.log_action("none", action_input="", success=False, error="所有消息都跳过")
+                # LLM 返回空 replies = 判断无需回复（群聊没@我/纯表情包等），
+                # 属正常决策。补明确日志，避免被误读为"漏回"。
+                self.logger.log_decision(
+                    tick_id, should_reply=False,
+                    reason=f"LLM 判断无需回复 (未读 {len(unreplied)} 条，均已处理)",
+                    latest_text=unreplied[-1].text if unreplied else ""
+                )
+                self.debug_logger.log_action("none", action_input="", success=False, error="LLM 判断无需回复")
                 # 即使不回复，也标记为已处理，避免下一轮又当成未读
                 for msg in to_reply:
                     self.global_store.mark_replied(chat_name, msg, "(未回复)")

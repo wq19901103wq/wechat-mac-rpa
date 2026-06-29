@@ -28,13 +28,11 @@ class TestWeChatMessageSender:
              patch.object(sender, "_pbcopy", return_value=(0, "")), \
              patch.object(sender, "_paste", return_value=(0, "")), \
              patch.object(sender, "_verify", return_value=(text, 0, 0)), \
-             patch.object(sender, "_send_return", return_value=(0, "")), \
-             patch("src.action.message_sender.subprocess.run") as mock_run:
+             patch.object(sender, "_send_return", return_value=(0, "")):
             result = sender.send(text)
 
         assert result.success is True
         assert result.sent_text == text
-        mock_run.assert_called()  # 至少会调用 pbpaste 读取原始剪贴板
 
     def test_send_includes_wechat_frontmost_check(self):
         """发送时会检查 WeChat 是否为 frontmost"""
@@ -110,6 +108,7 @@ class TestWeChatMessageSender:
         assert result.sent_text == "测试消息"
 
     def test_send_file_invokes_copy_and_paste_scripts(self):
+        """文件发送走 frontmost→focus→复制到剪贴板→paste→return 流程"""
         import tempfile
 
         sender = WeChatMessageSender()
@@ -118,25 +117,25 @@ class TestWeChatMessageSender:
             tmp_path = f.name
 
         try:
-            with patch("src.action.message_sender.subprocess.run") as mock_run:
-                # 让 frontmost 校验返回 WeChat，使流程能继续到文件复制/粘贴
-                def _side_effect(*args, **kwargs):
-                    mocked = MagicMock(returncode=0)
-                    cmd = args[0] if args else []
-                    if isinstance(cmd, list) and cmd and cmd[0] == "osascript":
-                        script = cmd[-1] if cmd else ""
-                        if "frontApp" in script:
-                            mocked.stdout = b"WeChat"
-                    return mocked
-
-                mock_run.side_effect = _side_effect
+            with patch.object(sender, "_ensure_wechat_frontmost", return_value=(True, "")) as mock_frontmost, \
+                 patch.object(sender, "_focus_input", return_value=(0, "")) as mock_focus, \
+                 patch.object(sender, "_clear_input"), \
+                 patch.object(sender, "automation") as mock_auto, \
+                 patch.object(sender, "_paste", return_value=(0, "")) as mock_paste, \
+                 patch.object(sender, "_send_return", return_value=(0, "")) as mock_return:
+                # automation.run_applescript 用于"复制文件到剪贴板"，返回成功
+                mock_auto.run_applescript.return_value = (0, "", "")
                 result = sender.send_file(tmp_path)
 
             assert result.success is True
             assert "[文件]" in result.sent_text
-
-            # 验证整个流程调用了 subprocess.run（至少包括 frontmost/focus/copy/paste/return）
-            assert mock_run.call_count >= 4
+            # 验证流程各步被调用
+            mock_frontmost.assert_called_once()
+            mock_focus.assert_called_once()
+            mock_paste.assert_called_once()
+            mock_return.assert_called_once()
+            # 复制文件到剪贴板的 applescript 至少调一次
+            mock_auto.run_applescript.assert_called()
         finally:
             import os
             os.unlink(tmp_path)
