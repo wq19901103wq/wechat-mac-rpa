@@ -2,9 +2,9 @@
 """把历史聊天记录导入 SQLite 数据库。
 
 用法:
-    python scripts/migrate_exports_to_db.py
-    python scripts/migrate_exports_to_db.py --dry-run
-    python scripts/migrate_exports_to_db.py --db-path data/db/chat_history.db
+    python scripts/db/migrate_exports_to_db.py
+    python scripts/db/migrate_exports_to_db.py --dry-run
+    python scripts/db/migrate_exports_to_db.py --db-path data/db/chat_history.db
 
 安全:
     - 迁移前自动备份目标数据库（如果存在）

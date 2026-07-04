@@ -387,6 +387,7 @@ wechat-mac-rpa/
 │   ├── capture/           # L2: 窗口截图
 │   ├── ocr/               # L2: macOS Vision 文字识别
 │   ├── models/            # L1: 领域模型
+│   ├── db/                # L1: SQLite 数据模型与 Repository（聊天记录唯一权威源）
 │   ├── llm/               # LLM 客户端（Kimi 本地代理 / DashScope API）
 │   ├── logging/           # 结构化日志与全链路追踪
 │   ├── utils/             # L1-L5 共享工具
@@ -394,6 +395,7 @@ wechat-mac-rpa/
 │   └── tests/             # 9 个 benchmark 套件 + 单元测试
 ├── tests_integration/     # 集成测试（真实截图 + 端到端）
 ├── scripts/               # 后台 / Dashboard 生成 / 实验框架 / 数据迁移
+│   └── db/                # 数据库迁移、备份、去重脚本
 ├── docs/                  # 完整文档体系
 │   ├── 01-quickstart/
 │   ├── 02-architecture/
@@ -417,6 +419,56 @@ wechat-mac-rpa/
 
 ---
 
+## 数据模型
+
+运行时的聊天记录以 **SQLite** 为唯一权威源，`GlobalStore` 启动时从 DB 加载、保存时回写 DB，不再依赖易丢失的 JSON 分片。Phase 1 实现三张核心表：
+
+| 表 | 说明 | 关键约束 |
+|---|---|---|
+| `chatrooms` | 聊天会话（群聊 / 私聊） | `chatroom_id` 全局唯一，解决同名群问题 |
+| `messages` | 单条聊天消息 | `UNIQUE(chatroom_id, wxid, create_time, content_hash)` |
+| `chat_members` | 群成员关系 | `UNIQUE(chatroom_id, wxid)` |
+
+```mermaid
+erDiagram
+    CHATROOM ||--o{ MESSAGE : contains
+    CHATROOM ||--o{ CHAT_MEMBER : has
+    CHATROOM {
+        int id PK
+        string chatroom_id UK
+        string display_name
+        string chat_type
+        float first_seen_at
+        float last_active_at
+    }
+    MESSAGE {
+        int id PK
+        int chatroom_id FK
+        string wxid
+        string content
+        string message_type
+        float create_time
+        string content_hash
+    }
+    CHAT_MEMBER {
+        int id PK
+        int chatroom_id FK
+        string wxid
+        string group_nickname
+        bool is_active
+    }
+```
+
+- 完整系统数据模型（含 `persons`、`aliases`、`facts`、`wiki` 等未来 Phase）见 [`docs/02-architecture/DATA_MODEL_SPEC.md`](docs/02-architecture/DATA_MODEL_SPEC.md)。
+- Phase 1 MVP 详细设计见 [`docs/02-architecture/DATA_MODEL_PHASE1.md`](docs/02-architecture/DATA_MODEL_PHASE1.md)。
+- 常用 DB 维护脚本：
+  - `python scripts/db/migrate_exports_to_db.py`：批量导入导出文件到 DB
+  - `python scripts/db/deduplicate_db.py`：按复合键去重
+  - `python scripts/db/migrate_content_hash.py`：content_hash 算法迁移
+  - `python scripts/db/backup_chat_db.py --retention 7`：自动备份与清理
+
+---
+
 ## 核心术语
 
 | 术语 | 说明 |
@@ -436,6 +488,8 @@ wechat-mac-rpa/
 |------|------|
 | [快速开始](docs/01-quickstart/AI_QUICKSTART.md) | 环境配置、依赖安装、首次启动 |
 | [架构设计](docs/02-architecture/ARCHITECTURE.md) | L1-L5 分层架构、依赖规则、边界约束 |
+| [数据模型 Phase 1](docs/02-architecture/DATA_MODEL_PHASE1.md) | SQLite DB-only 架构：chatrooms / messages / chat_members |
+| [数据模型全量设计](docs/02-architecture/DATA_MODEL_SPEC.md) | 含 persons、aliases、facts、wiki 等未来 Phase 设计 |
 | [API 接口速查](docs/02-architecture/API_SURFACE.md) | 当前生产代码的公共接口，可直接复制粘贴 |
 | [模块索引](docs/02-architecture/MODULE_INDEX.md) | "消息识别错了"→改哪个文件 |
 | [编码原则](docs/02-architecture/CODING_PRINCIPLES.md) | 类型注解、单一职责、单向依赖 |
