@@ -2,9 +2,9 @@
 """聊天记录数据库备份与清理。
 
 用法:
-    python scripts/backup_chat_db.py
-    python scripts/backup_chat_db.py --retention 7
-    python scripts/backup_chat_db.py --db-path data/db/chat_history.db --backup-dir backups/chat_db
+    python scripts/db/backup_chat_db.py
+    python scripts/db/backup_chat_db.py --retention 7
+    python scripts/db/backup_chat_db.py --db-path data/db/chat_history.db --backup-dir backups/chat_db
 """
 
 import argparse
