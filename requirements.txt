@@ -17,7 +17,7 @@ pyobjc-framework-Vision>=10.0
 
 # 智能家居工具
 tinytuya>=1.19.0
-paho-mqtt>=1.6.0
+paho-mqtt>=2.1.0
 
 # Web 服务
 fastapi>=0.137.1
