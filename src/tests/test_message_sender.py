@@ -133,13 +133,15 @@ class TestPasteVerification:
         assert result.success is True
 
     def test_silent_mode(self):
-        """静默模式下不调用任何 UI 自动化"""
+        """静默模式下不调用任何 UI 自动化，返回 skipped 标志避免误标 replied"""
         automation = MockSystemAutomation()
         sender = WeChatMessageSender(silent_mode=True, automation=automation)
 
         result = sender.send("测试消息")
 
-        assert result.success is True
+        assert result.success is False
+        assert result.skipped is True
         assert result.sent_text == "测试消息"
+        assert "静默模式跳过发送" in result.error
         # 静默模式不应触发任何 UI 调用
         assert len(automation.calls) == 0
