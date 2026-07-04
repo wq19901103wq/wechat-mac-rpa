@@ -3,7 +3,6 @@
 
 import difflib
 import hashlib
-import json
 import logging
 import os
 import threading
@@ -15,14 +14,10 @@ from typing import Dict, List, Optional, Tuple
 
 from src.models.base import MEDIA_MESSAGE_TYPES, ChatMessage, SenderType
 from src.utils.chat_utils import _is_group_chat_name
+from src.utils.screenshot_store import ScreenshotStore
+from src.db import init_db, ChatHistoryRepository
 
 _logger = logging.getLogger("src.global_store")
-
-# 截图保留策略：超过此秒数的旧截图将被清理（默认 1 天）
-SCREENSHOT_MAX_AGE_SECONDS = 86400
-# 清理检查间隔：每这么多秒执行一次清理，避免每次保存都遍历目录
-_SCREENSHOT_CLEANUP_INTERVAL = 600
-
 
 @dataclass
 class ChatState:
@@ -38,17 +33,6 @@ class ChatState:
 def _normalize_text(text: str) -> str:
     """文本归一化：压缩连续空白为单个空格，去除首尾空白。"""
     return " ".join(text.split())
-
-
-def _safe_filename(name: str) -> str:
-    """把聊天名转成安全的文件名（替换非法字符，限制长度）。"""
-    invalid = '<>:"/\\|?*'
-    for c in invalid:
-        name = name.replace(c, '_')
-    # 限制长度，保留尾部用于可读性
-    if len(name) > 180:
-        name = name[:180]
-    return name
 
 
 def _jaccard_2gram(a: str, b: str) -> float:
@@ -235,18 +219,31 @@ def _lcs_match(history: List[ChatMessage], tick: List[ChatMessage], chat_name: s
 class GlobalStore:
     """全局存储：管理所有聊天的状态，统一去重、持久化."""
 
-    def __init__(self, max_messages: int = 200, state_file: Optional[str] = None):
+    _chat_repo: Optional[ChatHistoryRepository]
+
+    def __init__(self, max_messages: Optional[int] = None, state_file: Optional[str] = None):
         if state_file is None:
             state_file = str(Path(__file__).parent.parent.parent / "data" / "global_state.json")
         self.chats: Dict[str, ChatState] = {}
+        if max_messages is None:
+            try:
+                max_messages = int(os.environ.get("MAX_RUNTIME_MESSAGES", "1000"))
+            except ValueError:
+                max_messages = 1000
         self.max_messages = max_messages
         self._state_file = Path(state_file)
         self._state_file.parent.mkdir(parents=True, exist_ok=True)
-        self._screenshots_dir = self._state_file.parent / "screenshots"
-        self._screenshots_dir.mkdir(exist_ok=True)
-        self._last_screenshot_cleanup = 0.0  # 上次截图清理的时间戳
+        self._screenshot_store = ScreenshotStore(self._state_file.parent / "screenshots")
         self._lock = threading.Lock()
         self._dirty: set = set()  # 有变化的聊天名，增量保存用
+        # 初始化聊天记录数据库
+        try:
+            db_path = self._state_file.parent / "db" / "chat_history.db"
+            init_db(db_path)
+            self._chat_repo = ChatHistoryRepository(db_path=db_path)
+        except Exception as e:
+            _logger.error("[GlobalStore] 初始化聊天记录数据库失败: %s", e)
+            self._chat_repo = None
         self._load()
 
     def _merge_tick_legacy(self, chat_name: str, messages: List[ChatMessage], is_group: bool = False) -> List[ChatMessage]:
@@ -603,89 +600,64 @@ class GlobalStore:
         return sum(1 for m in state.messages if m.replied)
 
     def _load(self):
-        """从磁盘加载状态。优先加载分片格式，回退旧格式。"""
-        # 1. 优先加载分片格式
-        index_file = self._state_file.parent / "chats" / "index.json"
-        if index_file.exists():
-            self._load_sharded(index_file)
-            return
-
-        # 2. 回退旧格式（单 JSON）
-        if not self._state_file.exists():
-            return
-        try:
-            with open(self._state_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            for chat_name, chat_data in data.items():
-                state = ChatState(
-                    chat_id=chat_data.get("chat_id", ""),
-                    chat_name=chat_data.get("chat_name", chat_name),
-                    is_group=chat_data.get("is_group", False),
-                )
-                for m in chat_data.get("messages", []):
-                    msg = self._dict_to_msg(m, chat_name)
-                    state.messages.append(msg)
-                    state._msg_ids.add(_msg_id(chat_name, msg, state.is_group))
-                self.chats[chat_name] = state
-            _logger.debug("[GlobalStore] 加载旧格式: %d 个聊天", len(self.chats))
-        except (json.JSONDecodeError, FileNotFoundError, PermissionError, OSError) as e:
-            _logger.warning(f"加载状态失败: {type(e).__name__}: {e}")
-        except Exception as e:
-            _logger.error(f"加载状态发生未预期错误: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+        """从 SQLite DB 加载状态（DB 作为唯一权威源，JSON 分片已下线）。"""
+        self._load_from_db()
 
     @staticmethod
-    def _dict_to_msg(m: dict, chat_name: str) -> ChatMessage:
-        """把字典反序列化为 ChatMessage。"""
+    def _db_msg_to_chat_message(db_msg, chat_name: str) -> ChatMessage:
+        """把 DB Message 模型转成 ChatMessage。"""
+        sender_type = SenderType.SELF if db_msg.is_self else SenderType.OTHER
+        if db_msg.raw_type == 10000:
+            sender_type = SenderType.SYSTEM
         return ChatMessage(
-            text=m.get("text", ""),
-            sender=m.get("sender", ""),
-            sender_type=SenderType(m.get("sender_type", "other")),
-            chat_name=m.get("chat_name", chat_name),
-            is_at_me=m.get("is_at_me", False),
-            replied=m.get("replied", False),
-            reply_text=m.get("reply_text", ""),
-            reply_time=m.get("reply_time"),
-            message_type=m.get("message_type", "text"),
-            image_description=m.get("image_description", ""),
-            image_text=m.get("image_text", ""),
-            is_image_duplicate=m.get("is_image_duplicate", False),
-            account=m.get("account", ""),
-            local_id=m.get("local_id"),
-            server_id=m.get("server_id"),
-            create_time=m.get("create_time"),
-            raw_type=m.get("raw_type"),
-            sender_wxid=m.get("sender_wxid"),
+            text=db_msg.content or "",
+            sender=db_msg.sender_display_name or db_msg.wxid or "",
+            sender_type=sender_type,
+            chat_name=chat_name,
+            chatroom_id=None,  # 从 DB 加载时由外层统一设置
+            is_at_me=bool(db_msg.is_at_me),
+            replied=bool(db_msg.replied),
+            reply_text=db_msg.reply_text or "",
+            reply_time=db_msg.reply_time,
+            message_type=db_msg.message_type or "text",
+            image_description=db_msg.image_description or "",
+            local_id=db_msg.local_id,
+            server_id=db_msg.server_id,
+            create_time=db_msg.create_time,
+            raw_type=db_msg.raw_type,
+            sender_wxid=db_msg.wxid,
         )
 
-    def _load_sharded(self, index_file: Path):
-        """加载分片格式。"""
+    def _load_from_db(self):
+        """从 SQLite 加载所有聊天（DB 作为唯一权威源）。
+
+        同名群选择、chatroom_id 解析等逻辑已下沉到 ChatHistoryRepository。
+        """
+        if self._chat_repo is None:
+            return
         try:
-            with open(index_file, "r", encoding="utf-8") as f:
-                index = json.load(f)
-            chats_dir = index_file.parent
-            for chat_name, meta in index.get("chats", {}).items():
-                file_path = meta["file"]
-                if file_path.startswith("chats/"):
-                    file_path = file_path[6:]
-                shard_file = chats_dir / file_path
-                if not shard_file.exists():
-                    _logger.warning("[GlobalStore] 分片文件缺失: %s", shard_file)
-                    continue
-                with open(shard_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+            start = time.time()
+            active = self._chat_repo.load_active_chatrooms(self.max_messages)
+            loaded = 0
+            for chat_name, (chatroom_id, chat_type, db_messages) in active.items():
                 state = ChatState(
-                    chat_id=data.get("chat_id", meta.get("chat_id", "")),
-                    chat_name=data.get("chat_name", chat_name),
-                    is_group=data.get("is_group", False),
+                    chat_id=chatroom_id,
+                    chat_name=chat_name,
+                    is_group=(chat_type == "group"),
                 )
-                for m in data.get("messages", []):
-                    msg = self._dict_to_msg(m, chat_name)
+                for db_msg in db_messages:
+                    msg = self._db_msg_to_chat_message(db_msg, chat_name)
+                    msg.chatroom_id = chatroom_id
                     state.messages.append(msg)
                     state._msg_ids.add(_msg_id(chat_name, msg, state.is_group))
                 self.chats[chat_name] = state
-            _logger.debug("[GlobalStore] 加载分片格式: %d 个聊天", len(self.chats))
+                loaded += 1
+            _logger.info(
+                "[GlobalStore] 从 DB 加载 %d 个聊天，耗时 %.2fs",
+                loaded, time.time() - start
+            )
         except Exception as e:
-            _logger.error(f"加载分片失败: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+            _logger.error("[GlobalStore] 从 DB 加载失败: %s", e)
 
     @staticmethod
     def _msg_to_dict(m: ChatMessage) -> dict:
@@ -709,108 +681,59 @@ class GlobalStore:
             "create_time": m.create_time,
             "raw_type": m.raw_type,
             "sender_wxid": m.sender_wxid,
+            "chatroom_id": m.chatroom_id,
         }
 
     def save(self):
-        """保存状态到磁盘（分片格式，增量保存）。"""
+        """保存状态到 SQLite DB（DB 作为唯一权威源，JSON 分片已下线）。"""
         with self._lock:
             try:
-                chats_dir = self._state_file.parent / "chats"
-                chats_dir.mkdir(parents=True, exist_ok=True)
-
                 dirty = list(self._dirty)
                 if not dirty:
-                    # 没有任何变化，只保存索引（确保索引是最新的）
-                    pass
-                else:
-                    # 1. 只保存有变化的聊天
-                    for chat_name in dirty:
-                        state = self.chats.get(chat_name)
-                        if state is None:
-                            continue
-                        safe_name = _safe_filename(chat_name)
-                        shard_file = chats_dir / f"{safe_name}.json"
-                        data = {
-                            "chat_id": state.chat_id,
-                            "chat_name": state.chat_name,
-                            "is_group": state.is_group,
-                            "messages": [self._msg_to_dict(m) for m in state.messages],
-                        }
-                        tmp = shard_file.with_suffix(".tmp")
-                        with open(tmp, "w", encoding="utf-8") as f:
-                            json.dump(data, f, ensure_ascii=False, indent=2)
-                        os.replace(tmp, shard_file)
-                    self._dirty.clear()
-                    _logger.debug(f"💾 增量保存 {len(dirty)} 个聊天状态")
+                    return
 
-                # 2. 保存轻量索引（始终保存，保证一致性）
-                index = {
-                    "version": 2,
-                    "format": "sharded",
-                    "chats": {
-                        name: {
-                            "chat_id": s.chat_id,
-                            "chat_name": s.chat_name,
-                            "is_group": s.is_group,
-                            "msg_count": len(s.messages),
-                            "file": f"chats/{_safe_filename(name)}.json",
-                        }
-                        for name, s in self.chats.items()
-                    },
-                }
-                index_file = chats_dir / "index.json"
-                tmp = index_file.with_suffix(".tmp")
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(index, f, ensure_ascii=False, indent=2)
-                os.replace(tmp, index_file)
+                # 同步到 SQLite 数据库
+                if self._chat_repo is not None:
+                    try:
+                        self._sync_dirty_to_db(dirty)
+                    except Exception as e:
+                        _logger.error("[GlobalStore] 同步到聊天记录数据库失败: %s", e)
 
-                # 3. 旧文件重命名备份（保留一次）
-                if self._state_file.exists():
-                    bak = self._state_file.with_suffix(".json.bak")
-                    if not bak.exists():
-                        os.replace(self._state_file, bak)
+                self._dirty.clear()
+                _logger.debug("💾 增量保存 %d 个聊天状态到 DB", len(dirty))
 
-            except (PermissionError, OSError) as e:
-                _logger.warning(f"GlobalStore save failed (IO): {type(e).__name__}: {e}")
             except Exception as e:
                 _logger.error(f"GlobalStore save failed unexpectedly: {type(e).__name__}: {e}\n{traceback.format_exc()}")
 
-    def save_screenshot(self, image_path: str, session_id: Optional[str] = None) -> str:
-        """保存截图到 data/screenshots/ 目录。"""
-        import shutil
-        from datetime import datetime
-        if session_id is None:
-            session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-        filename = f"wechat_{session_id}_{timestamp}.png"
-        filepath = self._screenshots_dir / filename
-        shutil.copy2(image_path, filepath)
-        self._cleanup_old_screenshots()
-        return str(filepath)
-
-    def _cleanup_old_screenshots(self) -> None:
-        """清理超过保留期的旧截图，避免 data/screenshots 无限膨胀。
-
-        每隔 _SCREENSHOT_CLEANUP_INTERVAL 秒执行一次，删除修改时间早于
-        SCREENSHOT_MAX_AGE_SECONDS 的 png 文件。
-        """
-        now = time.time()
-        if now - self._last_screenshot_cleanup < _SCREENSHOT_CLEANUP_INTERVAL:
+    def _sync_dirty_to_db(self, dirty: List[str]) -> None:
+        """把脏聊天同步到 SQLite 数据库（使用 bulk 插入，避免逐条 SELECT）。"""
+        if not dirty or self._chat_repo is None:
             return
-        self._last_screenshot_cleanup = now
-        cutoff = now - SCREENSHOT_MAX_AGE_SECONDS
-        try:
-            removed = 0
-            for entry in self._screenshots_dir.iterdir():
-                if not entry.is_file() or entry.suffix != ".png":
-                    continue
-                try:
-                    if entry.stat().st_mtime < cutoff:
-                        entry.unlink()
-                        removed += 1
-                except OSError as e:
-                    _logger.debug("删除旧截图失败 %s: %s", entry.name, e)
-            if removed:
-                _logger.info("[GlobalStore] 清理旧截图 %d 张（保留期 %d 秒）", removed, SCREENSHOT_MAX_AGE_SECONDS)
-        except OSError as e:
-            _logger.debug("[GlobalStore] 清理截图目录失败: %s", e)
+        for chat_name in dirty:
+            state = self.chats.get(chat_name)
+            if state is None or not state.messages:
+                continue
+            msg_dicts = [self._msg_to_dict(m) for m in state.messages]
+            chatroom_id = self._chat_repo.resolve_chatroom_id(chat_name, msg_dicts)
+            if not chatroom_id:
+                _logger.warning("[GlobalStore] %s 无法解析 chatroom_id，跳过 DB 同步", chat_name)
+                continue
+            chat_type = "group" if state.is_group else "single"
+            # OCR 模式可能没有 sender_wxid，用 sender 显示名做占位 wxid
+            for d in msg_dicts:
+                if not d.get("wxid") and d.get("sender"):
+                    d["wxid"] = f"_sender_{d['sender']}"
+            try:
+                stats = self._chat_repo.bulk_sync_chat(
+                    chatroom_id=chatroom_id,
+                    display_name=state.chat_name,
+                    chat_type=chat_type,
+                    messages=msg_dicts,
+                )
+                _logger.debug("[GlobalStore] DB 同步 %s: %s", chat_name, stats)
+            except Exception as e:
+                _logger.warning("[GlobalStore] DB 同步 %s 失败: %s", chat_name, e)
+
+    def save_screenshot(self, image_path: str, session_id: Optional[str] = None) -> str:
+        """保存截图到 data/screenshots/ 目录（委托给 ScreenshotStore）。"""
+        return self._screenshot_store.save(image_path, session_id)

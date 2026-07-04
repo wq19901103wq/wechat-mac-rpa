@@ -1,14 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_x2KxbCxApWZHL6FpGutp5875",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"盔哥\"}"
-      }
-    }
-  ],
-  "content": "盔哥？没听说过这号人物啊，你朋友？",
-  "timestamp": 1782534154.108066
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.433465,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

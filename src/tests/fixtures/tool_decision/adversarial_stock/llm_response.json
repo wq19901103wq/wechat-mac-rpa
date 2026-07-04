@@ -1,14 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_9OXk1JUpNXbe1GumMBqN4691",
-      "type": "function",
-      "function": {
-        "name": "stock_query",
-        "arguments": "{\"stock_code\": \"sh600519\"}"
-      }
-    }
-  ],
-  "content": "跌了呗，昨收1168.63，跌了1.3%，问就是心碎哈。 | 今天周六不开盘，等周一再看它表演吧。",
-  "timestamp": 1782534137.424914
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.431266,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

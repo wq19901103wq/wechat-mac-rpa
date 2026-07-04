@@ -15,6 +15,9 @@ try:
 except ImportError:
     Timeout: Any = None  # type: ignore[misc,assignment,no-redef]
 
+from src.memory.wiki_prompts import RUNTIME_DEFAULT_GROUP_WIKI, RUNTIME_UPDATE_GROUP_PROMPT
+from src.utils.chat_utils import _safe_filename
+
 _logger = logging.getLogger("src.memory.engine")
 
 # ── 别名校验（防止把非别名噪声写进 aliases.json）──
@@ -194,62 +197,6 @@ _UPDATE_PROMPT = """请根据以下对话记录，更新用户 {user_name} 的 w
 
 【输出】
 直接输出更新后的完整 wiki markdown，不要加代码块标记。严禁添加任何开场白、前言、总结或解释性文字。"""
-
-_DEFAULT_GROUP_WIKI = """# {group_name}
-
-## 群基本信息
-（暂无）
-
-## 群成员画像
-（暂无）
-
-## 近期话题 & 动态
-（暂无）
-
-## 群内规则 & 文化
-（暂无）
-"""
-
-_UPDATE_GROUP_PROMPT = """请根据以下对话记录，更新群聊 {chat_name} 的 wiki。
-
-【已确认身份信息（必须遵守，禁止 contradict）】
-{identity_context}
-
-【更新规则】
-1. wiki 是**编译后的摘要**，不是对话流水账——这是最重要的原则：
-   - 严禁把原文对话（每条发言 + Bot 回复全文）逐条搬进 wiki
-   - "近期话题 & 动态"只记**事件摘要**：每人每天最多 1-2 条，一句话概括发生了什么（如"2026-06-20 讨论AI能力，白姐认为ai干不好"）
-   - 不要记录每条发言的原文、不要记录 Bot 的回复原文
-2. 身份/关系信息（群成员画像、群规则文化）增量保留，新信息覆盖旧信息，冲突标 `[待验证]`
-3. 超过 7 天的"近期动态"**必须删除**或并入历史，保持滚动窗口精简
-4. 只修改/新增变化的部分，保留未变动的内容
-5. 标注日期：时间敏感的信息必须带日期（格式：YYYY-MM-DD），日期必须严格来自对话记录开头的时间戳。禁止编造、推测、推断任何日期
-6. 时间戳缺失：无法确定日期时不标注或用 [待验证] 标记
-7. 冲突处理：新信息覆盖旧信息
-8. 重点记录：
-   - 群成员关系、身份、职业变化
-   - 群内热点话题、事件、约定（摘要，非原文）
-   - 群内文化、梗、常用语
-   - 群规则、禁忌、注意事项
-9. 别名发现：在"群成员画像"中，如果某个成员有多个称呼，请一并记录。只记录该成员本人的称呼，严禁把其他成员的名字误记到此成员下。格式：`成员主名（别名1/别名2）`
-10. 多账号标注：如果对话来源包含不同账号标记，标注所属账号
-11. 不确定的信息用 [待验证] 标记
-12. 控制长度：群聊 wiki 不超过 4000 字（代码层有兜底截断，但仍请主动精简）
-13. 保持 Markdown 格式
-
-【现有 wiki】
-{current_wiki}
-
-【新对话】
-群聊：{chat_name}
-时间：{current_time}
-
-对话内容：
-{conversation}
-
-【输出】
-直接输出更新后的完整 wiki markdown，不要加代码块标记。"""
-
 
 class MemoryEngine:
     """LLM Wiki 记忆引擎：管理用户/群聊/话题的 wiki 文件，支持外挂 overrides。"""
@@ -466,10 +413,10 @@ class MemoryEngine:
     # ── 内部方法 ──
 
     def _user_wiki_path(self, user_name: str) -> Path:
-        return self.wiki_dir / "users" / f"{user_name}.md"
+        return self.wiki_dir / "users" / f"{_safe_filename(user_name)}.md"
 
     def _group_wiki_path(self, group_name: str) -> Path:
-        return self.wiki_dir / "groups" / f"{group_name}.md"
+        return self.wiki_dir / "groups" / f"{_safe_filename(group_name)}.md"
 
     def _load_wiki(self, path: Path) -> str:
         try:
@@ -481,7 +428,7 @@ class MemoryEngine:
     # 时效性 section：超长时优先从这些 section 底部（最老的条目）砍
     _VOLATILE_SECTIONS = ("近期动态", "近期话题", "说过的话", "说过的话（短期）", "历史记录")
 
-    def _enforce_wiki_limits(self, wiki: str, max_chars: int = 4000) -> str:
+    def _enforce_wiki_limits(self, wiki: str, max_chars: int = 10000) -> str:
         """代码级长度护栏（NFR-2）。
 
         LLM 不遵守长度约束时兜底：按 `## ` 切 section，超长时优先压缩
@@ -554,7 +501,12 @@ class MemoryEngine:
 
     def _save_wiki(self, path: Path, content: str) -> None:
         try:
-            content = self._enforce_wiki_limits(content)
+            # 根据 wiki 类型应用不同长度护栏
+            if "/users/" in path.as_posix():
+                max_chars = 4000
+            else:
+                max_chars = 10000
+            content = self._enforce_wiki_limits(content, max_chars=max_chars)
             content = self._sanitize_wiki_aliases(content, path.stem)
             path.write_text(content, encoding="utf-8")
         except Exception as e:
@@ -814,7 +766,7 @@ class MemoryEngine:
         bot_replies = task["bot_replies"]
 
         path = self._group_wiki_path(group_name)
-        current_wiki = self._load_wiki(path) if path.exists() else _DEFAULT_GROUP_WIKI.format(group_name=group_name)
+        current_wiki = self._load_wiki(path) if path.exists() else RUNTIME_DEFAULT_GROUP_WIKI.format(group_name=group_name)
 
         conversation = self._format_conversation(messages, bot_replies)
         if not conversation.strip():
@@ -828,7 +780,7 @@ class MemoryEngine:
             if sender:
                 involved.add(sender)
         identity_context = self._build_identity_context(list(involved))
-        prompt = _UPDATE_GROUP_PROMPT.format(
+        prompt = RUNTIME_UPDATE_GROUP_PROMPT.format(
             identity_context=identity_context,
             current_wiki=current_wiki,
             chat_name=chat_name,
@@ -860,9 +812,8 @@ class MemoryEngine:
             return False
         if len(name) > 64:
             return False
-        # Windows/macOS/Linux 非法文件名字符
-        if any(c in name for c in '\\/:*?"<>|'):
-            return False
+        # 文件名安全字符不是主名合法性的必要条件：
+        # wiki 路径会调用 _safe_filename 做兜底，因此允许 | / : 等真实昵称/群名存在。
         return True
 
     def _is_valid_alias(self, alias: str, main_name: str, existing_mains: set) -> bool:
@@ -1271,16 +1222,10 @@ class MemoryEngine:
             _logger.info(f"[Search] select: {name} score={score:.4f} primary={is_primary} group={is_group}")
             if is_primary:
                 primary_names.add(name)
-                # 本人 wiki 如果太长，提取包含查询词的 snippet，避免完整 wiki 挤占空间导致截断
-                snippet_keywords = filtered_original if filtered_original else [resolved_keyword]
+                # 本人 wiki：优先返回开头（包含基本信息/别名/职业/公司等核心身份字段），
+                # 比关键词片段更稳，避免关键身份信息被截断丢失。
                 if len(content) > max_chars:
-                    snippets = self._extract_all_snippets(content, snippet_keywords, max_snippets=3)
-                    if snippets:
-                        for snippet in snippets:
-                            results.append(f"【{name}的记忆】{snippet}")
-                    else:
-                        # 提取不到 snippet 时fallback：返回开头+截断提示
-                        results.append(f"【{name}的记忆】{content[:max_chars]}\n（…内容截断）")
+                    results.append(f"【{name}的记忆】{content[:max_chars]}\n（…后续内容省略）")
                 else:
                     results.append(f"【{name}的记忆】{content}")
             else:

@@ -1,22 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_FYKu18Kwdanw8RBt89gi9966",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"王艺涵 MBTI\"}"
-      }
-    },
-    {
-      "id": "call_00_nTh1uPOMbRzGxBVtlo3T3903",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"王艺涵\"}"
-      }
-    }
-  ],
-  "content": "不知道，没给她测过。怎么，你想跟她组cp啊？",
-  "timestamp": 1782534053.241578
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.4289951,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

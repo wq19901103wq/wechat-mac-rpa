@@ -1,14 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_MZ1uTtYXQyMnXK3QFUZA4207",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"王芊家庭\"}"
-      }
-    }
-  ],
-  "content": "加上我自己的话，三口人吧，爸妈和我。",
-  "timestamp": 1782534190.1686158
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.434774,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

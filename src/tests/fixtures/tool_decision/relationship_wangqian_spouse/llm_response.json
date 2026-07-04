@@ -1,14 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_t19A8vFMu4AtYXEOHCoq6300",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"王芊 老婆\"}"
-      }
-    }
-  ],
-  "content": "这问题问得我措手不及啊哈哈。 | 我没有老婆，你要是有合适的人选可以给我介绍介绍呀。",
-  "timestamp": 1782534067.8659468
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.429322,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

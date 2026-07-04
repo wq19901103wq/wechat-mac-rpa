@@ -1,14 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_1nP0uFmLskYMRWhqPC3h7985",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"王海\"}"
-      }
-    }
-  ],
-  "content": "不认识，没搜到这人。你朋友啊？",
-  "timestamp": 1782534025.23854
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.4280078,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

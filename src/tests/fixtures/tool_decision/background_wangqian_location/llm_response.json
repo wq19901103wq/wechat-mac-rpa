@@ -1,14 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_UCyzJvjzeC6byJhKOLs70700",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"王芊住在哪里\"}"
-      }
-    }
-  ],
-  "content": "上海呀，咋了，要给我寄东西啊。",
-  "timestamp": 1782534046.17906
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.428833,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

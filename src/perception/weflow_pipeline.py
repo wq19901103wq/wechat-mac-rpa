@@ -289,7 +289,7 @@ class WeFlowPipeline:
 
         # 5. 转换为 ChatMessage
         contact = self._talker_to_contact.get(talker)
-        chat_messages = self._convert_messages(new_messages, contact, chat_name)
+        chat_messages = self._convert_messages(new_messages, contact, chat_name, talker)
 
         # 6. 组装 PerceptionResult
         return PerceptionResult(
@@ -403,6 +403,7 @@ class WeFlowPipeline:
         messages: list[WeFlowMessage],
         contact: Optional[dict],
         chat_name: str,
+        talker: Optional[str] = None,
     ) -> list[ChatMessage]:
         """WeFlowMessage → ChatMessage。"""
         results = []
@@ -451,6 +452,7 @@ class WeFlowPipeline:
             msg.create_time = m.create_time
             msg.raw_type = m.local_type
             msg.sender_wxid = m.sender_username
+            msg.chatroom_id = talker or (contact.get("username") if contact else None)
 
             results.append(msg)
 
@@ -553,7 +555,7 @@ class WeFlowPipeline:
                 continue
             contact = self._talker_to_contact.get(talker)
             chat_name = contact.get("name", talker) if contact else talker
-            chat_messages = self._convert_messages(msgs, contact, chat_name)
+            chat_messages = self._convert_messages(msgs, contact, chat_name, talker)
             if chat_messages:
                 result[talker] = chat_messages
         _logger.info("[WeFlow] 导出历史缓存: %d 个聊天, %d 条消息", len(result), sum(len(v) for v in result.values()))

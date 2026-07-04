@@ -1,38 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_5k8FwatX2j2O339yqyc06576",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"程立 王芊 关系\"}"
-      }
-    },
-    {
-      "id": "call_00_gXIFtQtSDVbtVBCZvsOS3376",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"程立\"}"
-      }
-    },
-    {
-      "id": "call_01_2pdk7LR3tTg7ksQ6bzdU4195",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"王芊\"}"
-      }
-    },
-    {
-      "id": "call_00_oqDzwUJHVSr8ZdTkPxEZ0806",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"程立是谁\"}"
-      }
-    }
-  ],
-  "content": "程立是谁啊？你认识的人我这边没对上号呢。",
-  "timestamp": 1782534040.12894
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.4286342,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

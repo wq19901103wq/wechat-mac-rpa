@@ -61,3 +61,5 @@ src/tests/fixtures/reply_stability/cache/
 # 内部提示词与纪律守则
 AGENTS.md
 prompts/
+backups/
+bandit-report.json

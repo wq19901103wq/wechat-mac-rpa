@@ -1,5 +1,6 @@
 {
   "tool_calls": [],
-  "content": "拼多多班味这么浓的吗，你也沦陷了。",
-  "timestamp": 1782534143.237354
+  "content": "",
+  "timestamp": 1783132126.431543,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

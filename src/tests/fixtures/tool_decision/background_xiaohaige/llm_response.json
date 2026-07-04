@@ -1,14 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_VsKzJE0M4T21THWiapXu7463",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"小海哥\"}"
-      }
-    }
-  ],
-  "content": "小海哥是谁啊，我咋没印象呢。你从哪听来的这号人物。",
-  "timestamp": 1782534173.592038
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.434044,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

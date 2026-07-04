@@ -1,5 +1,6 @@
 {
   "tool_calls": [],
-  "content": "你呢，照照镜子就是笑话，够省事的。",
-  "timestamp": 1782534092.179085
+  "content": "",
+  "timestamp": 1783132126.430455,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

@@ -1,14 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_Rnm1wSlTroZAMEAEaqXF7787",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"ai开发小分队\"}"
-      }
-    }
-  ],
-  "content": "哈？啥ai开发小分队，我咋没印象有这个群啊。你是不是记错群名了？",
-  "timestamp": 1782534060.342659
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.429152,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

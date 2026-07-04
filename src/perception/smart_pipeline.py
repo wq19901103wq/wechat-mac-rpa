@@ -14,7 +14,7 @@
 
 import base64
 import hashlib
-import json as _json
+
 import logging
 import os
 import re
@@ -197,18 +197,8 @@ class _QwenAPIClient:
 
     @staticmethod
     def _extract_json(text: str) -> dict:
-        text = text.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].startswith("```"):
-                lines = lines[:-1]
-            text = "\n".join(lines).strip()
-        try:
-            return _json.loads(text)
-        except _json.JSONDecodeError:
-            return {}
+        from src.utils.json_extractor import extract_json
+        return extract_json(text) or {}
 
 
 # ---------------------------------------------------------------------------
@@ -574,13 +564,8 @@ class SmartPerceptionPipeline:
     ) -> list:
         """从 API 返回的 chat_list 构建 ChatListItem，使用基于索引的虚拟 rect。
 
-        固定坐标规则（基于 1738x1602 Retina 截图实测）：
-        - 左侧边栏宽约 55px，聊天列表从 x=55 开始
-        - 搜索栏高约 50px，列表起始 y = 50
-        - 每个列表项高度 = 75
-        - 列表宽度：右侧展开时 ~35%，折叠时 ~85%
-
-        注意：window_width/height 传入的是截图实际像素（Retina），不是逻辑像素。
+        固定坐标基于 2x Retina（1738×1602）截图实测。非 Retina 或外接显示器上取值会偏移。
+        此函数仅在本地 Layout 解析失败时作为兜底调用。
         """
         items = []
         is_expanded = bool(chat_name)
@@ -702,7 +687,7 @@ class SmartPerceptionPipeline:
         4. 如果数量不同，用昵称模糊匹配
         """
         if not local_chat_list:
-            # 本地 Layout 失败，回退到纯虚拟坐标
+            # 本地 Layout 失败，回退到虚拟坐标。1738×1602 为 2x Retina 参考尺寸。
             _logger.warning("[SmartPipeline] 本地Layout无chat_list，回退到虚拟坐标")
             return self._build_chat_list_items_from_api(api_chat_list, 1738, 1602, "")
 

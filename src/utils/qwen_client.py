@@ -16,22 +16,23 @@ except ImportError:
 
 
 class QwenClient:
-    """LLM API 客户端（支持 DeepSeek 官方 / DashScope 双平台）"""
+    """LLM API 客户端（支持 DeepSeek 官方 / Zhipu / 自定义 OpenAI 兼容端点）"""
 
     # 类级 token 统计：按 model 汇总 prompt/completion/total/calls
     _token_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {"prompt": 0, "completion": 0, "total": 0, "calls": 0})
 
-    def __init__(self, model: str = "deepseek-v4-flash"):
-        api_key = os.environ.get("DEEPSEEK_API_KEY")
+    def __init__(self, model: str = ""):
+        model = model or os.environ.get("LLM_MODEL", "deepseek-v4-flash")
+        api_key = os.environ.get("LLM_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
-            raise RuntimeError("DEEPSEEK_API_KEY 未设置")
-        base_url = "https://api.deepseek.com/v1"
+            raise RuntimeError("DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置")
+        base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
         self.client = OpenAI(
             api_key=api_key,
             base_url=base_url,
         )
         self.model = model
-        self.is_deepseek_official = True
+        self.is_deepseek_official = "deepseek.com" in base_url
         self.last_thinking = ""  # 最近一次 LLM 推理过程
 
     @classmethod

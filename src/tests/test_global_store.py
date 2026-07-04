@@ -236,3 +236,107 @@ class TestIsGroupChatName:
         assert _is_group_chat_name("W1han") is False
         assert _is_group_chat_name("秋水文章") is False
         assert _is_group_chat_name("") is False
+
+
+class TestGlobalStoreDbSync:
+    """GlobalStore 同步到 SQLite 的回归测试。"""
+
+    def test_weflow_mode_syncs_with_chatroom_id(self):
+        """WeFlow 消息自带 chatroom_id，直接按 chatroom_id 入库。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = os.path.abspath(tmpdir)
+            state_file = os.path.join(tmpdir, "state.json")
+            db_path = os.path.join(tmpdir, "chat_history.db")
+
+            store = GlobalStore(state_file=state_file)
+            from src.db import ChatHistoryRepository, init_db
+            init_db(db_path)
+            store._chat_repo = ChatHistoryRepository(db_path=db_path)
+
+            msg = ChatMessage(
+                text="hello",
+                sender="Alice",
+                sender_type=SenderType.OTHER,
+                chat_name="TestGroup",
+                chatroom_id="room_real@chatroom",
+            )
+            store.merge_tick("TestGroup", [msg], is_group=True)
+            store.save()
+
+            repo = ChatHistoryRepository(db_path=db_path)
+            result = repo.get_messages("room_real@chatroom")
+            assert len(result) == 1
+            assert result[0].content == "hello"
+
+    def test_ocr_mode_falls_back_to_db_display_name(self):
+        """OCR 消息没有 chatroom_id 时，按 display_name 从 DB 反查。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = os.path.abspath(tmpdir)
+            state_file = os.path.join(tmpdir, "state.json")
+            db_path = os.path.join(tmpdir, "chat_history.db")
+
+            from src.db import ChatHistoryRepository, init_db
+            init_db(db_path)
+            repo = ChatHistoryRepository(db_path=db_path)
+            repo.bulk_sync_chat(
+                chatroom_id="room_real@chatroom",
+                display_name="TestGroup",
+                chat_type="group",
+                messages=[{
+                    "content": "old msg",
+                    "wxid": "wxid_old",
+                    "sender_display_name": "Old",
+                    "create_time": 1700000000.0,
+                    "message_type": "text",
+                }],
+            )
+
+            store = GlobalStore(state_file=state_file)
+            store._chat_repo = ChatHistoryRepository(db_path=db_path)
+
+            # OCR 消息：没有 chatroom_id，也没有 sender_wxid
+            msg = ChatMessage(
+                text="new msg",
+                sender="Alice",
+                sender_type=SenderType.OTHER,
+                chat_name="TestGroup",
+            )
+            store.merge_tick("TestGroup", [msg], is_group=True)
+            store.save()
+
+            result = repo.get_messages("room_real@chatroom")
+            contents = [m.content for m in result]
+            assert "old msg" in contents
+            assert "new msg" in contents
+
+    def test_db_sync_uses_bulk_insert_not_per_message_select(self):
+        """GlobalStore.save() 应该调 bulk_sync_chat，而不是逐条 SELECT。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = os.path.abspath(tmpdir)
+            state_file = os.path.join(tmpdir, "state.json")
+            db_path = os.path.join(tmpdir, "chat_history.db")
+
+            from src.db import ChatHistoryRepository, init_db
+            init_db(db_path)
+
+            store = GlobalStore(state_file=state_file)
+            repo = ChatHistoryRepository(db_path=db_path)
+            store._chat_repo = repo
+
+            # 模拟：替换 repo.sync_chat 和 repo.bulk_sync_chat，断言调用的是后者
+            calls = []
+            repo.sync_chat = lambda **kwargs: calls.append("sync_chat") or {"messages": 0}
+            repo.bulk_sync_chat = lambda **kwargs: calls.append("bulk_sync_chat") or {"messages": len(kwargs.get("messages", []))}
+
+            msg = ChatMessage(
+                text="bulk msg",
+                sender="Alice",
+                sender_type=SenderType.OTHER,
+                chat_name="BulkGroup",
+                chatroom_id="bulk_room@chatroom",
+            )
+            store.merge_tick("BulkGroup", [msg], is_group=True)
+            store.save()
+
+            assert "bulk_sync_chat" in calls
+            assert "sync_chat" not in calls

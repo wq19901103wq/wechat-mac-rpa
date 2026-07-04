@@ -46,6 +46,7 @@ class ChatMessage:
     sender: str
     sender_type: SenderType
     chat_name: str
+    chatroom_id: Optional[str] = None  # 微信 chatroom_id / wxid，用于区分同名群
     is_at_me: bool = False
     timestamp: Optional[str] = None
     source_elements: Optional[List[OCRTextElement]] = None
@@ -80,6 +81,9 @@ class ActionResult:
     success: bool
     sent_text: Optional[str] = None
     error: Optional[str] = None
+    # skipped=True 表示静默模式主动跳过发送（非真实失败）。
+    # 调用方据此区分：静默跳过应 mark_replied 避免卡循环，真实失败不 mark_replied。
+    skipped: bool = False
 
 
 @dataclass

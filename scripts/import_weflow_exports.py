@@ -16,7 +16,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.models.base import ChatMessage, SenderType
-from src.session.global_store import _safe_filename, _msg_id
+from src.session.global_store import _msg_id
+from src.utils.chat_utils import _safe_filename
 
 _WEFLOW_TYPE_MAP = {
     "文本消息": "text",

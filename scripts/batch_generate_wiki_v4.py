@@ -16,6 +16,7 @@ import logging
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.session.global_store import GlobalStore
 from src.utils.qwen_client import QwenClient
+from src.memory.wiki_prompts import BATCH_DEFAULT_GROUP_WIKI, BATCH_UPDATE_GROUP_PROMPT
 
 _logger = logging.getLogger(__name__)
 
@@ -24,58 +25,6 @@ wiki_dir = Path("data/memory/wiki/groups")
 wiki_dir.mkdir(parents=True, exist_ok=True)
 
 store = GlobalStore()
-
-_DEFAULT_GROUP_WIKI = """# {group_name}
-
-## 群基本信息
-（暂无）
-
-## 群成员画像
-（暂无）
-
-## 近期话题 & 动态
-（暂无）
-
-## 群内规则 & 文化
-（暂无）
-"""
-
-_UPDATE_GROUP_PROMPT = """请根据以下对话记录，生成/更新群聊 wiki。
-
-【现有 wiki】
-{current_wiki}
-
-【新对话】
-群聊：{chat_name}
-时间：{current_time}
-
-对话内容：
-{conversation}
-
-【更新规则】
-1. 只修改/新增变化的部分，保留未变动的内容
-2. 标注日期：时间敏感的信息必须带日期（格式：YYYY-MM-DD）
-3. 过期处理：超过 7 天的"近期动态"移到历史记录或删除
-4. 冲突处理：新信息覆盖旧信息
-5. 重点记录：
-   - 群成员关系、身份、职业变化
-   - 群内热点话题、事件、约定
-   - 群内文化、梗、常用语
-   - 群规则、禁忌、注意事项
-6. 多账号标注：如果对话来源包含不同账号标记（如 [work]、[personal]），在 wiki 中标注该信息所属账号
-7. 不确定的信息用 [待验证] 标记
-8. **区分陈述和疑问/玩笑/反问（严格）**：以下句子严禁当作事实提取：
-   - 以"吗"、"呢"、"?"、"？"结尾的句子
-   - 反问句（如"不是你说我...的吗"）
-   - 开玩笑/夸张表述（如"富比有多少资产"）
-   - 用户考问Bot的问题（如"王乔元是谁"）
-   这些属于交互行为，不是事实，严禁写入 wiki。
-9. 控制长度：群聊 wiki 不超过 2000 字
-10. 保持 Markdown 格式
-
-【输出】
-直接输出更新后的完整 wiki markdown，不要加代码块标记。"""
-
 
 def safe_filename(name: str) -> str:
     """生成安全文件名（保留中文）"""
@@ -116,12 +65,12 @@ def process_chat(name_state):
     recent = state.messages[-limit:]
     conversation = format_conversation(recent)
 
-    current_wiki = _DEFAULT_GROUP_WIKI.format(group_name=name)
+    current_wiki = BATCH_DEFAULT_GROUP_WIKI.format(group_name=name)
     if wiki_path.exists():
         current_wiki = wiki_path.read_text(encoding="utf-8")
 
     now = time.strftime("%Y-%m-%d %H:%M")
-    prompt = _UPDATE_GROUP_PROMPT.format(
+    prompt = BATCH_UPDATE_GROUP_PROMPT.format(
         current_wiki=current_wiki,
         chat_name=name,
         current_time=now,
@@ -132,7 +81,7 @@ def process_chat(name_state):
         response = client.chat(
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
-            max_tokens=2000,
+            max_tokens=10000,
             timeout=500,
         )
         new_wiki = response.strip() if response else ""

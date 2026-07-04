@@ -7,6 +7,17 @@
 
 
 
+def _safe_filename(name: str) -> str:
+    """把聊天名转成安全的文件名（替换非法字符，限制长度）。"""
+    invalid = '<>:"/\\|?*'
+    for c in invalid:
+        name = name.replace(c, '_')
+    # 限制长度，保留尾部用于可读性
+    if len(name) > 180:
+        name = name[:180]
+    return name
+
+
 def _is_group_chat_name(chat_name: str) -> bool:
     """判断聊天名称是否为群聊（以群人数结尾，如 'ai开发小分队（128）' 或 'xxx (5)'）。"""
     if not chat_name:

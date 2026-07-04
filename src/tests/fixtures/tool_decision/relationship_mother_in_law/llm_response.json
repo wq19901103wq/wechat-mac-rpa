@@ -1,38 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_F9llU5dv46hAOPd0N7OS0964",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"王芊 岳母\"}"
-      }
-    },
-    {
-      "id": "call_00_3COqYfpIoYmjLWT4oxHQ6304",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"王芊 婚姻\"}"
-      }
-    },
-    {
-      "id": "call_00_GdKfzdDprUlj7aKjXWuc4333",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"王芊 个人信息\"}"
-      }
-    },
-    {
-      "id": "call_00_ENHnVmYW0JSrgkdlj6Il8910",
-      "type": "function",
-      "function": {
-        "name": "search_memory",
-        "arguments": "{\"query\": \"王芊 配偶\"}"
-      }
-    }
-  ],
-  "content": "这问题把我问住了哈哈哈。 | 我是女的你管谁叫岳母呢，我自己都不知道。",
-  "timestamp": 1782534167.1751308
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.4337192,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

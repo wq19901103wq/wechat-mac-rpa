@@ -1,22 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_y4zOowaoN6Yx5faJsEeR0691",
-      "type": "function",
-      "function": {
-        "name": "stock_query",
-        "arguments": "{\"stock_code\": \"sh600519\"}"
-      }
-    },
-    {
-      "id": "call_01_U6hmlTz96r1NiFGztydx7735",
-      "type": "function",
-      "function": {
-        "name": "web_search",
-        "arguments": "{\"query\": \"贵州茅台 最新消息 2026年6月\"}"
-      }
-    }
-  ],
-  "content": "茅台今天1168.63，跌了1.3%，PE 17.66，市值1.46万亿。 | **基本面**：PE不到18，放在茅台历史上看算偏低区域，不算贵。但1.46万亿市值摆在那，指望翻倍也不太现实。 | **技术面**：换手率才0.4%，没人玩啊。今天最低1168，盘面死气沉沉的，不是恐慌也不是狂热，就是躺平。",
-  "timestamp": 1782534084.902161
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.429826,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

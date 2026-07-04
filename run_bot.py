@@ -64,7 +64,9 @@ def main():
         print("🤖 wechat-twin Bot")
         print("=" * 60)
         print("配置:")
-        print("  • LLM: deepseek-v4-flash (DeepSeek 官网)")
+        model_name = os.environ.get("LLM_MODEL", "deepseek-v4-flash")
+        base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
+        print(f"  • LLM: {model_name} ({base_url})")
         print("  • Prompt: DT style (prompts/persona.md)")
         print("  • 检索: 待启用")
         interval = 5.0

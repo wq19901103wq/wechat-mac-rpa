@@ -1,14 +1,6 @@
 {
-  "tool_calls": [
-    {
-      "id": "call_00_oWQBghcKlnqZnban0vjD4545",
-      "type": "function",
-      "function": {
-        "name": "web_search",
-        "arguments": "{\"query\": \"王芊 最新动态 2026\"}"
-      }
-    }
-  ],
-  "content": "搜我自己啊？全网查无此人，看来我隐藏得挺好。",
-  "timestamp": 1782534125.55394
+  "tool_calls": [],
+  "content": "",
+  "timestamp": 1783132126.4310458,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

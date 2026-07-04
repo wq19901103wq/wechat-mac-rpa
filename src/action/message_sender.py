@@ -6,6 +6,7 @@
 
 import logging
 import os
+import re
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -65,6 +66,27 @@ class WeChatMessageSender(MessageSender):
         # 发送锁：确保整个 save_clipboard → send → restore_clipboard 流程串行，
         # 防止并发 send 导致剪贴板内容互相覆盖/丢失
         self._send_lock = threading.Lock()
+
+    def _in_silent_whitelist(self, chat_name: str) -> bool:
+        """判断 chat_name 是否在静默白名单内。
+
+        群聊实际名常带未读数后缀（如「共同富裕群 (45)」），而白名单写的是
+        干净群名（「共同富裕群」）。先剥掉末尾「 (N)」后缀再匹配；精确命中或
+        白名单条目作为子串出现都算命中，避免后缀/空格差异导致永远发不出去。
+        """
+        if not chat_name:
+            return False
+        # 剥掉末尾未读数后缀，如 "共同富裕群 (45)" -> "共同富裕群"
+        cleaned = re.sub(r"\s*\(\d+\)\s*$", "", chat_name).strip()
+        candidates = {chat_name, cleaned}
+        for name in candidates:
+            if name in self._silent_whitelist:
+                return True
+            # 子串匹配：白名单条目是 chat_name 的子串（处理空格/全半角差异）
+            for w in self._silent_whitelist:
+                if w and (w in name or name in w):
+                    return True
+        return False
 
     # ------------------------------------------------------------------
     # 原子操作辅助方法
@@ -218,13 +240,13 @@ class WeChatMessageSender(MessageSender):
     def _send_impl(self, text: str, chat_name: str = "") -> ActionResult:
         """send 的实际实现，由 send() 持锁后调用。"""
         if self.silent_mode:
-            if chat_name and chat_name in self._silent_whitelist:
+            if self._in_silent_whitelist(chat_name):
                 _logger.info(f"[Sender] 白名单聊天 '{chat_name}' 跳过静默，实际发送")
             else:
                 _logger.info(f"[Sender] [SILENT] 静默模式跳过发送, 文本长度: {len(text)} 字符, 内容: {text[:80]}...")
                 # 返回 success=False：静默跳过 = 未真实发送，调用方据此不 mark_replied，
                 # 避免误标已回复导致对方消息被永久跳过（sent_text 仍记录意图文本供诊断）
-                return ActionResult(success=False, sent_text=text, error="静默模式跳过发送")
+                return ActionResult(success=False, sent_text=text, error="静默模式跳过发送", skipped=True)
 
         t_send_start = time.time()
         perf = {}
@@ -428,7 +450,7 @@ class WeChatMessageSender(MessageSender):
         file_name = Path(os.path.basename(file_path)).name
 
         if self.silent_mode:
-            if chat_name and chat_name in self._silent_whitelist:
+            if self._in_silent_whitelist(chat_name):
                 _logger.info(f"[Sender] 白名单聊天 '{chat_name}' 跳过静默，实际发送文件")
             else:
                 _logger.info(f"[Sender] [SILENT] 静默模式跳过发送文件: {file_path}")

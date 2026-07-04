@@ -260,6 +260,15 @@ class HistorySearchIndex:
         self.sender_index: Dict[str, List[str]] = data.get("sender_index", {})
         self.chat_type_index: Dict[str, List[str]] = data.get("chat_type_index", {})
 
+        # 上下文兜底：当 msg.context_ids 里的 id 不在 msg_by_id 时（索引 bug），
+        # 用 file + index_in_file 去同一文件找相邻消息重建上下文。
+        self._file_index_map: Dict[tuple, Dict[str, Any]] = {}
+        for m in self.messages:
+            file_path = m.get("file")
+            idx_in_file = m.get("index_in_file")
+            if file_path and idx_in_file is not None:
+                self._file_index_map[(file_path, idx_in_file)] = m
+
         _logger.info(
             "[HistorySearch] 索引就绪: %d 条消息, %d 维 (backend=%s)",
             len(self.messages),
@@ -272,6 +281,32 @@ class HistorySearchIndex:
 
         # 运行时增量缓冲区：单条 add/remove 先写内存，flush 时再回写 pkl
         self.incremental = MessageIndexStore(dim=self.embeddings.shape[1])
+
+    def _resolve_context(self, msg: Dict[str, Any], window: int = 3) -> List[Dict[str, Any]]:
+        """解析一条消息的上下文消息。
+
+        优先使用 msg['context_ids'] 从 msg_by_id 查找；若解析不到或为空，
+        则退回到同一导出文件（file + index_in_file）的相邻 window 条消息。
+        """
+        context_ids = msg.get("context_ids") or [msg["id"]]
+        context_msgs: List[Dict[str, Any]] = [
+            m for m in (self.msg_by_id.get(cid) for cid in context_ids) if m is not None
+        ]
+        if context_msgs:
+            return context_msgs
+
+        # 兜底：用 file + index_in_file 找相邻消息
+        file_path = msg.get("file")
+        idx_in_file = msg.get("index_in_file")
+        if file_path is None or idx_in_file is None:
+            return [msg]
+
+        fallback = []
+        for offset in range(-window, window + 1):
+            neighbor = self._file_index_map.get((file_path, idx_in_file + offset))
+            if neighbor:
+                fallback.append(neighbor)
+        return fallback if fallback else [msg]
 
     # ── 召回参数 ──
     # 融合权重：dense 主导（语义），keyword 补精确词；两路共识额外提升
@@ -412,8 +447,7 @@ class HistorySearchIndex:
                 continue
             seen_contexts.add(context_key)
 
-            context_msgs = [self.msg_by_id.get(cid) for cid in context_ids]
-            context_msgs = [m for m in context_msgs if m]
+            context_msgs = self._resolve_context(msg)
             results.append(
                 {
                     "score": score,
@@ -559,8 +593,7 @@ class HistorySearchIndex:
                 continue
             seen_contexts.add(context_key)
 
-            context_msgs = [self.msg_by_id.get(cid) for cid in context_ids]
-            context_msgs = [m for m in context_msgs if m]
+            context_msgs = self._resolve_context(msg)
             results.append(
                 {
                     "score": item["_score"],

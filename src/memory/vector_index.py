@@ -13,6 +13,7 @@ CSR 的 data/indices/indptr/shape。
 """
 
 import json
+import logging
 import string
 from collections import defaultdict
 from pathlib import Path
@@ -22,6 +23,8 @@ import numpy as np
 import scipy.sparse as sp
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
+_logger = logging.getLogger("src.memory.vector_index")
 
 
 # ---------------------------------------------------------------------------
@@ -150,10 +153,10 @@ class ChatVectorIndex:
     def load(self, cache_file: Path) -> "ChatVectorIndex":
         """从指定 JSON 缓存文件加载索引（不重新构建）。"""
         cache_file = Path(cache_file)
-        print(f"📦 从缓存加载向量索引: {cache_file}")
+        _logger.info(f"从缓存加载向量索引: {cache_file}")
         data = self._load_cache_data(cache_file)
         self._apply_cache_data(data)
-        print(f"   加载完成: {len(self.qa_pairs)} 条对话")
+        _logger.info(f"  加载完成: {len(self.qa_pairs)} 条对话")
         return self
 
     def build(self, qa_pairs: List[Dict]) -> "ChatVectorIndex":
@@ -161,13 +164,13 @@ class ChatVectorIndex:
         cache_file = self.cache_dir / self.CACHE_FILE_NAME
 
         if cache_file.exists():
-            print("📦 从缓存加载向量索引...")
+            _logger.info("从缓存加载向量索引...")
             data = self._load_cache_data(cache_file)
             self._apply_cache_data(data)
-            print(f"   加载完成: {len(self.qa_pairs)} 条对话")
+            _logger.info(f"  加载完成: {len(self.qa_pairs)} 条对话")
             return self
 
-        print("🔢 构建语义检索索引...")
+        _logger.info("构建语义检索索引...")
         self.qa_pairs = qa_pairs
 
         # 构建辅助索引
@@ -209,9 +212,9 @@ class ChatVectorIndex:
         with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(cache_payload, f, ensure_ascii=False, separators=(',', ':'))
 
-        print(f"   索引完成: {len(self.qa_pairs)} 条对话, {len(self.vectorizer.vocabulary_)} 维特征")
-        print(f"   发送者索引: {len(self.sender_index)} 个唯一发送者")
-        print(f"   聊天类型索引: {dict((k, len(v)) for k, v in self.chat_type_index.items())}")
+        _logger.info(f"  索引完成: {len(self.qa_pairs)} 条对话, {len(self.vectorizer.vocabulary_)} 维特征")
+        _logger.info(f"  发送者索引: {len(self.sender_index)} 个唯一发送者")
+        _logger.info(f"  聊天类型索引: {dict((k, len(v)) for k, v in self.chat_type_index.items())}")
         return self
 
     def search(

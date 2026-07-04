@@ -1,5 +1,6 @@
 {
   "tool_calls": [],
-  "content": "大哥，哪个城市啊，我又不是全知全能的。",
-  "timestamp": 1782534076.0380852
+  "content": "",
+  "timestamp": 1783132126.429636,
+  "error": "DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置"
 }

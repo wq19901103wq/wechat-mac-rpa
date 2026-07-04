@@ -124,7 +124,7 @@ def update_group_wiki_direct(
             model=llm_client.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
-            max_tokens=2000,
+            max_tokens=10000,
             timeout=120,
         )
         new_wiki = response.choices[0].message.content
