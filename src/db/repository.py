@@ -50,9 +50,7 @@ class ChatHistoryRepository:
         仅用于消息去重，不用于安全场景；已显式声明 usedforsecurity=False。
         """
         text = content or ""
-        return hashlib.md5(  # lgtm[py/weak-cryptographic-algorithm] # codeql[py/weak-cryptographic-algorithm]
-            text.encode("utf-8"), usedforsecurity=False
-        ).hexdigest()
+        return hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()  # lgtm[py/weak-cryptographic-algorithm]
 
     def _get_or_create_chatroom(
         self,
