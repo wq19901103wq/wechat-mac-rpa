@@ -115,7 +115,7 @@ WeChat 抓取 / 导出文件
 ## 5. 迁移与归档
 
 ### 5.1 初始迁移
-`scripts/migrate_exports_to_db.py`
+`scripts/db/migrate_exports_to_db.py`
 
 功能：
 - 读取 `data/exports/main/` 和 `data/exports/b/`（WeChat 导出 JSON）
@@ -134,7 +134,7 @@ WeChat 抓取 / 导出文件
 
 - SQLite 启用 WAL 模式。
 - 数据库文件：`data/db/chat_history.db`
-- 提供 `scripts/backup_chat_db.py`：
+- 提供 `scripts/db/backup_chat_db.py`：
   - 默认备份到 `backups/chat_db/chat_history.db.bak.<timestamp>`
   - 支持 `--retention N` 保留最近 N 个
 - bot 启动时不再自动备份，改为显式调用脚本。
