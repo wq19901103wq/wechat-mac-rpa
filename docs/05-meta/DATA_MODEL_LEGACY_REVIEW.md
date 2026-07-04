@@ -25,6 +25,6 @@
 ## 建议优化
 
 - 把 `chat_members` 表从"可选"改为第一批必须实现，因为区分同名群的核心就是成员组成（有西西 vs 没西西）。
-- 增加数据库备份 CLI：`python scripts/backup_chat_db.py --retention 7`。
+- 增加数据库备份 CLI：`python scripts/db/backup_chat_db.py --retention 7`。
 - 在 `messages` 表增加 `vector_indexed` 布尔字段，方便后续把新消息同步进向量索引时去重。
 - 测试用例里专门加一个"两个同名群数据不串"的回归测试。
