@@ -45,13 +45,12 @@ class ChatHistoryRepository:
 
     @staticmethod
     def _content_hash(content: Optional[str]) -> str:
-        """计算消息内容哈希（用 md5，足够去重且比 sha256 快）。
+        """计算消息内容哈希（用 sha256，避免 CodeQL 对 MD5 的告警）。
 
-        仅用于消息去重，不用于安全场景；已显式声明 usedforsecurity=False。
+        仅用于消息去重，不用于安全场景。
         """
         text = content or ""
-        # lgtm[py/weak-sensitive-data-hashing]
-        return hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def _get_or_create_chatroom(
         self,
