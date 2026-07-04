@@ -17,19 +17,15 @@ import json
 import logging
 import shutil
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 # 添加项目根目录到路径
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from sqlalchemy import create_engine
-
 from src.db import ChatHistoryRepository, init_db
-from src.db.models import Base
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 _logger = logging.getLogger("migrate_exports_to_db")

@@ -32,7 +32,9 @@ class QwenClient:
             base_url=base_url,
         )
         self.model = model
-        self.is_deepseek_official = "deepseek.com" in base_url
+        from urllib.parse import urlparse
+        hostname = urlparse(base_url).hostname or ""
+        self.is_deepseek_official = hostname == "api.deepseek.com" or hostname.endswith(".deepseek.com")
         self.last_thinking = ""  # 最近一次 LLM 推理过程
 
     @classmethod

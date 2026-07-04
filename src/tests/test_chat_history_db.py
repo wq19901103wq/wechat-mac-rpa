@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.db import ChatHistoryRepository, init_db
-from src.db.models import Base, ChatMember, Chatroom, Message
+from src.db.models import ChatMember, Chatroom, Message
 
 
 @pytest.fixture

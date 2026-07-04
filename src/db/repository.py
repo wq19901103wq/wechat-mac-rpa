@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from sqlalchemy import select, insert
+from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -45,8 +45,12 @@ class ChatHistoryRepository:
 
     @staticmethod
     def _content_hash(content: Optional[str]) -> str:
-        """计算消息内容哈希（用 md5，足够去重且比 sha256 快）。"""
+        """计算消息内容哈希（用 md5，足够去重且比 sha256 快）。
+
+        仅用于消息去重，不用于安全场景；已显式声明 usedforsecurity=False。
+        """
         text = content or ""
+        # codeql[py/weak-cryptographic-algorithm]
         return hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()
 
     def _get_or_create_chatroom(
