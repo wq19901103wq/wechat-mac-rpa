@@ -525,7 +525,7 @@ erDiagram
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=wq19901103wq/wechat-mac-rpa&type=Date)](https://star-history.com/#wq19901103wq/wechat-mac-rpa&Date)
+![Star History](https://raw.githubusercontent.com/wq19901103wq/wechat-mac-rpa/star-tracker-data/charts/star-history.svg)
 
 ---
 
