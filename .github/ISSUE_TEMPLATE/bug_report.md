@@ -1,36 +1,37 @@
 ---
-name: Bug 报告
-about: 报告 bot 运行中的问题
-title: "[BUG] "
-labels: ["bug"]
-assignees:
-  - wq19901103wq
+name: Bug Report
+about: Report a bug to help us improve
+title: '[BUG] '
+labels: bug
+assignees: ''
 ---
 
-## 问题描述
+## Bug Description
 
-<!-- 清晰简洁地描述 bug -->
+A clear description of what the bug is.
 
-## 复现步骤
+## To Reproduce
 
-1.
-2.
-3.
+Steps to reproduce the behavior:
+1. Go to '...'
+2. Click on '....'
+3. See error
 
-## 期望行为
+## Expected Behavior
 
-<!-- 描述你期望发生什么 -->
+What you expected to happen.
 
-## 实际行为
+## Screenshots
 
-<!-- 描述实际发生了什么 -->
+If applicable, add screenshots.
 
-## 相关截图/日志
+## Environment
 
-<!-- 如有 tick 链接、截图、日志，请附上 -->
+- OS: [e.g. macOS 14.2]
+- Python version: [e.g. 3.11]
+- WeChat version: [e.g. 4.0]
+- wechat-mac-rpa version: [e.g. 0.1.0]
 
-## 环境信息
+## Additional Context
 
-- Bot 版本/分支：
-- Python 版本：
-- 模型：
+Any other information about the problem.
