@@ -1,24 +1,27 @@
 ---
-name: 功能建议
-about: 建议新功能或改进
-title: "[FEATURE] "
-labels: ["enhancement"]
-assignees:
-  - wq19901103wq
+name: Feature Request
+about: Suggest a new feature or enhancement
+title: '[FEATURE] '
+labels: enhancement
+assignees: ''
 ---
 
-## 功能描述
+## Feature Description
 
-<!-- 清晰简洁地描述你想要的功能 -->
+A clear description of the feature you'd like to see.
 
-## 为什么需要这个功能
+## Motivation
 
-<!-- 说明这个功能的价值和场景 -->
+Why is this feature needed? What problem does it solve?
 
-## 建议实现方案
+## Proposed Solution
 
-<!-- 如果你有实现思路，可以写在这里 -->
+How do you envision this working?
 
-## 相关截图/参考
+## Alternatives Considered
 
-<!-- 如有参考，请附上 -->
+Any alternative solutions you've considered.
+
+## Additional Context
+
+Any other information, screenshots, or references.
