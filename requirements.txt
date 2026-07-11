@@ -29,4 +29,4 @@ uvicorn>=0.23.0
 # search_history 工具；否则跳过，bot 行为零变化。
 # 索引/模型路径见 src/memory/history_search.py 顶部默认值与环境变量。
 tokenizers>=0.23.1
-onnxruntime>=1.16.0
+onnxruntime>=1.27.0
