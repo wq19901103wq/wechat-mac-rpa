@@ -8,4 +8,4 @@ pytest-cov>=7.1.0
 # 代码质量 / CI
 ruff>=0.15.22
 mypy>=2.3.0
-bandit>=1.8.0
+bandit>=1.9.4
