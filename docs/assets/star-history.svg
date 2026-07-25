@@ -5,10 +5,10 @@
 </style>
 <rect class="bg" width="100%" height="100%" rx="10"/>
 <text class="title" x="70" y="30">⭐ wq19901103wq/wechat-mac-rpa</text>
-<text class="sub" x="870" y="30" text-anchor="end">31 stars</text>
-<line class="grid" x1="70" y1="306.0" x2="870" y2="306.0"/><text class="axis" x="58" y="310.0" text-anchor="end">0</text><line class="grid" x1="70" y1="244.0" x2="870" y2="244.0"/><text class="axis" x="58" y="248.0" text-anchor="end">8</text><line class="grid" x1="70" y1="182.0" x2="870" y2="182.0"/><text class="axis" x="58" y="186.0" text-anchor="end">16</text><line class="grid" x1="70" y1="120.0" x2="870" y2="120.0"/><text class="axis" x="58" y="124.0" text-anchor="end">23</text><line class="grid" x1="70" y1="58.0" x2="870" y2="58.0"/><text class="axis" x="58" y="62.0" text-anchor="end">31</text>
-<path class="area" d="M 70.0 306.0 L 70.0 306.0 L 91.1 298.0 L 112.1 290.0 L 154.2 282.0 L 364.7 274.0 L 743.7 266.0 L 754.2 242.0 L 764.7 226.0 L 785.8 202.0 L 796.3 170.0 L 806.8 162.0 L 817.4 146.0 L 827.9 122.0 L 838.4 114.0 L 848.9 90.0 L 859.5 74.0 L 870.0 58.0 L 870.0 306.0 Z"/><path class="line" d="M 70.0 306.0 L 91.1 298.0 L 112.1 290.0 L 154.2 282.0 L 364.7 274.0 L 743.7 266.0 L 754.2 242.0 L 764.7 226.0 L 785.8 202.0 L 796.3 170.0 L 806.8 162.0 L 817.4 146.0 L 827.9 122.0 L 838.4 114.0 L 848.9 90.0 L 859.5 74.0 L 870.0 58.0"/>
+<text class="sub" x="870" y="30" text-anchor="end">49 stars</text>
+<line class="grid" x1="70" y1="306.0" x2="870" y2="306.0"/><text class="axis" x="58" y="310.0" text-anchor="end">0</text><line class="grid" x1="70" y1="244.0" x2="870" y2="244.0"/><text class="axis" x="58" y="248.0" text-anchor="end">12</text><line class="grid" x1="70" y1="182.0" x2="870" y2="182.0"/><text class="axis" x="58" y="186.0" text-anchor="end">24</text><line class="grid" x1="70" y1="120.0" x2="870" y2="120.0"/><text class="axis" x="58" y="124.0" text-anchor="end">37</text><line class="grid" x1="70" y1="58.0" x2="870" y2="58.0"/><text class="axis" x="58" y="62.0" text-anchor="end">49</text>
+<path class="area" d="M 70.0 306.0 L 70.0 306.0 L 89.3 300.9 L 108.6 295.9 L 147.1 290.8 L 339.9 285.8 L 686.9 280.7 L 696.5 265.5 L 706.1 255.4 L 725.4 240.2 L 735.1 220.0 L 744.7 214.9 L 754.3 204.8 L 764.0 189.6 L 773.6 184.5 L 783.3 169.3 L 792.9 159.2 L 802.5 149.1 L 812.2 144.0 L 841.1 128.9 L 850.7 103.6 L 860.4 88.4 L 870.0 58.0 L 870.0 306.0 Z"/><path class="line" d="M 70.0 306.0 L 89.3 300.9 L 108.6 295.9 L 147.1 290.8 L 339.9 285.8 L 686.9 280.7 L 696.5 265.5 L 706.1 255.4 L 725.4 240.2 L 735.1 220.0 L 744.7 214.9 L 754.3 204.8 L 764.0 189.6 L 773.6 184.5 L 783.3 169.3 L 792.9 159.2 L 802.5 149.1 L 812.2 144.0 L 841.1 128.9 L 850.7 103.6 L 860.4 88.4 L 870.0 58.0"/>
 <circle class="point" cx="870.0" cy="58.0" r="4"/>
 <text class="axis" x="70" y="340">2026-05-02</text>
-<text class="axis" x="870" y="340" text-anchor="end">2026-07-17</text>
+<text class="axis" x="870" y="340" text-anchor="end">2026-07-24</text>
 </svg>
