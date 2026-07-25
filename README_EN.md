@@ -76,10 +76,8 @@ Persistent chat data and memory indexes are stored locally. When an external LLM
 |-----------|-------:|
 | **Reply Quality** | **91.7%** (22/24) |
 | **Tool Decision · Regular** | **100%** (22/22) |
-| **Tool Decision · Adversarial** | **0%** (0/5) |
 | **Memory Search** | **96.6%** (28/29) |
 | **OCR · Representative Pass Rate** | **93.1%** (27/29) |
-| **OCR · Regression Challenge Pass Rate** | **0%** (0/4) |
 | **OCR · Chat Name** | **96.6%** |
 | **OCR · Message Count** | **93.1%** |
 | **OCR · Sender** | **93.6%** |
