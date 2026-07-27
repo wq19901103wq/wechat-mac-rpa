@@ -123,14 +123,16 @@ class TestPasteVerification:
         assert result.success is False
         assert "paste" in result.error.lower() or "验证" in result.error.lower() or "发送" in result.error.lower()
 
-    def test_paste_verification_with_partial_match(self):
-        """输入框内容包含发送文本（可能还有其他字符），应视为验证通过"""
-        automation = MockSystemAutomation(pasted_texts=["前缀测试消息后缀"])
+    def test_paste_verification_rejects_existing_draft(self):
+        """输入框中混有旧草稿时不得发送。"""
+        automation = MockSystemAutomation(
+            pasted_texts=["前缀测试消息后缀", "", "", "", ""]
+        )
         sender = WeChatMessageSender(automation=automation)
 
         result = sender.send("测试消息")
 
-        assert result.success is True
+        assert result.success is False
 
     def test_silent_mode(self):
         """静默模式下不调用任何 UI 自动化，返回 skipped 标志避免误标 replied"""

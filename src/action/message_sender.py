@@ -195,6 +195,14 @@ class WeChatMessageSender(MessageSender):
         rc, _, _ = self.automation.run_applescript(script, timeout=5)
         _logger.info(f"[Sender] 清空输入框 returncode: {rc}")
 
+    @staticmethod
+    def _clipboard_text_matches(expected: str, actual: str) -> bool:
+        """严格比较输入框内容，忽略换行格式和首尾空白差异。"""
+        def normalize(value: str) -> str:
+            return value.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+        return normalize(actual) == normalize(expected)
+
     def _keystroke(self, text: str) -> tuple[int, str]:
         """通过 AppleScript keystroke 逐字输入文本。"""
         escaped = text.replace('"', '\\"')
@@ -317,7 +325,7 @@ class WeChatMessageSender(MessageSender):
                 )
 
             # 8. 匹配判断
-            is_match = (text in pasted_text) or (pasted_text.strip() == text.strip())
+            is_match = self._clipboard_text_matches(text, pasted_text)
             _logger.info(
                 f"[Sender] {label} 结果: is_match={is_match}, "
                 f"预期长度={len(text)}, 实际长度={len(pasted_text)}"
@@ -387,9 +395,7 @@ class WeChatMessageSender(MessageSender):
                         self._clear_clipboard()
                         time.sleep(0.15)
                         pasted_text, _, _ = self._verify()
-                        is_match = (text in pasted_text) or (
-                            pasted_text.strip() == text.strip()
-                        )
+                        is_match = self._clipboard_text_matches(text, pasted_text)
                         _logger.info(
                             f"[Sender] fallback paste verify: is_match={is_match}, "
                             f"raw_repr={repr(pasted_text[:120])}"
