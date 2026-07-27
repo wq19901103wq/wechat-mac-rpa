@@ -2,6 +2,7 @@
 """wechat-twin Admin — 统一开发者后台"""
 import logging
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -24,6 +25,53 @@ WORK_DIR = str(Path(__file__).parent.parent)
 KIMI_BIN = os.environ.get("KIMI_BIN", str(Path.home() / ".local" / "bin" / "kimi"))
 
 app = FastAPI(title="wechat-twin Admin")
+
+_PERSONA_FEW_SHOT_MARKER = re.compile(r"【persona few-shot 正文已省略；ids=([^】]+)】")
+
+
+def _expand_persona_few_shots(text: str) -> str:
+    if not _PERSONA_FEW_SHOT_MARKER.search(text):
+        return text
+    configured_path = os.environ.get("PERSONA_FEW_SHOT_PATH", "")
+    if not configured_path:
+        env_path = Path(WORK_DIR) / ".env"
+        try:
+            for line in env_path.read_text(encoding="utf-8").splitlines():
+                if line.strip().startswith("PERSONA_FEW_SHOT_PATH="):
+                    configured_path = line.split("=", 1)[1].strip()
+                    break
+        except OSError:
+            pass
+    examples_path = Path(
+        configured_path
+        or Path(WORK_DIR) / "data" / "few_shot" / "persona_examples.jsonl"
+    )
+    if not examples_path.is_absolute():
+        examples_path = Path(WORK_DIR) / examples_path
+    try:
+        rows = {}
+        for line in examples_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = _json.loads(line)
+                rows[str(row.get("id", ""))] = row
+    except (OSError, _json.JSONDecodeError) as exc:
+        _logger.warning("读取 persona few-shot 示例失败: %s", exc)
+        return text
+
+    def _replacement(match: re.Match) -> str:
+        ids = [item for item in match.group(1).split(",") if item]
+        parts = [f"【persona few-shot 正文（从当前示例库展开；ids={','.join(ids)}）】"]
+        for row_id in ids:
+            row = rows.get(row_id)
+            if row is None:
+                parts.append(f"示例 {row_id}：当前示例库中不存在")
+                continue
+            parts.append(f"示例 {row_id}：")
+            parts.extend(f"对方：{item}" for item in row.get("context", []))
+            parts.extend(f"本人：{item}" for item in row.get("reply", []))
+        return "\n".join(parts)
+
+    return _PERSONA_FEW_SHOT_MARKER.sub(_replacement, text)
 
 # 截图列表页缓存（模块级，首次扫描后复用）
 _screenshot_cache: Optional[Dict[str, Any]] = None
@@ -276,6 +324,7 @@ def tick_detail(id: int):
                     color = "var(--blue)"
                 elif role == "user":
                     title = f"#{idx} user"
+                    msg_content = _expand_persona_few_shots(msg_content)
                     body = f'<pre style="font-size:10px;white-space:pre-wrap">{html.escape(msg_content)}</pre>'
                     color = "var(--green)"
                 elif role == "assistant":

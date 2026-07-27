@@ -2,6 +2,7 @@
 """L4 Reply Generator - 回复内容生成."""
 
 import logging
+import json
 import os
 import re
 import threading
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.models.base import MEDIA_MESSAGE_TYPES, ChatMessage, SenderType
-from src.reply.few_shot import PersonaFewShotRetriever, resolve_relationship
+from src.reply.few_shot import PersonaFewShotRetriever, _query_response_mode, resolve_relationship
 from src.reply.session_memory import SessionMemory, _extract_query_key
 from src.tools import get_registry
 
@@ -115,12 +116,14 @@ class ReplyGenerator:
             "PERSONA_FEW_SHOT_PATH",
             str(project_root / "data" / "few_shot" / "persona_examples.jsonl"),
         ))
+        if not few_shot_path.is_absolute():
+            few_shot_path = project_root / few_shot_path
         self.enable_persona_few_shots = os.environ.get("ENABLE_PERSONA_FEW_SHOTS", "0").lower() in ("1", "true", "yes", "on")
         self.persona_few_shot_count = _env_int("PERSONA_FEW_SHOT_COUNT", 8, 0, 12)
         self.persona_few_shot_max_chars = _env_int("PERSONA_FEW_SHOT_MAX_CHARS", 2500, 500, 5000)
         self.persona_few_shot_retriever = PersonaFewShotRetriever(few_shot_path)
-        allow_unreviewed = os.environ.get("PERSONA_FEW_SHOT_ALLOW_UNREVIEWED", "0").lower() in ("1", "true", "yes", "on")
-        self.persona_few_shot_ready = self.persona_few_shot_retriever.is_approved() or allow_unreviewed
+        self.persona_few_shot_allow_unreviewed = os.environ.get("PERSONA_FEW_SHOT_ALLOW_UNREVIEWED", "0").lower() in ("1", "true", "yes", "on")
+        self.persona_few_shot_ready = self.persona_few_shot_retriever.is_approved() or self.persona_few_shot_allow_unreviewed
         self.persona_wiki_dir = project_root / "data" / "memory" / "wiki" / "users"
         if self.enable_persona_few_shots and not self.persona_few_shot_ready:
             _logger.warning("[PersonaFewShot] 已启用但 report.json 未审核通过，跳过注入")
@@ -130,6 +133,7 @@ class ReplyGenerator:
         self.last_tools_context: str = ""
         self.last_user_prompt: str = ""
         self.last_raw_response: str = ""
+        self.last_generation_failed: bool = False
         self.last_thinking: str = ""
         # 多轮调用完整链路（供 debug 使用）
         self.last_llm_calls: List[Dict] = []
@@ -220,6 +224,8 @@ class ReplyGenerator:
         # 读取 Self-Refine prompt 文件
         _prompt_dir = Path(__file__).parent.parent.parent / "prompts"
         self._feedback_prompt = (_prompt_dir / "feedback.md").read_text(encoding="utf-8")
+        self._fact_check_prompt = (_prompt_dir / "fact_check.md").read_text(encoding="utf-8")
+        self._fact_verify_prompt = (_prompt_dir / "fact_verify.md").read_text(encoding="utf-8")
         self._iterate_prompt = (_prompt_dir / "iterate.md").read_text(encoding="utf-8")
 
         # Self-Refine 观测字段
@@ -230,6 +236,8 @@ class ReplyGenerator:
         self.last_feedback_raw: str = ""
         self.last_iterate_raw: str = ""
         self.last_iterate_skipped_no_budget: bool = False
+        self._fact_check_client = None
+        self.enable_fact_check = os.environ.get("ENABLE_FACT_CHECK", "1").lower() in ("1", "true", "yes", "on")
 
         # 开关（环境变量，默认启用）
         self.enable_react_tools = os.environ.get("ENABLE_REACT_TOOLS", "1").lower() in ("1", "true", "yes", "on")
@@ -301,14 +309,52 @@ class ReplyGenerator:
         feedback_messages = messages + [
             {"role": "user", "content": self._feedback_prompt}
         ]
+        source_text = next(
+            (str(m.get("content", "")) for m in messages
+             if m.get("role") == "user" and "<history>" in str(m.get("content", ""))),
+            "",
+        )
+        evidence_parts = []
+        for tag in ("session", "context", "history", "unread"):
+            match = re.search(rf"<{tag}>.*?</{tag}>", source_text, re.DOTALL)
+            if match:
+                evidence_parts.append(match.group(0))
+        tool_results = [
+            str(m.get("content", "")) for m in messages if m.get("role") == "tool"
+        ]
+        if tool_results:
+            evidence_parts.append("<tool_results>\n" + "\n".join(tool_results) + "\n</tool_results>")
+        if not evidence_parts and source_text:
+            evidence_parts.append(source_text[-6000:])
+        final_reply = next(
+            (str(m.get("content", "")) for m in reversed(messages) if m.get("role") == "assistant"),
+            "",
+        )
+        audit_messages = [
+            {"role": "system", "content": self._feedback_prompt},
+            {"role": "user", "content": "\n\n".join(evidence_parts)},
+            {"role": "assistant", "content": final_reply},
+            {"role": "user", "content": "现在执行证据审计，只输出规定的 JSON。"},
+        ]
+        fact_issues, fact_raw = self._fact_check("\n\n".join(evidence_parts), final_reply, deadline)
+        if fact_issues:
+            text = json.dumps(
+                {"decision": "fail", "issues": fact_issues, "fact_check": self._extract_json(fact_raw) or {}},
+                ensure_ascii=False,
+            )
+            self.last_feedback_raw = text
+            feedback_messages.append({"role": "assistant", "content": text})
+            return "fail", fact_issues, feedback_messages, text
         timeout = max(1.0, deadline - time.time())
         try:
             raw = self.llm_client.chat(
-                messages=feedback_messages,
-                max_tokens=1000,
+                messages=audit_messages,
+                max_tokens=300,
                 temperature=0.3,
                 timeout=timeout,
+                response_format={"type": "json_object"},
                 raise_on_error=True,
+                max_retries=0,
             )
             text = raw if isinstance(raw, str) else getattr(raw, "content", str(raw))
         except Exception as e:
@@ -332,6 +378,104 @@ class ReplyGenerator:
         if decision == "fail" and isinstance(issues, list) and issues:
             return "fail", issues, feedback_messages, text
         return "pass", None, feedback_messages, text
+
+    def _fact_check(self, evidence: str, reply: str, deadline: float) -> Tuple[List[str], str]:
+        """用独立窄任务检查明确的事实矛盾；unknown 不拦截，避免误杀幽默。"""
+        if not self.enable_fact_check or not evidence or not reply or deadline - time.time() < 2.0:
+            return [], ""
+        if self._fact_check_client is None:
+            api_key = os.environ.get("DASHSCOPE_API_KEY", "")
+            base_url = os.environ.get("DASHSCOPE_BASE_URL", "")
+            if not api_key or not base_url:
+                return [], ""
+            try:
+                from src.utils.qwen_client import QwenClient
+                self._fact_check_client = QwenClient(
+                    model=os.environ.get("FACT_CHECK_MODEL", "qwen3.6-flash"),
+                    api_key=api_key,
+                    base_url=base_url,
+                )
+            except Exception as e:
+                _logger.warning("[FactCheck] 客户端初始化失败: %s", e)
+                return [], ""
+        messages = [
+            {"role": "system", "content": self._fact_check_prompt},
+            {"role": "user", "content": f"<evidence>\n{evidence}\n</evidence>\n\n<reply>\n{reply}\n</reply>"},
+        ]
+        try:
+            raw = self._fact_check_client.chat(
+                messages=messages,
+                max_tokens=300,
+                temperature=0,
+                timeout=min(8.0, max(1.0, deadline - time.time())),
+                response_format={"type": "json_object"},
+                raise_on_error=True,
+                max_retries=0,
+            )
+            text = raw if isinstance(raw, str) else getattr(raw, "content", str(raw))
+        except Exception as e:
+            _logger.warning("[FactCheck] 调用失败: %s", e)
+            return [], ""
+        data = self._extract_json(text) or {}
+        claims = data.get("claims", []) if isinstance(data, dict) else []
+        issues = []
+        for claim in claims if isinstance(claims, list) else []:
+            if not isinstance(claim, dict) or claim.get("verdict") != "contradicted":
+                continue
+            claim_text = str(claim.get("claim", "")).strip()
+            reason = str(claim.get("reason", "")).strip()
+            issues.append(f"事实矛盾：{claim_text}；{reason}" if reason else f"事实矛盾：{claim_text}")
+        directional = re.compile(r"高|低|贵|便宜|涨|跌|买|卖|成功|失败|是|否|\d")
+        verify_claims = [
+            str(claim.get("claim", "")).strip()
+            for claim in claims if isinstance(claim, dict)
+            and claim.get("verdict") == "entailed"
+            and directional.search(str(claim.get("claim", "")))
+        ] if isinstance(claims, list) else []
+        verify_raw = ""
+        if verify_claims and deadline - time.time() >= 2.0:
+            verify_messages = [
+                {"role": "system", "content": self._fact_verify_prompt},
+                {"role": "user", "content": (
+                    f"<evidence>\n{evidence}\n</evidence>\n\n"
+                    f"<claims>\n{json.dumps(verify_claims, ensure_ascii=False)}\n</claims>"
+                )},
+            ]
+            try:
+                verify_response = self._fact_check_client.chat(
+                    messages=verify_messages,
+                    max_tokens=300,
+                    temperature=0,
+                    timeout=min(8.0, max(1.0, deadline - time.time())),
+                    response_format={"type": "json_object"},
+                    raise_on_error=True,
+                    max_retries=0,
+                )
+                verify_raw = verify_response if isinstance(verify_response, str) else getattr(
+                    verify_response, "content", str(verify_response)
+                )
+                verify_data = self._extract_json(verify_raw) or {}
+                verified = verify_data.get("claims", []) if isinstance(verify_data, dict) else []
+                for claim in verified if isinstance(verified, list) else []:
+                    verdict = claim.get("verdict") if isinstance(claim, dict) else ""
+                    if verdict not in ("contradicted", "unknown"):
+                        continue
+                    claim_text = str(claim.get("claim", "")).strip()
+                    reason = str(claim.get("reason", "")).strip()
+                    issues.append(
+                        f"事实矛盾：{claim_text}；{reason}"
+                        if verdict == "contradicted"
+                        else f"事实无依据：{claim_text}；{reason}"
+                    )
+            except Exception as e:
+                _logger.warning("[FactCheck] 独立复核失败: %s", e)
+        if issues:
+            _logger.warning("[FactCheck] 命中明确矛盾: %s", issues)
+        combined_raw = json.dumps(
+            {"extract": self._extract_json(text) or {}, "verify": self._extract_json(verify_raw) or {}},
+            ensure_ascii=False,
+        )
+        return issues, combined_raw
 
     def _local_rule_check(self, replies: List[str], skills: List[str]) -> List[str]:
         """Feedback 超时/error 时的本地兜底规则检查。"""
@@ -408,6 +552,7 @@ class ReplyGenerator:
                     remaining = deadline - time.time()
                     if remaining < 1.0:
                         _logger.warning("[ReactGenerate] 剩余时间不足，结束生成")
+                        self.last_generation_failed = True
                         self.last_llm_calls = llm_calls
                         self.last_tool_calls = tool_calls
                         self.last_generation_trace.extend(trace)
@@ -602,6 +747,7 @@ class ReplyGenerator:
                     time.sleep(1)
 
         _logger.info("[Generate] generate 最终返回空 ( exhausted retries )")
+        self.last_generation_failed = True
         self.last_llm_calls = llm_calls
         self.last_tool_calls = tool_calls
         self.last_generation_trace.extend(trace)
@@ -618,11 +764,13 @@ class ReplyGenerator:
         支持 ReAct 多轮工具调用，总超时预算 20s；启用 Self-Refine 时生成后追加 Feedback + Iterate。
         """
         t_generate_start = time.time()
+        self.last_generation_failed = False
         if not unreplied:
             self._submit_to_judge(tick_id, [], unreplied, all_messages, is_group)
             return []
 
         if self.llm_client is None:
+            self.last_generation_failed = True
             self._submit_to_judge(tick_id, [], unreplied, all_messages, is_group)
             return []
 
@@ -718,6 +866,10 @@ class ReplyGenerator:
                 user_prompt += "\n\n" + "\n\n".join(skill_parts)
         self.last_skill_injected_content = "\n\n".join(skill_parts) if skill_parts else ""
 
+        self.persona_few_shot_ready = (
+            self.persona_few_shot_allow_unreviewed
+            or self.persona_few_shot_retriever.is_approved()
+        )
         if self.enable_persona_few_shots and self.persona_few_shot_ready and self.persona_few_shot_count:
             relationship = None if is_group else resolve_relationship(
                 chat_name,
@@ -725,7 +877,7 @@ class ReplyGenerator:
                 os.environ.get("PERSONA_NAME", "本人"),
             )
             few_shot_rows = self.persona_few_shot_retriever.retrieve(
-                query=route_text,
+                query="\n".join([text for _, text in context_msgs] + [route_text]),
                 chat_name=chat_name,
                 is_group=is_group,
                 limit=self.persona_few_shot_count,
@@ -803,8 +955,11 @@ class ReplyGenerator:
                 # 单次 Iterate（无循环：issues 不刷新时循环无意义）
                 if deadline - time.time() >= 1.0:
                     new_replies, new_messages, _ = self._iterate(current_messages, issues, deadline)
-                    current_replies = new_replies
-                    current_messages = new_messages
+                    if new_replies:
+                        current_replies = new_replies
+                        current_messages = new_messages
+                    else:
+                        _logger.warning("[SelfRefine] Iterate 未生成有效回复，保留原回复")
                     self.last_iterate_count = 1
                 else:
                     self.last_iterate_skipped_no_budget = True
@@ -1227,7 +1382,9 @@ class ReplyGenerator:
             "到账", "办理", "合同", "发票",
         ]
 
-        if any(s in last_texts for s in celebration_signals):
+        if _query_response_mode(last_texts) == "sincere":
+            hints.append("【场子】对方是真的受挫/难过，进入真诚模式：具体回应这件事和对方的感受，零调侃、零口号，不急着给建议")
+        elif any(s in last_texts for s in celebration_signals):
             hints.append("【场子】对方刚分享好消息/喜事，优先考虑祝贺模式")
         elif any(s in last_texts for s in complaint_signals):
             hints.append("【场子】对方情绪负面，可能在吐槽/受挫，优先考虑安慰模式")
