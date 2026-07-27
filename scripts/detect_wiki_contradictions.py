@@ -88,6 +88,32 @@ def _is_garbage_alias_token(tok: str) -> bool:
     return False
 
 
+def _split_aliases_respecting_parens(text: str) -> List[str]:
+    """按顿号拆分别名，但忽略圆括号/全角括号内的顿号。
+
+    避免 `别名：A（来源：X、Y、Z）` 被拆成 `A（来源：X` 和 `Y、Z）`。
+    """
+    tokens: List[str] = []
+    current = ""
+    depth = 0
+    for ch in text:
+        if ch in "（(":
+            depth += 1
+            current += ch
+        elif ch in "）)":
+            depth -= 1
+            current += ch
+        elif ch == "、" and depth == 0:
+            if current.strip():
+                tokens.append(current.strip())
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        tokens.append(current.strip())
+    return tokens
+
+
 def _source_quality(line: str) -> Tuple[float, str]:
     """返回 (源质量分, 原因)。Bot 类=0.5，用户/他人=2，无源=1。"""
     has_bot = bool(_BOT_SOURCE_RE.search(line))
@@ -193,8 +219,8 @@ def _scan_wiki(name: str, wiki: str, is_group: bool) -> Dict[str, Any]:
                 continue
             prefix = prefix_match.group(1)
             rest = body[len(prefix):]
-            # 只按顿号拆（保留 （来源：…） 注解附着在别名上，不按空格炸开）
-            raw_tokens = [t.strip() for t in rest.split("、") if t.strip()]
+            # 按顿号拆分，但忽略括号内的顿号，避免 （来源：A、B、C） 被拆断
+            raw_tokens = _split_aliases_respecting_parens(rest)
             garbage_cores: List[str] = []
             kept: List[str] = []
             for tok in raw_tokens:

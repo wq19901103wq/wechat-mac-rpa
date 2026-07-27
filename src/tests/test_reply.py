@@ -99,3 +99,4 @@ class TestReplyGenerator:
         )
         reply = gen.generate([msg], [msg])
         assert reply == []
+        assert gen.last_generation_failed is True

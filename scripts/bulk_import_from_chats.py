@@ -243,7 +243,7 @@ def update_aliases_json(wxid_index: dict, name_to_main: dict, dry_run: bool = Fa
         main_name = info.get("unique_name", info.get("resolved_name", info["main_name"]))
         all_names = info["all_names"]
 
-        # 收集该用户的新别名（出现次数≥3，且不在现有 aliases 中）
+        # 收集该用户的新别名（出现次数≥3，且不在现有 aliases 中，且不归属他人）
         new_aliases = []
         for name, count in sorted(all_names.items(), key=lambda x: -x[1]):
             if name == main_name or name == info.get("resolved_name", info["main_name"]):
@@ -251,6 +251,14 @@ def update_aliases_json(wxid_index: dict, name_to_main: dict, dry_run: bool = Fa
             if count < 3:
                 continue
             if main_name in existing and name in existing[main_name].get("aliases", []):
+                continue
+            # 跨人冲突：若该名字已映射到别的用户，跳过
+            owner = name_to_main.get(name)
+            if owner and owner != main_name:
+                _logger.warning(
+                    f"bulk_import: 别名『{name}』已属于『{owner}』，"
+                    f"跳过分配给『{main_name}』"
+                )
                 continue
             new_aliases.append(name)
 

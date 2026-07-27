@@ -199,7 +199,14 @@ def _resolve_targets(args) -> List[tuple]:
             raise FileNotFoundError(f"pilot_list.json 不存在: {PILOT_LIST}")
         data = json.loads(PILOT_LIST.read_text(encoding="utf-8"))
         return [(it["name"], it.get("is_group", False)) for it in data["items"]]
-    raise ValueError("请指定 --user / --group / --pilot")
+    if args.all:
+        targets: List[tuple] = []
+        if USERS_DIR.exists():
+            targets += [(p.stem, False) for p in sorted(USERS_DIR.glob("*.md"))]
+        if GROUPS_DIR.exists():
+            targets += [(p.stem, True) for p in sorted(GROUPS_DIR.glob("*.md"))]
+        return targets
+    raise ValueError("请指定 --user / --group / --pilot / --all")
 
 
 def _apply_decisions(stamp: str) -> int:
@@ -280,6 +287,7 @@ def main() -> int:
     ap.add_argument("--user", help="单个 user wiki")
     ap.add_argument("--group", help="单个 group wiki")
     ap.add_argument("--pilot", action="store_true", help="读 pilot_list.json")
+    ap.add_argument("--all", action="store_true", help="全量处理 users + groups wiki")
     ap.add_argument("--apply", action="store_true", help="写盘（默认 dry-run）")
     ap.add_argument("--apply-decisions", action="store_true",
                     help="读 decisions.json 按人工确认写回 wiki（网页 /wiki-review 确认后用）")

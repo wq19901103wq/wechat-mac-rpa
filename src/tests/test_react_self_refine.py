@@ -113,6 +113,15 @@ class TestSelfRefine:
         assert gen.last_self_refine_applied is True
         assert gen.last_feedback_decision == "pass"
         assert gen.last_iterate_count == 0
+        feedback_kwargs = mock_llm.calls[2]["kwargs"]
+        assert feedback_kwargs["max_retries"] == 0
+        assert feedback_kwargs["max_tokens"] == 300
+        assert feedback_kwargs["response_format"] == {"type": "json_object"}
+        feedback_messages = mock_llm.calls[2]["messages"]
+        assert feedback_messages[0]["role"] == "system"
+        assert "强制证据审计" in feedback_messages[0]["content"]
+        assert feedback_messages[2] == {"role": "assistant", "content": '{"replies": ["test reply"]}'}
+        assert feedback_messages[3]["content"] == "现在执行证据审计，只输出规定的 JSON。"
         # 消息流应包含 system + user + generation assistant + feedback prompt + feedback assistant
         assert len(gen.last_llm_messages) == 5
         assert gen.last_llm_messages[0]["role"] == "system"
@@ -173,6 +182,48 @@ class TestSelfRefine:
         assert gen.last_self_refine_applied is True
         assert gen.last_feedback_decision == "error"
         assert gen.last_iterate_count == 0
+
+    def test_fact_contradiction_triggers_iterate_before_feedback(self, mock_llm, sample_message):
+        mock_llm.responses = [
+            '{"skills": []}',
+            '{"replies": ["物价高"]}',
+            '{"replies": ["物价挺低的"]}',
+        ]
+        fact_llm = MockLLM(responses=[
+            '{"claims": [{"claim": "物价高", "verdict": "contradicted", "reason": "上下文明确说物价低"}]}'
+        ])
+        gen = _make_generator(mock_llm, enable_self_refine=True)
+        gen._fact_check_client = fact_llm
+
+        replies = gen.generate([sample_message], [sample_message])
+
+        assert replies == ["物价挺低的"]
+        assert gen.last_feedback_decision == "fail"
+        assert gen.last_feedback_issues == ["事实矛盾：物价高；上下文明确说物价低"]
+        assert gen.last_iterate_count == 1
+        assert len(fact_llm.calls) == 1
+        assert len(mock_llm.calls) == 3
+
+    def test_directional_claim_requires_independent_support(self, mock_llm, sample_message):
+        mock_llm.responses = [
+            '{"skills": []}',
+            '{"replies": ["物价高"]}',
+            '{"replies": ["物价挺低的"]}',
+        ]
+        fact_llm = MockLLM(responses=[
+            '{"claims": [{"claim": "物价高", "verdict": "entailed", "reason": "初步判断"}]}',
+            '{"claims": [{"claim": "物价高", "verdict": "unknown", "reason": "没有直接证据"}]}',
+        ])
+        gen = _make_generator(mock_llm, enable_self_refine=True)
+        gen._fact_check_client = fact_llm
+
+        replies = gen.generate([sample_message], [sample_message])
+
+        assert replies == ["物价挺低的"]
+        assert gen.last_feedback_decision == "fail"
+        assert gen.last_feedback_issues == ["事实无依据：物价高；没有直接证据"]
+        assert gen.last_iterate_count == 1
+        assert len(fact_llm.calls) == 2
 
 
 class TestForceSkill:

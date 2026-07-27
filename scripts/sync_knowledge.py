@@ -104,7 +104,7 @@ def extract_relation_value(fact_text: str) -> dict:
 
 
 def update_aliases(people: list, aliases_path: Path):
-    """更新 aliases.json"""
+    """更新 aliases.json，合并别名时跳过已被其他用户占用的别名。"""
     data: dict[str, Any] = {"users": {}}
     if aliases_path.exists():
         try:
@@ -112,18 +112,41 @@ def update_aliases(people: list, aliases_path: Path):
         except Exception as e:
             _logger.warning("load aliases failed: %s", e)
 
+    users = data.setdefault("users", {})
+
+    # 反向索引：别名 -> 主名，用于拦截跨人冲突
+    alias_to_main: dict[str, str] = {}
+    for main_name, cfg in users.items():
+        alias_to_main[main_name] = main_name
+        for alias in cfg.get("aliases", []):
+            alias_to_main[alias] = main_name
+
     for p in people:
         name = p["name"]
-        if name not in data.get("users", {}):
-            data.setdefault("users", {})[name] = {"aliases": [], "notes": ""}
-        # 合并别名（去重）
-        existing = set(data["users"][name].get("aliases", []))
+        if name not in users:
+            users[name] = {"aliases": [], "notes": ""}
+        # 确保本人也在反向索引中
+        alias_to_main.setdefault(name, name)
+
+        # 合并别名（去重 + 跨人冲突检查）
+        existing = set(users[name].get("aliases", []))
         for alias in p["aliases"]:
-            existing.add(alias)
-        data["users"][name]["aliases"] = list(existing)
+            if alias == name:
+                continue
+            owner = alias_to_main.get(alias)
+            if owner and owner != name:
+                _logger.warning(
+                    f"sync_knowledge: 别名『{alias}』已属于『{owner}』，"
+                    f"跳过分配给『{name}』"
+                )
+                continue
+            if alias not in existing:
+                existing.add(alias)
+                alias_to_main[alias] = name
+        users[name]["aliases"] = list(existing)
         # 用第一条 fact 作为 notes（如果没有的话）
-        if p["facts"] and not data["users"][name].get("notes"):
-            data["users"][name]["notes"] = p["facts"][0][:100]
+        if p["facts"] and not users[name].get("notes"):
+            users[name]["notes"] = p["facts"][0][:100]
 
     aliases_path.parent.mkdir(parents=True, exist_ok=True)
     aliases_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
