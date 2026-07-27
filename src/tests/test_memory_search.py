@@ -6,6 +6,7 @@
 2. 增大 Top N：从 5 改为 10，确保高分 non-primary 文档不被挤出
 """
 
+import json
 import pytest
 
 from src.memory.engine import MemoryEngine
@@ -268,6 +269,101 @@ class TestAliasExtractionSanitization:
         result = engine.search_keyword("王总", max_chars=10000)
         assert "【王旭东的记忆】" in result
 
+    def test_sanitize_wiki_aliases_removes_cross_person_alias(self, engine):
+        """清洗 wiki 别名时应剔除已属于其他用户的别名。"""
+        engine._aliases = {
+            "王芊": ["芊总"],
+            "薛定谔的王芊": ["陈大发"],
+        }
+        wiki = "# 薛定谔的王芊\n\n## 别名\n- 别名：陈大发、芊总\n"
+
+        cleaned = engine._sanitize_wiki_aliases(wiki, "薛定谔的王芊")
+
+        assert "芊总" not in cleaned
+        assert "陈大发" in cleaned
+
+    def test_sanitize_wiki_aliases_resolves_filename_alias(self, engine):
+        """wiki 文件名是别名时，应归一化到主名再判断归属。"""
+        engine._aliases = {
+            "王芊": ["芊总"],
+            "薛定谔的王芊": ["陈大发"],
+        }
+        wiki = "# 陈大发\n\n## 别名\n- 别名：芊总\n"
+
+        cleaned = engine._sanitize_wiki_aliases(wiki, "陈大发")
+
+        assert "芊总" not in cleaned
+
+    def test_sanitize_wiki_aliases_keeps_group_wiki_aliases(self, engine):
+        """群 wiki 不应被误清洗掉成员的合法别名。"""
+        engine._aliases = {
+            "王芊": ["芊总"],
+            "薛定谔的王芊": ["陈大发"],
+        }
+        wiki = "# 共同富裕群\n\n## 群成员画像\n**王芊（芊总）**\n**薛定谔的王芊（陈大发）**\n"
+
+        cleaned = engine._sanitize_wiki_aliases(wiki, "共同富裕群")
+
+        # 群名不在 _aliases 中，不应做跨人归属校验
+        assert "芊总" in cleaned
+        assert "陈大发" in cleaned
+
+    def test_sanitize_wiki_aliases_preserves_alias_with_source_annotation(self, engine):
+        """带 （来源：...） 注解的有效别名不应被误清洗。"""
+        engine._aliases = {"王芊": ["芊总"]}
+        wiki = (
+            "# 王芊\n\n## 别名\n"
+            "- 别名：Co总（来源：2025-01-01 群聊，时鹏、李雪怡、bot 均如此称呼）、扛把子\n"
+        )
+
+        cleaned = engine._sanitize_wiki_aliases(wiki, "王芊")
+
+        assert "Co总" in cleaned
+        assert "扛把子" in cleaned
+
+
+class TestWikiFactSanitizer:
+    """落盘前事实清洗 _sanitize_wiki_facts（防止 Bot 来源被写成确定事实）。"""
+
+    def test_marks_bot_source_line_as_unverified(self, engine):
+        """来源含 Bot 且不含用户明确陈述的行应被追加 [待验证]。"""
+        wiki = (
+            "# 用户\n\n## 基本信息\n"
+            "- 职业：外企员工（来源：2022-02-11 Bot说，Esther未否认）\n"
+            "- 爱好：跑步\n"
+        )
+
+        cleaned = engine._sanitize_wiki_facts(wiki)
+
+        assert "职业：外企员工（来源：2022-02-11 Bot说，Esther未否认） [待验证]" in cleaned
+        assert "爱好：跑步" in cleaned
+
+    def test_marks_bot_confirmation_as_unverified(self, engine):
+        wiki = "# 用户\n\n## 基本信息\n- 职业：外企员工（来源：Bot确认）\n"
+
+        cleaned = engine._sanitize_wiki_facts(wiki)
+
+        assert "Bot确认） [待验证]" in cleaned
+
+    def test_keeps_user_source_line_unchanged(self, engine):
+        """用户自述或明确确认的事实不应被误标。"""
+        wiki = (
+            "# 用户\n\n## 基本信息\n"
+            "- 职业：算法工程师（来源：2026-06-13 王芊自述）\n"
+            "- 出生日期：1990-11-03（用户确认）\n"
+        )
+
+        cleaned = engine._sanitize_wiki_facts(wiki)
+
+        assert "[待验证]" not in cleaned
+
+    def test_idempotent_for_already_unverified(self, engine):
+        """已是 [待验证] 的行不应被重复追加标记。"""
+        wiki = "# 用户\n\n## 基本信息\n- 职业：外企员工（来源：Bot推测）[待验证]\n"
+
+        cleaned = engine._sanitize_wiki_facts(wiki)
+
+        assert cleaned.count("[待验证]") == 1
 
 
 class TestWikiLimitsEnforcement:
@@ -479,3 +575,121 @@ class TestLLMRerank:
         idx_fengye = result.find("【枫叶 艺涵妈妈的记忆】")
         assert idx_qiushui != -1, "秋水文章应被召回"
         assert idx_qiushui < idx_fengye, "母亲(秋水文章)应排在岳母(枫叶)前面"
+
+
+class TestAliasConflictGuard:
+    """跨人别名冲突防护：一个昵称只能归属一个人。"""
+
+    def test_reject_alias_already_owned_by_another_user(self, engine, tmp_path):
+        """当某个别名已经被分配给另一个用户时，禁止再分配给新用户。"""
+        engine.overrides_dir = tmp_path / "overrides"
+        engine.overrides_dir.mkdir(parents=True, exist_ok=True)
+        engine._aliases = {"王芊": ["芊小微"], "薛定谔的王芊": []}
+
+        engine._do_merge_aliases("薛定谔的王芊", ["芊小微"])
+
+        # 芊小微 仍只属于 王芊
+        assert engine._aliases["王芊"] == ["芊小微"]
+        assert "芊小微" not in engine._aliases["薛定谔的王芊"]
+
+    def test_allow_alias_for_same_user(self, engine, tmp_path):
+        """同一用户重复合并同一别名不应重复添加。"""
+        engine.overrides_dir = tmp_path / "overrides"
+        engine.overrides_dir.mkdir(parents=True, exist_ok=True)
+        engine._aliases = {"王芊": ["芊小微"]}
+
+        engine._do_merge_aliases("王芊", ["芊小微", "韭菜芊"])
+
+        assert engine._aliases["王芊"] == ["芊小微", "韭菜芊"]
+
+    def test_persisted_aliases_json_no_conflict(self, engine, tmp_path):
+        """冲突别名不应写入 aliases.json。"""
+        engine.overrides_dir = tmp_path / "overrides"
+        engine.overrides_dir.mkdir(parents=True, exist_ok=True)
+        aliases_path = engine.overrides_dir / "aliases.json"
+        aliases_path.write_text(
+            '{"users": {"王芊": {"aliases": ["芊小微"], "notes": ""}, '
+            '"薛定谔的王芊": {"aliases": [], "notes": ""}}}',
+            encoding="utf-8",
+        )
+        engine._aliases = {
+            "王芊": ["芊小微"],
+            "薛定谔的王芊": [],
+        }
+
+        engine._do_merge_aliases("薛定谔的王芊", ["芊小微", "大发"])
+
+        data = json.loads(aliases_path.read_text(encoding="utf-8"))
+        assert "芊小微" not in data["users"]["薛定谔的王芊"]["aliases"]
+        assert "大发" in data["users"]["薛定谔的王芊"]["aliases"]
+
+
+class TestAliasExtractionOwnership:
+    """别名提取阶段就应拒绝跨人冲突，不把错误发现传给 merge。"""
+
+    def test_user_wiki_skips_alias_owned_by_other(self, engine):
+        """用户 wiki 提取到已属于别人的别名时应跳过。"""
+        engine._aliases = {
+            "王芊": ["芊总"],
+            "薛定谔的王芊": ["陈大发"],
+        }
+        wiki = "## 别名\n- 别名：芊总、陈大发\n"
+
+        aliases = engine._extract_aliases_from_user_wiki(wiki, "薛定谔的王芊")
+
+        assert "芊总" not in aliases
+        assert "陈大发" in aliases  # 属于自己，允许再次出现
+
+    def test_user_wiki_keeps_alias_owned_by_same_user(self, engine):
+        """用户 wiki 提取到属于当前用户自己的别名时应保留（去重）。"""
+        engine._aliases = {
+            "王芊": ["芊总"],
+            "薛定谔的王芊": ["陈大发"],
+        }
+        wiki = "## 别名\n- 别名：芊总、韭菜芊\n"
+
+        aliases = engine._extract_aliases_from_user_wiki(wiki, "王芊")
+
+        assert "芊总" in aliases  # 属于自己，允许再次出现
+        assert "韭菜芊" in aliases
+
+    def test_group_wiki_skips_alias_owned_by_other(self, engine):
+        """群 wiki 提取到已属于别人的别名时应跳过。"""
+        engine._aliases = {
+            "王芊": ["芊总"],
+            "薛定谔的王芊": ["陈大发"],
+        }
+        wiki = "## 群成员画像\n**王芊（芊总/韭菜芊）**\n**薛定谔的王芊（芊总/陈大发/大发）**\n"
+
+        result = engine._extract_aliases_from_group_wiki(wiki)
+
+        assert "芊总" not in result.get("薛定谔的王芊", [])
+        assert "陈大发" in result.get("薛定谔的王芊", [])
+        assert "大发" in result.get("薛定谔的王芊", [])
+        assert "芊总" in result.get("王芊", [])
+
+    def test_group_wiki_resolves_main_name(self, engine):
+        """群 wiki 用别名做主名时应归一化到主名再判断归属。"""
+        engine._aliases = {
+            "王芊": ["芊总"],
+            "薛定谔的王芊": ["陈大发"],
+        }
+        wiki = "## 群成员画像\n**陈大发（芊总）**\n"
+
+        result = engine._extract_aliases_from_group_wiki(wiki)
+
+        # 应归一化为 薛定谔的王芊，且芊总已属于王芊，应被跳过
+        assert "芊总" not in result.get("薛定谔的王芊", [])
+
+    def test_group_wiki_keeps_alias_for_same_owner(self, engine):
+        """群 wiki 提取到属于该成员自己的别名时应保留。"""
+        engine._aliases = {
+            "王芊": ["芊总"],
+            "薛定谔的王芊": ["陈大发"],
+        }
+        wiki = "## 群成员画像\n**王芊（芊总/韭菜芊）**\n"
+
+        result = engine._extract_aliases_from_group_wiki(wiki)
+
+        assert "芊总" in result.get("王芊", [])
+        assert "韭菜芊" in result.get("王芊", [])

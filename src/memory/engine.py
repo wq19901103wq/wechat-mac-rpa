@@ -39,11 +39,43 @@ _ALIAS_INVALID_KEYWORDS = [
 # 房号 / 单元号模式：如 "6幢5号501"、"4-1-703"、"1幢10号802"
 _ROOM_NUMBER_RE = re.compile(r"\d+\s*[幢栋号楼室单元]\s*\d|\d+-\d+-\d+|\d+幢\d+号")
 
+# Bot 自述来源（不可靠）：LLM 落盘前把这类行标 [待验证]
+_BOT_SOURCE_RE = re.compile(r"Bot(?:确认|回应|推测|猜测|推算|推断|提及|判断|答)|未否认|未反驳|Bot猜")
+# 用户/他人明确陈述（可靠）：含这些词时不应因 Bot 字样被误标
+_USER_SOURCE_RE = re.compile(r"自述|本人说|本人告知|本人确认|明确表示|指出|用户确认")
+
 # 别名长度上限：真实昵称不会太长
 _ALIAS_MAX_LEN = 15
 
 # 别名拆分符：顿号 / 斜杠 / 空格（拆完后逐条校验）
 _ALIAS_SPLIT_RE = re.compile(r"[、/／\|｜\s]+")
+
+
+def _split_alias_tokens(text: str) -> List[str]:
+    """按顿号拆分别名，但忽略圆括号/全角括号内的顿号。
+
+    避免 `别名：A（来源：X、Y、Z）` 被拆成 `A（来源：X` 和 `Y、Z）`。
+    """
+    tokens: List[str] = []
+    current = ""
+    depth = 0
+    for ch in text:
+        if ch in "（(":
+            depth += 1
+            current += ch
+        elif ch in "）)":
+            depth -= 1
+            current += ch
+        elif ch == "、" and depth == 0:
+            if current.strip():
+                tokens.append(current.strip())
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        tokens.append(current.strip())
+    return tokens
+
 
 # 广告群特征：群名带具体斤价（"6.99一斤"、"X.X元X斤...百果园" 等），命中即不入库
 _AD_GROUP_PATTERNS = [
@@ -513,6 +545,7 @@ class MemoryEngine:
                 max_chars = 10000
             content = self._enforce_wiki_limits(content, max_chars=max_chars)
             content = self._sanitize_wiki_aliases(content, path.stem)
+            content = self._sanitize_wiki_facts(content)
             path.write_text(content, encoding="utf-8")
         except Exception as e:
             _logger.warning(f"保存 wiki 失败 {path}: {e}")
@@ -522,11 +555,17 @@ class MemoryEngine:
 
         对 ## 别名 段及任意"别名："开头的行：按顿号拆分，去掉 ** 和 （来源：…）
         注解后逐条过 _is_valid_alias，剔除黑名单/描述性/房号等脏 token，保留合法别名。
+        同时拦截跨人别名：若某别名已属于其他用户，也从本 wiki 中剔除。
         """
         try:
             existing_mains = set(self._aliases.keys())
         except Exception:
             existing_mains = set()
+
+        # 归一化主名；只有已知用户的 wiki 才做跨人归属校验
+        resolved_main = self._resolve_alias(main_name)
+        check_ownership = resolved_main in self._aliases
+
         lines = content.split("\n")
         in_alias_section = False
         changed = False
@@ -548,8 +587,8 @@ class MemoryEngine:
                 continue
             prefix = m.group(1)
             rest = body[len(prefix):]
-            # 只按顿号拆（保留 （来源：…） 注解附着在别名上）
-            tokens = [t.strip() for t in rest.split("、") if t.strip()]
+            # 按顿号拆，但忽略括号内的顿号（保留 （来源：…） 注解附着在别名上）
+            tokens = _split_alias_tokens(rest)
             kept: List[str] = []
             for tok in tokens:
                 core = re.sub(r"\*+", "", tok).strip()
@@ -557,11 +596,48 @@ class MemoryEngine:
                 if not core:
                     kept.append(tok)
                     continue
-                if self._is_valid_alias(core, main_name, existing_mains):
-                    kept.append(tok)
+                if not self._is_valid_alias(core, resolved_main, existing_mains):
+                    changed = True
+                    continue
+                if check_ownership and self._alias_owned_by_other(core, resolved_main):
+                    _logger.warning(
+                        f"清洗 wiki 别名时发现冲突，从『{resolved_main}』的 wiki 中移除『{core}』"
+                        f"（已属于其他用户）"
+                    )
+                    changed = True
+                    continue
+                kept.append(tok)
             if len(kept) != len(tokens):
                 new_body = prefix + "、".join(kept) if kept else prefix + "（暂无）"
                 lines[i] = lead + new_body
+                changed = True
+        return "\n".join(lines) if changed else content
+
+    def _sanitize_wiki_facts(self, content: str) -> str:
+        """落盘前清洗 wiki 事实行（运行期护栏）。
+
+        对来源明显为 Bot 自述 / 推测 / 用户未否认 的事实行，若不含用户/他人
+        明确陈述来源，则追加 [待验证]，防止 LLM 把不可靠来源写成确定事实。
+        只处理列表项（- / * 开头），不处理标题和空行。
+        """
+        lines = content.split("\n")
+        changed = False
+        for i, raw in enumerate(lines):
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                continue
+            if not stripped.startswith(("-", "*")):
+                continue
+            # 已经是待验证/暂无的占位行不动
+            if "[待验证]" in stripped or stripped.endswith("（暂无）"):
+                continue
+            # Bot 来源且没有明确用户/他人来源 → 标 [待验证]
+            has_bot = bool(_BOT_SOURCE_RE.search(stripped))
+            has_user = bool(_USER_SOURCE_RE.search(stripped))
+            if has_bot and not has_user:
+                lines[i] = raw.rstrip() + " [待验证]"
                 changed = True
         return "\n".join(lines) if changed else content
 
@@ -846,6 +922,13 @@ class MemoryEngine:
             return False
         return True
 
+    def _alias_owned_by_other(self, alias: str, owner: str) -> bool:
+        """检查某个别名是否已经被另一个用户占用（owner 本身除外）。"""
+        for main_name, aliases in self._aliases.items():
+            if main_name != owner and alias in aliases:
+                return True
+        return False
+
     def _extract_aliases_from_user_wiki(self, wiki: str, user_name: str) -> List[str]:
         """从用户 wiki 的 ## 别名 段落提取别名。
 
@@ -876,6 +959,12 @@ class MemoryEngine:
                 # 拆分整串："老王、王总" → ["老王", "王总"]
                 for alias in _split_alias_string(alias_text):
                     if self._is_valid_alias(alias, user_name, existing_mains):
+                        if self._alias_owned_by_other(alias, user_name):
+                            _logger.warning(
+                                f"提取用户 wiki 别名时发现冲突，跳过『{alias}』"
+                                f"（已属于其他用户，不分配给『{user_name}』）"
+                            )
+                            continue
                         if alias not in aliases:
                             aliases.append(alias)
         return aliases
@@ -908,6 +997,8 @@ class MemoryEngine:
             if paren_open == -1:
                 continue
             main = content[:paren_open].strip()
+            # 把成员名归一化到主名，防止 LLM 用别名做主名导致归属错误
+            resolved_main = self._resolve_alias(main)
             paren_close = content.find("）", paren_open)
             if paren_close == -1:
                 paren_close = content.find(")", paren_open)
@@ -916,11 +1007,17 @@ class MemoryEngine:
             alias_str = content[paren_open + 1:paren_close].strip()
             aliases: List[str] = []
             for a in _split_alias_string(alias_str):
-                if self._is_valid_alias(a, main, existing_mains):
+                if self._is_valid_alias(a, resolved_main, existing_mains):
+                    if self._alias_owned_by_other(a, resolved_main):
+                        _logger.warning(
+                            f"提取群 wiki 别名时发现冲突，跳过『{a}』"
+                            f"（已属于其他用户，不分配给『{resolved_main}』）"
+                        )
+                        continue
                     if a not in aliases:
                         aliases.append(a)
-            if main and aliases:
-                result[main] = aliases
+            if resolved_main and aliases:
+                result[resolved_main] = aliases
         return result
 
     def _merge_aliases(self, user_name: str, new_aliases: List[str]) -> None:
@@ -936,6 +1033,11 @@ class MemoryEngine:
             self._aliases[resolved] = []
         existing = set(self._aliases[resolved])
         existing_mains = set(self._aliases.keys())
+        # 反向索引：昵称 -> 已归属的主名集合，用于拦截跨人别名冲突
+        alias_to_mains: Dict[str, set] = {}
+        for main_name, aliases in self._aliases.items():
+            for alias in aliases:
+                alias_to_mains.setdefault(alias, set()).add(main_name)
         added = []
         for alias in new_aliases:
             # 统一校验：拆分 + 过滤脏数据（防御性，防止上游传入未清洗的串）
@@ -944,8 +1046,17 @@ class MemoryEngine:
                     continue
                 if a in existing:
                     continue
+                # 跨人冲突：一个昵称不能同时属于两个不同的人
+                conflict_owners = alias_to_mains.get(a, set()) - {resolved}
+                if conflict_owners:
+                    _logger.warning(
+                        f"别名冲突，拒绝将『{a}』分配给『{resolved}』，"
+                        f"已属于: {sorted(conflict_owners)}"
+                    )
+                    continue
                 self._aliases[resolved].append(a)
                 existing.add(a)
+                alias_to_mains.setdefault(a, set()).add(resolved)
                 added.append(a)
 
         if not added:

@@ -24,8 +24,9 @@ from typing import Any, Dict, List, Optional
 
 _logger = logging.getLogger("src.memory.history_lookup")
 
-_DEFAULT_INDEX_PATH = Path(
-    "/Users/yihanwang/wechat-digital-twin/outputs/cache/vector_index_dense_messages.pkl"
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_INDEX_PATH = (
+    _PROJECT_ROOT / "data" / "memory" / "cache" / "vector_index_dense_messages.pkl"
 )
 
 

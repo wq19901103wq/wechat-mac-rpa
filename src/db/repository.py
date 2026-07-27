@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -116,13 +116,17 @@ class ChatHistoryRepository:
         if existing is not None:
             return False, existing
 
+        is_self = msg.get("is_self")
+        if is_self is None:
+            is_self = msg.get("sender_type") == "self"
+
         message = Message(
             chatroom_id=chatroom_db_id,
             local_id=msg.get("local_id"),
             server_id=msg.get("server_id"),
             wxid=wxid,
             sender_display_name=msg.get("sender_display_name") or msg.get("sender"),
-            is_self=bool(msg.get("is_self", False)),
+            is_self=bool(is_self),
             content=content,
             message_type=msg.get("message_type", "text"),
             image_description=msg.get("image_description"),
@@ -276,10 +280,7 @@ class ChatHistoryRepository:
         messages: List[Dict],
         source_file: Optional[str] = None,
     ) -> Dict:
-        """批量同步一个聊天的消息到数据库（用于迁移场景，比 sync_chat 快很多）。
-
-        使用 SQLite INSERT OR IGNORE 批量插入，不做逐条存在性检查。
-        """
+        """批量同步一个聊天的消息到数据库（用于迁移场景，比 sync_chat 快很多）。"""
         if not chatroom_id:
             return {"chatrooms": 0, "messages": 0, "members": 0, "skipped": 0}
 
@@ -309,13 +310,17 @@ class ChatHistoryRepository:
                     if not wxid:
                         continue
 
+                    is_self = msg.get("is_self")
+                    if is_self is None:
+                        is_self = msg.get("sender_type") == "self"
+
                     message_values.append({
                         "chatroom_id": chatroom.id,
                         "local_id": msg.get("local_id"),
                         "server_id": msg.get("server_id"),
                         "wxid": wxid,
                         "sender_display_name": msg.get("sender_display_name") or msg.get("sender"),
-                        "is_self": bool(msg.get("is_self", False)),
+                        "is_self": bool(is_self),
                         "content": content,
                         "message_type": msg.get("message_type", "text"),
                         "image_description": msg.get("image_description"),
@@ -342,8 +347,29 @@ class ChatHistoryRepository:
                 for i in range(0, len(message_values), BATCH_SIZE):
                     batch = message_values[i:i + BATCH_SIZE]
                     stmt = sqlite_insert(Message).values(batch)
-                    stmt = stmt.on_conflict_do_nothing(
-                        index_elements=["chatroom_id", "wxid", "create_time", "content_hash"]
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["chatroom_id", "wxid", "create_time", "content_hash"],
+                        set_={
+                            "replied": case(
+                                (Message.replied.is_(True), True),
+                                else_=stmt.excluded.replied,
+                            ),
+                            "reply_text": case(
+                                (
+                                    and_(
+                                        stmt.excluded.replied.is_(True),
+                                        stmt.excluded.reply_text.is_not(None),
+                                        stmt.excluded.reply_text != "",
+                                    ),
+                                    stmt.excluded.reply_text,
+                                ),
+                                else_=Message.reply_text,
+                            ),
+                            "reply_time": func.coalesce(
+                                stmt.excluded.reply_time,
+                                Message.reply_time,
+                            ),
+                        },
                     )
                     result = session.execute(stmt)
                     inserted += result.rowcount

@@ -54,6 +54,13 @@ def init_db(db_path: Optional[Path] = None):
     """创建所有表。幂等，不会删除已有数据。"""
     engine = get_engine(Path(db_path) if db_path else None)
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        result = conn.execute(text(
+            "UPDATE messages SET is_self=1 "
+            "WHERE sender_display_name='自己' AND is_self=0 AND source_file IS NULL"
+        ))
+        if result.rowcount:
+            _logger.info("[db] 修复历史 self 消息标记: %d 条", result.rowcount)
     _logger.info("[db] 已初始化/确认表结构: %s", db_path or DEFAULT_DB_PATH)
     return engine
 

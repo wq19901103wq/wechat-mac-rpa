@@ -37,8 +37,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_INDEX_PATH = (
     _PROJECT_ROOT / "data" / "memory" / "cache" / "vector_index_dense_messages.pkl"
 )
-_DEFAULT_MODEL_PATH = Path(
-    "/Users/yihanwang/wechat-digital-twin/models/bge-small-zh-v1.5"
+_DEFAULT_MODEL_PATH = (
+    _PROJECT_ROOT / "data" / "memory" / "models" / "bge-small-zh-v1.5"
 )
 
 

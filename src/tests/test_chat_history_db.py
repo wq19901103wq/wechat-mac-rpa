@@ -88,6 +88,67 @@ def test_duplicate_messages_are_skipped(repo: ChatHistoryRepository):
     assert stats["skipped"] == 1
 
 
+def test_bulk_sync_preserves_existing_reply_state(repo: ChatHistoryRepository):
+    base = {
+        "content": "same message",
+        "wxid": "wxid_aaa",
+        "sender_display_name": "Alice",
+        "create_time": 1700000000.0,
+        "message_type": "text",
+        "replied": True,
+        "reply_text": "done",
+        "reply_time": 1700000001.0,
+    }
+    repo.bulk_sync_chat("room", "Alice", "single", [base])
+    repo.bulk_sync_chat(
+        "room",
+        "Alice",
+        "single",
+        [{**base, "replied": False, "reply_text": None, "reply_time": None}],
+    )
+
+    stored = repo.get_messages("room")[0]
+    assert stored.replied is True
+    assert stored.reply_text == "done"
+    assert stored.reply_time == 1700000001.0
+
+
+def test_bulk_sync_accepts_sender_type_self(repo: ChatHistoryRepository):
+    repo.bulk_sync_chat(
+        "room",
+        "Alice",
+        "single",
+        [{
+            "content": "self message",
+            "wxid": "wxid_self",
+            "sender_display_name": "自己",
+            "sender_type": "self",
+            "create_time": 1700000000.0,
+        }],
+    )
+
+    assert repo.get_messages("room")[0].is_self is True
+
+
+def test_init_db_repairs_runtime_self_messages(repo: ChatHistoryRepository):
+    repo.bulk_sync_chat(
+        "room",
+        "Alice",
+        "single",
+        [{
+            "content": "legacy self message",
+            "wxid": "wxid_self",
+            "sender_display_name": "自己",
+            "is_self": False,
+            "create_time": 1700000000.0,
+        }],
+    )
+
+    init_db(repo.db_path)
+
+    assert repo.get_messages("room")[0].is_self is True
+
+
 def test_same_name_groups_are_separated(repo: ChatHistoryRepository):
     """两个同名群按 chatroom_id 分开存储。"""
     group_a_msgs = [
