@@ -669,6 +669,7 @@ class GlobalStore:
             "text": m.text,
             "sender": m.sender,
             "sender_type": m.sender_type.value,
+            "is_self": m.sender_type == SenderType.SELF,
             "chat_name": m.chat_name,
             "is_at_me": m.is_at_me,
             "replied": m.replied,
@@ -689,6 +690,7 @@ class GlobalStore:
 
     def save(self):
         """保存状态到 SQLite DB（DB 作为唯一权威源，JSON 分片已下线）。"""
+        self._screenshot_store.cleanup_old_screenshots()
         with self._lock:
             try:
                 dirty = list(self._dirty)
@@ -696,25 +698,32 @@ class GlobalStore:
                     return
 
                 # 同步到 SQLite 数据库
+                synced: set[str] = set()
                 if self._chat_repo is not None:
                     try:
-                        self._sync_dirty_to_db(dirty)
+                        synced = self._sync_dirty_to_db(dirty)
                     except Exception as e:
                         _logger.error("[GlobalStore] 同步到聊天记录数据库失败: %s", e)
 
-                self._dirty.clear()
-                _logger.debug("💾 增量保存 %d 个聊天状态到 DB", len(dirty))
+                self._dirty.difference_update(synced)
+                _logger.debug(
+                    "💾 增量保存 %d 个聊天状态到 DB，待重试 %d 个",
+                    len(synced),
+                    len(self._dirty),
+                )
 
             except Exception as e:
                 _logger.error(f"GlobalStore save failed unexpectedly: {type(e).__name__}: {e}\n{traceback.format_exc()}")
 
-    def _sync_dirty_to_db(self, dirty: List[str]) -> None:
+    def _sync_dirty_to_db(self, dirty: List[str]) -> set[str]:
         """把脏聊天同步到 SQLite 数据库（使用 bulk 插入，避免逐条 SELECT）。"""
+        synced: set[str] = set()
         if not dirty or self._chat_repo is None:
-            return
+            return synced
         for chat_name in dirty:
             state = self.chats.get(chat_name)
             if state is None or not state.messages:
+                synced.add(chat_name)
                 continue
             msg_dicts = [self._msg_to_dict(m) for m in state.messages]
             chatroom_id = self._chat_repo.resolve_chatroom_id(chat_name, msg_dicts)
@@ -734,8 +743,10 @@ class GlobalStore:
                     messages=msg_dicts,
                 )
                 _logger.debug("[GlobalStore] DB 同步 %s: %s", chat_name, stats)
+                synced.add(chat_name)
             except Exception as e:
                 _logger.warning("[GlobalStore] DB 同步 %s 失败: %s", chat_name, e)
+        return synced
 
     def save_screenshot(self, image_path: str, session_id: Optional[str] = None) -> str:
         """保存截图到 data/screenshots/ 目录（委托给 ScreenshotStore）。"""

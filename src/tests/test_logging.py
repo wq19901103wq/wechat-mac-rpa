@@ -221,6 +221,29 @@ class TestBotLogger:
         content = log_files[0].read_text(encoding="utf-8")
         assert "test runtime log" in content
 
+    def test_runtime_log_switches_file_after_date_change(
+        self, tmp_logs_dir, logger, monkeypatch
+    ):
+        monkeypatch.setattr("src.logging.bot_logger._date_stamp", lambda: "20990102")
+
+        logger.info("next day")
+        logger.close()
+
+        assert (tmp_logs_dir / "runtime_20990102.log").exists()
+
+    def test_execution_log_rotates(self, tmp_logs_dir):
+        logger = BotLogger(
+            logs_dir=str(tmp_logs_dir),
+            execution_max_bytes=200,
+            execution_backup_count=2,
+        )
+        for i in range(20):
+            logger.log_tick_start(tick_id=i, interval=5.0)
+        logger.close()
+
+        assert (tmp_logs_dir / "execution.jsonl.1").exists()
+        assert (tmp_logs_dir / "execution.jsonl").exists()
+
     def test_close_is_idempotent(self, logger):
         logger.close()
         logger.close()  # should not raise

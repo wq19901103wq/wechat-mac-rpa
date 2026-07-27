@@ -23,6 +23,36 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+def _date_stamp() -> str:
+    return datetime.now().strftime("%Y%m%d")
+
+
+class _DailyRotatingFileHandler(RotatingFileHandler):
+    """按日期切换文件，并在单日内继续按大小轮转。"""
+
+    def __init__(self, logs_dir: Path, max_bytes: int, backup_count: int):
+        self._logs_dir = logs_dir
+        self._current_date = _date_stamp()
+        super().__init__(
+            logs_dir / f"runtime_{self._current_date}.log",
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+            encoding="utf-8",
+        )
+
+    def emit(self, record: logging.LogRecord) -> None:
+        current_date = _date_stamp()
+        if current_date != self._current_date:
+            if self.stream:
+                self.stream.close()
+                self.stream = None  # type: ignore[assignment]
+            self._current_date = current_date
+            self.baseFilename = str(
+                (self._logs_dir / f"runtime_{current_date}.log").resolve()
+            )
+        super().emit(record)
+
+
 class _EmojiFormatter(logging.Formatter):
     """带 emoji 的控制台格式器"""
     LEVEL_EMOJI = {
@@ -49,14 +79,19 @@ class BotLogger:
         execution_fp: execution.jsonl 文件句柄（逐行 JSON）
     """
 
-    def __init__(self, logs_dir: Optional[str] = None, max_bytes: int = 5 * 1024 * 1024, backup_count: int = 3):
+    def __init__(
+        self,
+        logs_dir: Optional[str] = None,
+        max_bytes: int = 5 * 1024 * 1024,
+        backup_count: int = 3,
+        execution_max_bytes: int = 50 * 1024 * 1024,
+        execution_backup_count: int = 3,
+    ):
         if logs_dir is None:
             logs_dir = str(Path(__file__).parent.parent.parent / "data" / "logs")
         self.logs_dir = Path(logs_dir)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
 
-        date_str = datetime.now().strftime("%Y%m%d")
-        runtime_path = self.logs_dir / f"runtime_{date_str}.log"
         file_fmt = logging.Formatter(
             "%(asctime)s [%(levelname)s] [%(funcName)s:%(lineno)d] %(message)s"
         )
@@ -77,8 +112,10 @@ class BotLogger:
         src_root = logging.getLogger("src")
         src_root.setLevel(logging.DEBUG)
         src_root.handlers = []
-        file_handler = RotatingFileHandler(
-            runtime_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+        file_handler = _DailyRotatingFileHandler(
+            self.logs_dir,
+            max_bytes=max_bytes,
+            backup_count=backup_count,
         )
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(file_fmt)
@@ -86,15 +123,20 @@ class BotLogger:
 
         # --- 2. 机器可解析的执行流水 ---
         self.execution_path = self.logs_dir / "execution.jsonl"
-        # 以追加模式打开，line buffered
-        self._execution_fp = open(self.execution_path, "a", encoding="utf-8", buffering=1)
+        self._execution_handler = RotatingFileHandler(
+            self.execution_path,
+            maxBytes=execution_max_bytes,
+            backupCount=execution_backup_count,
+            encoding="utf-8",
+        )
+        self._execution_handler.setFormatter(logging.Formatter("%(message)s"))
 
         self.runtime_logger.info(f"BotLogger 初始化完成 | logs_dir={self.logs_dir}")
 
     def close(self):
-        """关闭 execution.jsonl 句柄"""
-        if self._execution_fp and not self._execution_fp.closed:
-            self._execution_fp.close()
+        """关闭 execution.jsonl handler。"""
+        if self._execution_handler:
+            self._execution_handler.close()
 
     # ------------------------------------------------------------------
     # 便捷方法：运行日志
@@ -126,7 +168,16 @@ class BotLogger:
         }
         try:
             line = json.dumps(record, ensure_ascii=False, default=str)
-            self._execution_fp.write(line + "\n")
+            log_record = logging.LogRecord(
+                name="src.execution",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=line,
+                args=(),
+                exc_info=None,
+            )
+            self._execution_handler.handle(log_record)
         except Exception as e:
             self.runtime_logger.error(f"写入 execution.jsonl 失败: {e}")
 

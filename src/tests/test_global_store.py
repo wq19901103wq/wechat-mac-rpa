@@ -3,6 +3,7 @@
 
 import os
 import tempfile
+import time
 
 import pytest
 
@@ -106,6 +107,77 @@ class TestGlobalStore:
         state, unreplied = store2.merge_tick("群1", [])
         assert len(unreplied) == 0
         assert len(state.messages) == 1
+        assert state.messages[0].replied is True
+        assert state.messages[0].reply_text == "ok"
+
+    def test_self_sender_type_survives_persistence(self, store):
+        msg = ChatMessage(
+            text="我发的",
+            sender="自己",
+            sender_type=SenderType.SELF,
+            chat_name="群1",
+            chatroom_id="room1",
+            sender_wxid="wxid_self",
+            create_time=1700000000,
+        )
+        store.merge_tick("群1", [msg], mode="weflow")
+        store.save()
+
+        store2 = GlobalStore(state_file=store._state_file)
+
+        assert store2.chats["群1"].messages[0].sender_type == SenderType.SELF
+
+    def test_failed_db_sync_keeps_dirty_for_retry(self, store):
+        msg = ChatMessage(
+            text="hi",
+            sender="A",
+            sender_type=SenderType.OTHER,
+            chat_name="群1",
+            create_time=1700000000,
+        )
+        store.merge_tick("群1", [msg])
+
+        class FailingRepo:
+            def resolve_chatroom_id(self, chat_name, messages):
+                return "room1"
+
+            def bulk_sync_chat(self, **kwargs):
+                raise RuntimeError("db locked")
+
+        store._chat_repo = FailingRepo()
+        store.save()
+
+        assert "群1" in store._dirty
+
+    def test_save_cleans_expired_screenshots_without_new_capture(self, store):
+        screenshot = store._screenshot_store._screenshots_dir / "old.png"
+        screenshot.write_bytes(b"old")
+        old = time.time() - 90000
+        os.utime(screenshot, (old, old))
+        store._screenshot_store._last_cleanup = 0
+
+        store.save()
+
+        assert not screenshot.exists()
+
+    def test_replied_state_updates_existing_db_message(self, store):
+        """消息先以未回复入库后，二次保存应更新状态，重启不能复活。"""
+        msg = ChatMessage(
+            text="hi",
+            sender="A",
+            sender_type=SenderType.OTHER,
+            chat_name="群1",
+            create_time=1700000000.0,
+        )
+        store.merge_tick("群1", [msg])
+        store.save()
+
+        store.mark_replied("群1", msg, "ok")
+        store.save()
+
+        store2 = GlobalStore(state_file=store._state_file)
+        state, unreplied = store2.merge_tick("群1", [])
+        assert unreplied == []
         assert state.messages[0].replied is True
         assert state.messages[0].reply_text == "ok"
 
