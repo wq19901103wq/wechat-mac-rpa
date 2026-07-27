@@ -4,7 +4,7 @@
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -85,6 +85,36 @@ class TestWindowCapture(unittest.TestCase):
             },
             'kCGWindowNumber': window_id,
         }
+
+    def test_validate_skips_when_pytesseract_import_fails(self):
+        original_import = __import__
+
+        def fail_pytesseract(name, *args, **kwargs):
+            if name == "pytesseract":
+                raise ImportError("broken optional dependency")
+            return original_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=fail_pytesseract):
+            self.assertTrue(self.capture._validate_wechat_screenshot("unused.png"))
+
+    def test_window_capture_failure_falls_back_to_region(self):
+        rect = Rect(x=100, y=200, width=1200, height=900)
+        self.automation.capture_screen = MagicMock(
+            side_effect=[(False, "window capture failed"), (True, "")]
+        )
+
+        with patch("src.capture.window_capture.time.sleep") as mock_sleep:
+            self.capture._do_capture(rect, window_id=47)
+
+        self.automation.capture_screen.assert_has_calls([
+            call(rect, self.capture.output_path, window_id=47),
+            call(rect, self.capture.output_path, window_id=None),
+        ])
+        self.assertIn(
+            ("activate_app", ("WeChat",), {}),
+            self.automation.calls,
+        )
+        mock_sleep.assert_called_once_with(0.5)
 
     @patch.object(WindowCapture, '_validate_wechat_screenshot', return_value=True)
     @patch('src.capture.window_capture.Quartz')

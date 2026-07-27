@@ -145,8 +145,17 @@ class WindowCapture:
         ok, err = self.automation.capture_screen(
             rect, self.output_path, window_id=window_id if window_id else None
         )
-        if not ok:
-            raise RuntimeError(f"截图失败: {err}")
+        if ok:
+            return
+
+        _logger.warning("[WindowCapture] 按窗口截图失败，降级为区域截图: %s", err)
+        self._activate_wechat()
+        time.sleep(0.5)
+        fallback_ok, fallback_err = self.automation.capture_screen(
+            rect, self.output_path, window_id=None
+        )
+        if not fallback_ok:
+            raise RuntimeError(f"截图失败: window={err}; region={fallback_err}")
 
     def _validate_wechat_screenshot(self, image_path: str) -> bool:
         """验证截图内容确实是微信窗口。
@@ -160,6 +169,11 @@ class WindowCapture:
         """
         try:
             import pytesseract
+        except ImportError as e:
+            _logger.debug("pytesseract 不可用，跳过截图内容验证: %s", e)
+            return True
+
+        try:
             from PIL import Image
             img = Image.open(image_path)
             # 截取顶部 80px 区域（标题栏 + 搜索框位置）
