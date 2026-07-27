@@ -12,6 +12,9 @@ from .tool_registry import get_registry
 from .tuya_tools import register_tuya_tools
 
 
+_DIRECT_PROXIES = {"http": "", "https": ""}
+
+
 def _get_current_time() -> str:
     """获取当前时间"""
     now = datetime.now()
@@ -25,7 +28,7 @@ def _get_weather(city: str = "", date: str = "今天") -> str:
     try:
         # 使用 wttr.in 免费天气 API
         url = f"https://wttr.in/{city}?format=j1&lang=zh"
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, timeout=10, proxies=_DIRECT_PROXIES)
         data = resp.json()
         current = data["current_condition"][0]
         temp = current["temp_C"]
@@ -52,7 +55,9 @@ def _web_search(query: str = "") -> str:
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             ),
         }
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        resp = requests.get(
+            url, params=params, headers=headers, timeout=10, proxies=_DIRECT_PROXIES
+        )
         soup = BeautifulSoup(resp.text, "html.parser")
 
         results = []
@@ -162,7 +167,13 @@ def _browse_url(url: str = "") -> str:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         }
-        resp = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
+        resp = requests.get(
+            url,
+            headers=headers,
+            timeout=15,
+            allow_redirects=True,
+            proxies=_DIRECT_PROXIES,
+        )
         resp.encoding = resp.apparent_encoding or "utf-8"
         soup = BeautifulSoup(resp.text, "html.parser")
 

@@ -21,12 +21,12 @@ class QwenClient:
     # 类级 token 统计：按 model 汇总 prompt/completion/total/calls
     _token_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {"prompt": 0, "completion": 0, "total": 0, "calls": 0})
 
-    def __init__(self, model: str = ""):
+    def __init__(self, model: str = "", api_key: str = "", base_url: str = ""):
         model = model or os.environ.get("LLM_MODEL", "deepseek-v4-flash")
-        api_key = os.environ.get("LLM_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")
+        api_key = api_key or os.environ.get("LLM_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
             raise RuntimeError("DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置")
-        base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
+        base_url = base_url or os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
         self.client = OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -60,7 +60,7 @@ class QwenClient:
                 model, s["calls"], s["prompt"], s["completion"], s["total"]
             )
 
-    def chat(self, messages=None, user_id=None, message=None, system_prompt=None, tools=None, temperature=None, max_tokens=None, timeout=None, response_format=None, raise_on_error=False) -> str:
+    def chat(self, messages=None, user_id=None, message=None, system_prompt=None, tools=None, temperature=None, max_tokens=None, timeout=None, response_format=None, raise_on_error=False, max_retries=None) -> str:
         """生成回复，支持 tools（function calling）
 
         支持两种调用方式：
@@ -68,10 +68,10 @@ class QwenClient:
         2. 旧接口: chat(user_id="xxx", message="...", system_prompt="...")
         """
         if messages is not None:
-            return self._chat_with_messages(messages, tools=tools, temperature=temperature, max_tokens=max_tokens, timeout=timeout, response_format=response_format, raise_on_error=raise_on_error)
+            return self._chat_with_messages(messages, tools=tools, temperature=temperature, max_tokens=max_tokens, timeout=timeout, response_format=response_format, raise_on_error=raise_on_error, max_retries=max_retries)
         return self._chat_with_user_id(user_id, message, system_prompt)
 
-    def _chat_with_messages(self, messages: List[dict], tools=None, temperature=None, max_tokens=None, timeout=None, response_format=None, raise_on_error=False) -> str:
+    def _chat_with_messages(self, messages: List[dict], tools=None, temperature=None, max_tokens=None, timeout=None, response_format=None, raise_on_error=False, max_retries=None) -> str:
         """直接透传 messages 列表调用大模型，支持 tools 和自定义参数"""
         try:
             kwargs = {
@@ -87,16 +87,19 @@ class QwenClient:
                 kwargs["response_format"] = response_format
             # DeepSeek 官方端点显示启用 thinking 可提升 reasoning_content 质量
             # JSON 模式/路由等需要稳定输出格式时，关闭 thinking 避免模型输出分析性文字
+            is_json_mode = isinstance(response_format, dict) and response_format.get("type") == "json_object"
             if self.is_deepseek_official and "deepseek" in self.model.lower():
-                is_json_mode = isinstance(response_format, dict) and response_format.get("type") == "json_object"
-                if not is_json_mode:
-                    kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+                thinking_type = "disabled" if is_json_mode else "enabled"
+                kwargs["extra_body"] = {"thinking": {"type": thinking_type}}
+            elif is_json_mode and "qwen" in self.model.lower():
+                kwargs["extra_body"] = {"enable_thinking": False}
             # DeepSeek v4-flash 实测已支持 reasoning_content，默认就会输出 thinking
             _logger = logging.getLogger("src.llm.qwen")
             _logger.info("[Qwen] request start: model=%s tools=%s timeout=%s",
                          kwargs.get("model"), bool(kwargs.get("tools")), kwargs.get("timeout"))
             t_req_start = time.time()
-            response = self.client.chat.completions.create(**kwargs)  # type: ignore[arg-type]
+            request_client = self.client.with_options(max_retries=max_retries) if max_retries is not None else self.client
+            response = request_client.chat.completions.create(**kwargs)  # type: ignore[arg-type]
             t_req_ms = (time.time() - t_req_start) * 1000
             # 记录 token 消耗
             usage = getattr(response, "usage", None)
@@ -107,9 +110,11 @@ class QwenClient:
                 self._token_stats[model_key]["total"] += getattr(usage, "total_tokens", 0) or 0
                 self._token_stats[model_key]["calls"] += 1
                 _logger.info(
-                    "[Qwen] request end: duration=%.0fms model=%s prompt=%d completion=%d total=%d",
+                    "[Qwen] request end: duration=%.0fms model=%s prompt=%d cache_hit=%d cache_miss=%d completion=%d total=%d",
                     t_req_ms, model_key,
                     getattr(usage, "prompt_tokens", 0) or 0,
+                    getattr(usage, "prompt_cache_hit_tokens", 0) or 0,
+                    getattr(usage, "prompt_cache_miss_tokens", 0) or 0,
                     getattr(usage, "completion_tokens", 0) or 0,
                     getattr(usage, "total_tokens", 0) or 0,
                 )

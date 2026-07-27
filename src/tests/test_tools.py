@@ -122,6 +122,7 @@ class TestBuiltinTools:
         result = _web_search("test")
         assert "Example Title" in result
         assert "snippet" in result
+        assert mock_get.call_args.kwargs["proxies"] == {"http": "", "https": ""}
 
     def test_web_search_empty_query(self):
         result = _web_search("")
@@ -134,6 +135,7 @@ class TestBuiltinTools:
         result = _browse_url("https://example.com")
         assert "Test Page" in result
         assert "Hello World" in result
+        assert mock_get.call_args.kwargs["proxies"] == {"http": "", "https": ""}
 
     def test_browse_url_empty(self):
         result = _browse_url("")

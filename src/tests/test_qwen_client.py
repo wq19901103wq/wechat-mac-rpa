@@ -93,6 +93,21 @@ class TestQwenClientChat:
                 client.chat(messages=[{"role": "user", "content": "hi"}], raise_on_error=True)
 
     @patch("src.utils.qwen_client.OpenAI")
+    def test_chat_can_disable_retries(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        request_client = MagicMock()
+        mock_client.with_options.return_value = request_client
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content="ok", tool_calls=None))]
+        request_client.chat.completions.create.return_value = mock_response
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "key"}, clear=True):
+            client = QwenClient()
+            assert client.chat(messages=[{"role": "user", "content": "hi"}], max_retries=0) == "ok"
+            mock_client.with_options.assert_called_once_with(max_retries=0)
+
+    @patch("src.utils.qwen_client.OpenAI")
     def test_deepseek_thinking_enabled(self, mock_openai_cls):
         mock_client = MagicMock()
         mock_openai_cls.return_value = mock_client
@@ -108,6 +123,40 @@ class TestQwenClientChat:
             client.chat(messages=[{"role": "user", "content": "hi"}])
             call_kwargs = mock_client.chat.completions.create.call_args.kwargs
             assert call_kwargs["extra_body"] == {"thinking": {"type": "enabled"}}
+
+    @patch("src.utils.qwen_client.OpenAI")
+    def test_deepseek_json_disables_thinking(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content='{"ok": true}', tool_calls=None))]
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "key"}, clear=True):
+            client = QwenClient()
+            client.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                response_format={"type": "json_object"},
+            )
+            call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+            assert call_kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
+
+    @patch("src.utils.qwen_client.OpenAI")
+    def test_qwen_json_disables_thinking(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content='{"ok": true}', tool_calls=None))]
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "key"}, clear=True):
+            client = QwenClient(model="qwen3.6-flash")
+            client.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                response_format={"type": "json_object"},
+            )
+            call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+            assert call_kwargs["extra_body"] == {"enable_thinking": False}
 
     @patch("src.utils.qwen_client.OpenAI")
     def test_chat_legacy_interface(self, mock_openai_cls):
