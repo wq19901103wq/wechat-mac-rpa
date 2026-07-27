@@ -216,3 +216,65 @@ class TestWeChatBot:
 
         bot.global_store.mark_replied.assert_called_once_with("测试群", msg, "第一条")
         bot._update_tick_send_result.assert_called_once_with(2, ["第一条"], success=False)
+
+    def test_generation_failure_keeps_message_unreplied(self, bot, tmp_path):
+        msg = ChatMessage(
+            text="在吗",
+            sender="A",
+            sender_type=SenderType.OTHER,
+            chat_name="测试群",
+        )
+        bot.perception = Mock()
+        bot.perception.perceive.return_value = PerceptionResult(
+            chat_name="测试群",
+            messages=[msg],
+            chat_list_items=[],
+            screenshot_path=str(tmp_path / "failed.png"),
+        )
+        bot.policy = Mock()
+        bot.policy.should_reply.return_value = True
+        bot.generator = Mock(last_generation_failed=True)
+        bot.generator.generate.return_value = []
+        bot.generator.text_for_logging.side_effect = lambda text: text
+        bot.generator.messages_for_logging.side_effect = lambda messages: messages
+        bot.sender = Mock(silent_mode=False)
+        state = Mock(messages=[msg])
+        bot.global_store = Mock()
+        bot.global_store.merge_tick.return_value = (state, [msg])
+        bot.global_store.chats = {"测试群": state}
+
+        bot.tick()
+
+        bot.global_store.mark_replied.assert_not_called()
+
+    def test_explicit_no_reply_marks_message_replied(self, bot, tmp_path):
+        msg = ChatMessage(
+            text="不用回",
+            sender="A",
+            sender_type=SenderType.OTHER,
+            chat_name="测试群",
+        )
+        bot.perception = Mock()
+        bot.perception.perceive.return_value = PerceptionResult(
+            chat_name="测试群",
+            messages=[msg],
+            chat_list_items=[],
+            screenshot_path=str(tmp_path / "no_reply.png"),
+        )
+        bot.policy = Mock()
+        bot.policy.should_reply.return_value = True
+        bot.generator = Mock(last_generation_failed=False)
+        bot.generator.generate.return_value = []
+        bot.generator.text_for_logging.side_effect = lambda text: text
+        bot.generator.messages_for_logging.side_effect = lambda messages: messages
+        bot.sender = Mock(silent_mode=False)
+        state = Mock(messages=[msg])
+        bot.global_store = Mock()
+        bot.global_store.merge_tick.return_value = (state, [msg])
+        bot.global_store.chats = {"测试群": state}
+
+        bot.tick()
+
+        bot.global_store.mark_replied.assert_called_once_with(
+            "测试群", msg, "(未回复)"
+        )

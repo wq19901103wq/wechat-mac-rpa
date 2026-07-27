@@ -569,6 +569,20 @@ class WeChatBot:
             )
 
             if not replies:
+                if getattr(self.generator, "last_generation_failed", False) is True:
+                    self.logger.log_decision(
+                        tick_id,
+                        should_reply=False,
+                        reason=f"LLM 生成失败，保留未读等待重试 ({len(unreplied)} 条)",
+                        latest_text=unreplied[-1].text if unreplied else "",
+                    )
+                    self.debug_logger.log_action(
+                        "none",
+                        action_input="",
+                        success=False,
+                        error="LLM 生成失败，未标记已处理",
+                    )
+                    return
                 # LLM 返回空 replies = 判断无需回复（群聊没@我/纯表情包等），
                 # 属正常决策。补明确日志，避免被误读为"漏回"。
                 self.logger.log_decision(
