@@ -81,3 +81,4 @@ prompts/
 !prompts/persona.md.example
 backups/
 bandit-report.json
+.coverage
