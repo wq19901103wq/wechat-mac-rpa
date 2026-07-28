@@ -70,9 +70,9 @@ def _web_search(query: str = "") -> str:
                 a = h3.find("a")
                 if a:
                     title = a.get_text(strip=True)
-                    link = a.get("href", "")
+                    link = str(a.get("href", "") or "")
                     # 优先从 data-mdurl 拿真实 URL（360 跳转链接是加密的）
-                    mdurl = a.get("data-mdurl", "")
+                    mdurl = str(a.get("data-mdurl", "") or "")
                     if mdurl and mdurl.startswith(("http://", "https://")):
                         link = mdurl
                     elif link.startswith("https://www.so.com/link?"):

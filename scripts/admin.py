@@ -641,10 +641,10 @@ def screenshot_detail(id: int):
             ocr_elems = dbg.get("ocr_elements", [])
             if ocr_elems:
                 ocr_rows = ""
-                for e in ocr_elems:
-                    text = e.get("text", "")
-                    bbox = e.get("bbox", [])
-                    conf = e.get("confidence", 0)
+                for elem in ocr_elems:
+                    text = elem.get("text", "")
+                    bbox = elem.get("bbox", [])
+                    conf = elem.get("confidence", 0)
                     ocr_rows += f"<tr><td style='font-size:10px;color:var(--muted)'>{html.escape(str(bbox))}</td><td>{html.escape(text)}</td><td>{conf:.0%}</td></tr>"
                 ocr_html = f"<table><tr><th>BBox</th><th>Text</th><th>置信度</th></tr>{ocr_rows}</table>"
             else:

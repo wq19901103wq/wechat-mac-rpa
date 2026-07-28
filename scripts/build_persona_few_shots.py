@@ -10,7 +10,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 
 # 本地运行时可设置 PERSONA_NAME=王芊 以匹配已有 wiki；代码里不再硬编码真名。
@@ -91,9 +91,9 @@ def _is_low_signal_reply(text: str) -> bool:
 
 def _timestamp_seconds(value: object) -> float:
     try:
-        timestamp = float(value or 0)
+        timestamp = float(value or 0)  # type: ignore[arg-type]
     except (TypeError, ValueError):
-        return 0
+        return 0.0
     return timestamp / 1000 if timestamp > 10_000_000_000 else timestamp
 
 
@@ -473,13 +473,13 @@ def select_balanced(candidates: list[Candidate], limit: int, group_target: int =
         group_rows = by_relation.get("group", [])
         group_rows.sort(key=lambda c: (not c.priority, -c.score, -c.timestamp, c.chat_id))
         while group_rows and len(selected) < min(group_target, limit):
-            candidate = pop_diverse(group_rows, prefer_priority=True)
-            if candidate is None:
+            group_candidate = pop_diverse(group_rows, prefer_priority=True)
+            if group_candidate is None:
                 break
-            selected.append(candidate)
-            per_chat[candidate.chat_id] += 1
-            per_intent[(candidate.relation, candidate.intent)] += 1
-            per_shape[(candidate.relation, candidate.reply_shape)] += 1
+            selected.append(group_candidate)
+            per_chat[group_candidate.chat_id] += 1
+            per_intent[(group_candidate.relation, group_candidate.intent)] += 1
+            per_shape[(group_candidate.relation, group_candidate.reply_shape)] += 1
     relations = ["family", "friend", "colleague", "acquaintance", "service"]
     if not group_target:
         relations.append("group")
@@ -487,15 +487,16 @@ def select_balanced(candidates: list[Candidate], limit: int, group_target: int =
         progressed = False
         for relation in relations:
             rows = by_relation.get(relation, [])
-            candidate = pop_diverse(rows)
-            if candidate is not None:
-                selected.append(candidate)
-                per_chat[candidate.chat_id] += 1
-                per_intent[(candidate.relation, candidate.intent)] += 1
-                per_shape[(candidate.relation, candidate.reply_shape)] += 1
-                progressed = True
-                if len(selected) >= limit:
-                    break
+            rel_candidate = pop_diverse(rows)
+            if rel_candidate is None:
+                continue
+            selected.append(rel_candidate)
+            per_chat[rel_candidate.chat_id] += 1
+            per_intent[(rel_candidate.relation, rel_candidate.intent)] += 1
+            per_shape[(rel_candidate.relation, rel_candidate.reply_shape)] += 1
+            progressed = True
+            if len(selected) >= limit:
+                break
         if not progressed:
             break
 
@@ -590,19 +591,20 @@ def select_stratified(
         for chat_id in chat_ids:
             if len(selected) >= limit:
                 return selected
-            candidate = choose(chat_id)
-            if candidate is not None:
-                add(candidate)
+            fill_candidate = choose(chat_id)
+            if fill_candidate is None:
+                continue
+            add(fill_candidate)
 
     while len(selected) < limit:
         progressed = False
         for chat_id in chat_ids:
             if per_chat[chat_id] >= max_per_chat:
                 continue
-            candidate = choose(chat_id)
-            if candidate is None:
+            more_candidate = choose(chat_id)
+            if more_candidate is None:
                 continue
-            add(candidate)
+            add(more_candidate)
             progressed = True
             if len(selected) >= limit:
                 break
@@ -792,7 +794,7 @@ def write_holdout_cases(
     train_candidate_count: int,
     holdout_candidate_count: int,
 ) -> None:
-    rows = []
+    rows: list[dict[str, Any]] = []
     for index, candidate in enumerate(selected, 1):
         rows.append({
             "id": f"holdout_{index:03d}",
@@ -833,7 +835,7 @@ def write_outputs(selected: list[Candidate], output_dir: Path, candidate_count: 
     md_path = output_dir / "persona_examples.md"
     report_path = output_dir / "report.json"
     object_report_path = output_dir / "object_report.json"
-    rows = []
+    rows: list[dict[str, Any]] = []
     for index, candidate in enumerate(selected, 1):
         rows.append({
             "id": f"example_{index:03d}",

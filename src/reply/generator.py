@@ -236,7 +236,7 @@ class ReplyGenerator:
         self.last_feedback_raw: str = ""
         self.last_iterate_raw: str = ""
         self.last_iterate_skipped_no_budget: bool = False
-        self._fact_check_client = None
+        self._fact_check_client: Optional[Any] = None
         self.enable_fact_check = os.environ.get("ENABLE_FACT_CHECK", "1").lower() in ("1", "true", "yes", "on")
 
         # 开关（环境变量，默认启用）

@@ -372,7 +372,7 @@ class ChatHistoryRepository:
                         },
                     )
                     result = session.execute(stmt)
-                    inserted += result.rowcount
+                    inserted += int(result.rowcount)  # type: ignore[attr-defined]
 
                 # 批量插入成员（每个成员 6 个字段，每批 100 个）
                 member_values = []
@@ -395,7 +395,7 @@ class ChatHistoryRepository:
                         index_elements=["chatroom_id", "wxid"]
                     )
                     result = session.execute(stmt)
-                    members_inserted += result.rowcount
+                    members_inserted += int(result.rowcount)  # type: ignore[attr-defined]
 
                 if messages:
                     last_time = max(

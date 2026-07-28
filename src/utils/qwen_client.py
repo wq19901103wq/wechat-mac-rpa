@@ -23,7 +23,7 @@ class QwenClient:
 
     def __init__(self, model: str = "", api_key: str = "", base_url: str = ""):
         model = model or os.environ.get("LLM_MODEL", "deepseek-v4-flash")
-        api_key = api_key or os.environ.get("LLM_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")
+        api_key = api_key or os.environ.get("LLM_API_KEY") or os.environ.get("DEEPSEEK_API_KEY") or ""
         if not api_key:
             raise RuntimeError("DEEPSEEK_API_KEY 或 LLM_API_KEY 未设置")
         base_url = base_url or os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
