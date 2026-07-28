@@ -79,6 +79,8 @@ src/tests/test_memory_search_regression.py
 AGENTS.md
 prompts/
 !prompts/persona.md.example
+!prompts/fact_check.md
+!prompts/fact_verify.md
 backups/
 bandit-report.json
 .coverage
