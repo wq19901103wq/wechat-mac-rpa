@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -48,10 +49,19 @@ jobs:
           git add docs/assets/star-history.svg docs/assets/star-history.json
           git commit -m 'chore: update star history chart'
           git push --force origin HEAD:automation/star-history
-          if ! gh pr list --head automation/star-history --state open --json number --jq 'length > 0' | grep -q true; then
-            gh pr create \
+          pr_number=$(gh pr list \
+            --head automation/star-history \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+          if [ -z "${pr_number}" ]; then
+            pr_url=$(gh pr create \
               --base main \
               --head automation/star-history \
               --title 'chore: update star history chart' \
-              --body 'Automated update generated from GitHub stargazer timestamps.'
+              --body 'Automated update generated from GitHub stargazer timestamps.')
+            pr_number=${pr_url##*/}
           fi
+          gh workflow run ci.yml --ref automation/star-history
+          gh workflow run codeql.yml --ref automation/star-history
+          gh pr merge "${pr_number}" --auto --squash
