@@ -5,7 +5,9 @@ from unittest.mock import Mock
 
 import pytest
 
+from src.action.login_recovery import LoginRecoveryResult, LoginRecoveryStatus
 from src.bot.wechat_bot import WeChatBot
+from src.capture.window_capture import WeChatNotReadyError
 from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
 from src.models.base import ActionResult, ChatMessage, PerceptionResult, SenderType
 
@@ -86,10 +88,51 @@ class TestWeChatBot:
         """perceive 返回 None 时直接跳过"""
         bot.perception = Mock()
         bot.perception.perceive.return_value = None
+        bot.logger = Mock()
 
         bot.tick()
 
         bot.perception.perceive.assert_called_once()
+        warning = bot.logger.warning.call_args.args[0]
+        assert "实际启动 Bot 的应用" in warning
+        assert "屏幕录制权限" in warning
+        assert "自动化开发环境" in warning
+
+    def test_tick_recovers_when_perception_reports_not_ready(self, bot, tmp_path):
+        result = PerceptionResult(
+            chat_name="测试群",
+            messages=[],
+            chat_list_items=[],
+            screenshot_path=str(tmp_path / "recovered.png"),
+        )
+        bot.perception = Mock()
+        bot.perception.perceive.side_effect = [WeChatNotReadyError("需要登录"), result]
+        bot._login_handler = Mock()
+        bot._login_handler.handle.return_value = LoginRecoveryResult(
+            LoginRecoveryStatus.SUCCESS, "已恢复"
+        )
+        bot.global_store = Mock()
+        bot.global_store.merge_tick.return_value = (Mock(), [])
+
+        bot.tick()
+
+        assert bot.perception.perceive.call_count == 2
+        bot._login_handler.handle.assert_called_once()
+
+    def test_chat_switch_can_be_disabled(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("scripts.sync_knowledge.sync", lambda: False)
+        monkeypatch.setattr("src.bot.wechat_bot.GlobalStore", Mock)
+        monkeypatch.setattr("src.bot.wechat_bot.MemoryEngine", Mock)
+        disabled_bot = WeChatBot(
+            PROFILE_WECHAT_MAC_1760X1280,
+            llm_client=Mock(),
+            perception=Mock(),
+            enable_chat_switch=False,
+        )
+
+        assert disabled_bot.enable_chat_switch is False
+        assert disabled_bot._try_switch_to_unread_chat(Mock()) == ""
 
     def test_tick_policy_declines(self, bot, tmp_path):
         """policy 返回 False 时不生成回复"""

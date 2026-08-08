@@ -4,6 +4,8 @@
 import logging
 from unittest.mock import Mock
 
+import pytest
+
 from src.capture.window_capture import WeChatNotReadyError
 from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
 from src.perception.vision_pipeline import VisionPipeline
@@ -19,6 +21,6 @@ class TestVisionPipelineLogging:
         mock_capture.capture.side_effect = WeChatNotReadyError("需要扫码登录")
         pipeline.capture = mock_capture
 
-        result = pipeline.perceive()
-        assert result is None
+        with pytest.raises(WeChatNotReadyError):
+            pipeline.perceive()
         assert any("扫码" in rec.message for rec in caplog.records)

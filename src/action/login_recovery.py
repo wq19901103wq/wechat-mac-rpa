@@ -172,7 +172,7 @@ class WeChatLoginHandler:
         clicked = self._click_login_button(window_rect, button_rect)
 
         # 等待窗口响应（给手机上确认留足时间）
-        time.sleep(8.0)
+        time.sleep(3.0)
 
         # 再次检查窗口
         new_rect = self._find_window()

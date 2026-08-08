@@ -246,14 +246,14 @@ class TestAliasExtractionSanitization:
         aliases = engine._extract_aliases_from_user_wiki(wiki, "王芊")
         assert aliases == ["真别名"]
 
-    def test_room_number_and_sentence_rejected(self, engine):
-        """房号、整句描述不能当别名。"""
+    def test_room_number_rejected_without_guessing_alias_semantics(self, engine):
+        """拒绝可由格式确认的房号，不根据文本含义猜测昵称是否合法。"""
         wiki = (
             "# 小丁\n\n## 别名\n- 4-1-2503\n- 6幢5号501\n"
             "- 被群友称为哥\n- 丁总\n\n## 基本信息\n- x\n"
         )
         aliases = engine._extract_aliases_from_user_wiki(wiki, "小丁")
-        assert aliases == ["丁总"]
+        assert aliases == ["被群友称为哥", "丁总"]
 
     def test_search_recalls_via_split_alias(self, engine, tmp_path):
         """端到端：aliases.json 存了整串 '老王、王总'，搜 '王总' 仍能召回本人。"""
@@ -320,50 +320,6 @@ class TestAliasExtractionSanitization:
 
         assert "Co总" in cleaned
         assert "扛把子" in cleaned
-
-
-class TestWikiFactSanitizer:
-    """落盘前事实清洗 _sanitize_wiki_facts（防止 Bot 来源被写成确定事实）。"""
-
-    def test_marks_bot_source_line_as_unverified(self, engine):
-        """来源含 Bot 且不含用户明确陈述的行应被追加 [待验证]。"""
-        wiki = (
-            "# 用户\n\n## 基本信息\n"
-            "- 职业：外企员工（来源：2022-02-11 Bot说，Esther未否认）\n"
-            "- 爱好：跑步\n"
-        )
-
-        cleaned = engine._sanitize_wiki_facts(wiki)
-
-        assert "职业：外企员工（来源：2022-02-11 Bot说，Esther未否认） [待验证]" in cleaned
-        assert "爱好：跑步" in cleaned
-
-    def test_marks_bot_confirmation_as_unverified(self, engine):
-        wiki = "# 用户\n\n## 基本信息\n- 职业：外企员工（来源：Bot确认）\n"
-
-        cleaned = engine._sanitize_wiki_facts(wiki)
-
-        assert "Bot确认） [待验证]" in cleaned
-
-    def test_keeps_user_source_line_unchanged(self, engine):
-        """用户自述或明确确认的事实不应被误标。"""
-        wiki = (
-            "# 用户\n\n## 基本信息\n"
-            "- 职业：算法工程师（来源：2026-06-13 王芊自述）\n"
-            "- 出生日期：1990-11-03（用户确认）\n"
-        )
-
-        cleaned = engine._sanitize_wiki_facts(wiki)
-
-        assert "[待验证]" not in cleaned
-
-    def test_idempotent_for_already_unverified(self, engine):
-        """已是 [待验证] 的行不应被重复追加标记。"""
-        wiki = "# 用户\n\n## 基本信息\n- 职业：外企员工（来源：Bot推测）[待验证]\n"
-
-        cleaned = engine._sanitize_wiki_facts(wiki)
-
-        assert cleaned.count("[待验证]") == 1
 
 
 class TestWikiLimitsEnforcement:
@@ -454,15 +410,15 @@ class TestLintMemory:
         assert len(conflicts) == 1
         assert set(conflicts[0]["mains"]) == {"王芊", "张波"}
 
-    def test_ad_group_rejected_on_update(self, engine, tmp_path):
-        """广告群名不应入队生成 wiki（FR-14）。"""
+    def test_group_name_content_does_not_control_update(self, engine, tmp_path):
+        """群名文本不应通过关键词或正则改变是否更新记忆。"""
         engine.overrides_dir = tmp_path / "overrides"
         engine.overrides_dir.mkdir(parents=True, exist_ok=True)
         engine._aliases = {}
         # 给一个假 llm_client 触发入队路径
         engine.llm_client = object()
         engine.update_group_wiki("玲珑小番茄6.99一斤茅台路百果园", "x", [], [])
-        assert engine._update_queue == []
+        assert len(engine._update_queue) == 1
 
 
 def test_shutdown_drains_pending_updates(tmp_path):

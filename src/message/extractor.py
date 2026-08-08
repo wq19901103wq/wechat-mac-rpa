@@ -8,18 +8,12 @@ from src.layout.layout_parser import TIMESTAMP_PATTERNS, UILayout
 from src.layout.profile import LayoutProfile
 from src.models.base import ChatMessage, OCRTextElement, Point, Rect, SenderType
 
-# 微信系统通知/安全提示关键词模式
-_SYSTEM_NOTICE_KEYWORDS = [
+# 微信账号安全通知的固定模板片段；必须全部按顺序出现
+_ACCOUNT_SAFETY_NOTICE_PARTS = (
     "对方账号安全性未知",
     "涉及金钱交易务必电话确认",
     "保护个人财产和隐私安全",
-    "系统提示",
-    "微信官方安全提示",
-    "安全提醒",
-    "风险提示",
-    "转账提醒",
-    "谨防诈骗",
-]
+)
 
 
 class MessageExtractor:
@@ -192,15 +186,9 @@ class MessageExtractor:
     @staticmethod
     def _is_system_notice(text: str, source_elements) -> bool:
         """判断是否为微信系统通知/安全提示"""
-        text = text.strip()
-        # 1. 文本内容匹配系统通知关键词
-        for kw in _SYSTEM_NOTICE_KEYWORDS:
-            if kw in text:
-                return True
-        # 2. 长度较长（>30字）且包含"安全""提示""保护""诈骗"等词
-        if len(text) > 30 and any(k in text for k in ["安全", "提示", "保护", "诈骗", "转账", "风险"]):
-            return True
-        return False
+        normalized = re.sub(r"[\s，,。.!！?？、：:；;“”\"'（）()【】\[\]…·]+", "", text)
+        positions = [normalized.find(part) for part in _ACCOUNT_SAFETY_NOTICE_PARTS]
+        return all(position >= 0 for position in positions) and positions == sorted(positions)
 
     @staticmethod
     def _append_message(messages, msg_elems, nickname, chat_name):

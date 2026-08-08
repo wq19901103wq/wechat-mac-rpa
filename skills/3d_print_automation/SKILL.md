@@ -1,90 +1,27 @@
-# 3D打印自动化 Skill
-
-## 一句话摘要
-读取/检查 3MF 文件、缩放模型、修改支撑、查询打印机状态时触发。
-
-## 触发条件
-
-用户提到以下任意场景时触发：
-- 读取/检查 3MF 文件："帮我看看这个 3MF 文件"、"读取模型配置"
-- 缩放模型："放大到 2 倍"、"缩小一半"、"尺寸翻倍"
-- 修改支撑："加支撑"、"支撑设粗一点"、"优化支撑配置"
-- 查询打印机状态："打印机状态"、"打印进度"、"打印机在哪"
-
-## 控制流程
-
-### STEP 1: 识别用户意图
-
-判断用户想要做什么：
-- **读取 3MF 文件** → 调用 `print3d_read_3mf(file_path)`
-- **缩放模型** → 调用 `print3d_scale_model(input_file, scale, output_file)`
-- **修改支撑** → 调用 `print3d_update_support(input_file, output_file, branch_diameter, threshold_angle, wall_count, interface_layers)`
-- **查询打印机状态** → 调用 `print3d_get_printer_status(ip, access_code, serial)`
-
-### STEP 2: 参数确认
-
-**文件路径**：
-- 用户未提供路径时询问："3MF 文件在哪？"
-- 支持相对路径和绝对路径
-
-**缩放比例**：
-- `scale=2.0` 表示放大到 2 倍
-- `scale=0.5` 表示缩小到一半
-- 默认 `scale=1.0`（不缩放）
-
-**支撑配置参数**：
-| 参数 | 说明 | 范围 | 默认值 |
-|------|------|------|--------|
-| `branch_diameter` | 树状支撑主干直径 | 2-15mm | 3 |
-| `threshold_angle` | 支撑阈值角度 | 30-60° | 45 |
-| `wall_count` | 支撑墙数 | 0-4 | 1 |
-| `interface_layers` | 界面层数 | 2-6 | 3 |
-
-**打印机连接参数**：
-- `ip`：打印机 IP 地址（如 `192.168.2.8`）
-- `access_code`：访问码（打印机设置 → LAN 中查看）
-- `serial`：打印机序列号
-
-### STEP 3: 执行与反馈
-
-调用对应工具后，根据返回结果回复用户：
-- **读取成功**：反馈模型尺寸、当前支撑配置
-- **缩放成功**：反馈输出文件路径和新尺寸
-- **支撑修改成功**：反馈输出文件路径和修改后的配置
-- **状态查询成功**：反馈打印进度、温度、状态
-- **失败**：说明原因（文件不存在、参数错误、打印机离线）
-
-## 支撑粗细配置参考
-
-| 粗细级别 | 直径 | 适用场景 |
-|---------|------|---------|
-| 细 | 2mm | 小模型，省料 |
-| 标准 | 3-4mm | 一般模型 |
-| 粗 | 6-8mm | 大模型，需要稳固支撑 |
-| 超粗 | 10-12mm | 超大模型，支撑绝对不能断 |
-| 巨粗 | 15mm | 特殊需求 |
-
-## 常见问题
-
-### Q: 支撑拆除困难？
-A: 增加 `interface_layers` 到 5-6 层，增大 `branch_diameter` 到 6mm 以上
-
-### Q: 支撑断裂？
-A: 增加 `branch_diameter` 到 8mm 以上，增加 `wall_count` 到 3-4 层
-
-### Q: 模型太小？
-A: 使用 `print3d_scale_model` 放大，建议 `scale=1.5~2.5`
-
-## 输出规则
-
-- 操作结果必须明确反馈：动作 + 文件路径/状态
-- 支撑修改必须反馈修改后的关键参数（直径、角度）
-- 状态查询必须显示：打印进度、喷嘴温度、热床温度、当前状态
-- 文件操作必须反馈输出文件路径
-
-## 硬性规则
-
-- **绝不猜测文件路径**。如果用户说"打印这个"而没有指定文件，必须询问："哪个 3MF 文件？"
-- **绝不猜测打印机参数**。查询状态时必须提供 `ip`、`access_code`、`serial`，缺少任何一个都要询问。
-- **参数范围限制**：`branch_diameter` 2-15mm，`threshold_angle` 30-60°，`wall_count` 0-4，`interface_layers` 2-6。超出范围时拒绝执行并提示合理范围。
-- **输出文件默认命名**：缩放默认生成 `*_scaled.3mf`，支撑修改默认生成 `*_supported.3mf`。
+<skill name="3d_print_automation">
+  <summary>用户明确要读取或修改 3MF、缩放模型、调整打印支撑，或查询 3D 打印机状态时使用。</summary>
+  <activation>
+    <include>请求的目标是 3MF 文件、模型缩放、支撑参数或打印机状态。</include>
+    <exclude>只讨论 3D 打印知识，没有要求读取、修改或查询。</exclude>
+  </activation>
+  <behavior_delta>
+    <rule>缺少完成操作所必需的文件路径或打印机连接参数时，只询问缺失项。</rule>
+    <rule>不猜文件路径、输出路径或打印机连接信息。</rule>
+    <rule>参数越界时不执行，并给出允许范围。</rule>
+    <limits>
+      <parameter name="branch_diameter" range="2-15mm" default="3mm"/>
+      <parameter name="threshold_angle" range="30-60deg" default="45deg"/>
+      <parameter name="wall_count" range="0-4" default="1"/>
+      <parameter name="interface_layers" range="2-6" default="3"/>
+    </limits>
+    <default_output operation="scale">原文件名_scaled.3mf</default_output>
+    <default_output operation="support">原文件名_supported.3mf</default_output>
+  </behavior_delta>
+  <tool_policy>
+    <tool name="print3d_read_3mf" when="读取或检查 3MF" required="file_path"/>
+    <tool name="print3d_scale_model" when="缩放模型" required="input_file,scale,output_file"/>
+    <tool name="print3d_update_support" when="修改支撑" required="input_file,output_file"/>
+    <tool name="print3d_get_printer_status" when="查询打印机状态" required="ip,access_code,serial"/>
+    <result>成功时反馈实际文件路径、尺寸、关键参数或状态；失败时反馈工具返回的原因。</result>
+  </tool_policy>
+</skill>

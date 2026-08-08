@@ -134,11 +134,9 @@ class QwenClient:
             # 如果模型返回 tool_calls，也返回（让上层处理）
             if getattr(msg, "tool_calls", None):
                 return msg  # type: ignore[return-value]
-            # DeepSeek 某些模型（如 v4-pro）在长 prompt 下会把输出放在 reasoning_content 而非 content
-            if not text and reasoning:
-                text = reasoning
-            if not text and not reasoning and not getattr(msg, "tool_calls", None):
-                _logger.warning("[Qwen] 模型返回空 content 且空 reasoning_content，可能为 endpoint 异常或内容过滤，msg=%s", msg)
+            # reasoning_content 是模型思考过程，严禁作为正式输出返回
+            if not text:
+                _logger.warning("[Qwen] 模型返回空 content，视为生成失败，msg=%s", msg)
             return text
         except Exception as e:
             _logger.warning("Qwen LLM 错误: %s", e, exc_info=True)

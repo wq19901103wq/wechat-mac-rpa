@@ -323,7 +323,7 @@ class SmartPerceptionPipeline:
             t_capture_ms = (time.time() - t_capture_start) * 1000
         except WeChatNotReadyError as e:
             _logger.warning(f"[SmartPipeline] 窗口捕获失败: {e}")
-            return None
+            raise
         except Exception as e:
             _logger.warning(f"[SmartPipeline] 窗口捕获异常: {e}")
             return None

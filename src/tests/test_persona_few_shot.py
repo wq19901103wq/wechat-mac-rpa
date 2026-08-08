@@ -1,15 +1,18 @@
 import hashlib
 import json
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import src.reply.few_shot as few_shot_module
 
 from src.models.base import ChatMessage, SenderType
-from src.reply.few_shot import PersonaFewShotRetriever, _query_response_mode, resolve_relationship
+from src.reply.few_shot import PersonaFewShotRetriever
 from src.reply.generator import ReplyGenerator
 
 
 def _write_rows(path, rows):
+    for row in rows:
+        row.setdefault("source_provenance", "explicit_human_marker")
     path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
 
 
@@ -45,7 +48,7 @@ def test_retrieval_prefers_relevance_over_unrelated_same_chat(tmp_path):
 def test_retrieval_limits_repetitive_laugh_examples(tmp_path):
     path = tmp_path / "examples.jsonl"
     _write_rows(path, [
-        {"id": f"laugh_{i}", "relationship": "friend", "chat_id": f"c{i}", "context": ["今天真离谱"], "reply": [f"哈哈哈{i}"]}
+        {"id": f"laugh_{i}", "relationship": "friend", "chat_id": f"c{i}", "context": ["今天真离谱"], "reply": [f"哈哈哈{i}"], "reply_shape": "laugh"}
         for i in range(5)
     ] + [
         {"id": "plain", "relationship": "friend", "chat_id": "plain", "context": ["今天真离谱"], "reply": ["你可真行"]},
@@ -57,44 +60,65 @@ def test_retrieval_limits_repetitive_laugh_examples(tmp_path):
     assert sum(row["id"].startswith("laugh_") for row in rows) <= 2
 
 
-def test_retrieval_uses_topic_and_scenario_metadata(tmp_path):
+def test_retrieval_does_not_collapse_legacy_default_metadata(tmp_path):
     path = tmp_path / "examples.jsonl"
     _write_rows(path, [
-        {"id": "finance", "relationship": "friend", "chat_id": "f1", "context": ["今天怎么了"], "reply": ["又跌了"], "topic": "finance", "intent": "answer"},
-        {"id": "food", "relationship": "friend", "chat_id": "f2", "context": ["今天怎么了"], "reply": ["去吃饭"], "topic": "food_travel", "intent": "answer"},
+        {
+            "id": f"row_{index}",
+            "relationship": "friend",
+            "chat_id": f"chat_{index}",
+            "context": ["同一类输入"],
+            "reply": [f"不同回复{index}"],
+            "intent": "comment",
+            "topic": "daily_chat",
+        }
+        for index in range(6)
+    ])
+
+    rows = PersonaFewShotRetriever(path).retrieve("同一类输入", "朋友", is_group=False, limit=6)
+
+    assert len(rows) == 6
+
+
+def test_retrieval_softly_diversifies_verified_semantic_moves(tmp_path):
+    path = tmp_path / "examples.jsonl"
+    repeated_profile = {"incoming_act": "hostile_teasing", "response_move": "wording_reversal"}
+    _write_rows(path, [
+        {
+            "id": f"reversal_{index}",
+            "relationship": "group",
+            "chat_id": f"chat_{index}",
+            "context": ["你可真会说"],
+            "reply": [f"反转{index}"],
+            "semantic_profile": repeated_profile,
+        }
+        for index in range(5)
+    ] + [{
+        "id": "contrast",
+        "relationship": "group",
+        "chat_id": "contrast",
+        "context": ["你可真会说"],
+        "reply": ["反差"],
+        "semantic_profile": {"incoming_act": "hostile_teasing", "response_move": "comic_contrast"},
+    }])
+
+    rows = PersonaFewShotRetriever(path).retrieve("你可真会说", "群", is_group=True, limit=6)
+
+    assert len(rows) == 4
+    assert sum(row["id"].startswith("reversal_") for row in rows) == 3
+    assert any(row["id"] == "contrast" for row in rows)
+
+
+def test_retrieval_does_not_infer_topic_from_keyword_lists(tmp_path):
+    path = tmp_path / "examples.jsonl"
+    _write_rows(path, [
+        {"id": "z_finance", "relationship": "friend", "chat_id": "f1", "context": ["今天怎么了"], "reply": ["又跌了"], "topic": "finance", "intent": "answer"},
+        {"id": "a_food", "relationship": "friend", "chat_id": "f2", "context": ["今天怎么了"], "reply": ["去吃饭"], "topic": "food_travel", "intent": "answer"},
     ])
 
     rows = PersonaFewShotRetriever(path).retrieve("今天股票怎么了", "朋友", is_group=False, limit=2, relationship="friend")
 
-    assert rows[0]["id"] == "finance"
-
-
-def test_serious_query_excludes_playful_examples(tmp_path):
-    path = tmp_path / "examples.jsonl"
-    _write_rows(path, [
-        {"id": "joke", "relationship": "friend", "chat_id": "same", "context": ["面试挂了"], "reply": ["哈哈哈废物"], "response_mode": "playful"},
-        {"id": "care", "relationship": "friend", "chat_id": "other", "context": ["面试挂了"], "reply": ["折腾这么久确实挺打击的"], "response_mode": "sincere"},
-    ])
-
-    rows = PersonaFewShotRetriever(path).retrieve("面试又挂了，感觉自己好菜", "朋友", is_group=False, limit=2)
-
-    assert _query_response_mode("面试又挂了，感觉自己好菜") == "sincere"
-    assert [row["id"] for row in rows] == ["care"]
-
-
-def test_conditional_or_reassuring_distress_is_not_treated_as_personal():
-    assert _query_response_mode("我同事问，如果我是他会不会很难受") == "neutral"
-    assert _query_response_mode("我觉得不要太焦虑吧") == "neutral"
-    assert _query_response_mode("我不焦虑，自己啥水平有数") == "neutral"
-    assert _query_response_mode("我朋友失恋了，我该怎么安慰她") == "practical"
-    assert _query_response_mode("住院手续怎么办？") == "practical"
-
-
-def test_mode_hints_do_not_treat_negation_third_party_or_process_as_distress():
-    for text in ("我不焦虑，自己有数", "我朋友失恋了，我该怎么安慰她", "住院手续怎么办？"):
-        message = ChatMessage(text=text, sender="朋友", sender_type=SenderType.OTHER, chat_name="朋友")
-        hints = ReplyGenerator._build_mode_hints([message], [message], False, 12)
-        assert "对方是真的受挫/难过" not in hints
+    assert rows[0]["id"] == "a_food"
 
 
 def test_retrieval_can_use_explicit_hashed_chat_id(tmp_path):
@@ -150,11 +174,13 @@ def test_render_has_fact_isolation_and_budget(tmp_path):
         {"id": "two", "context": ["x" * 100], "reply": ["y" * 100]},
     ]
 
-    content, ids = PersonaFewShotRetriever.render(rows, max_chars=260)
+    content, ids = PersonaFewShotRetriever.render(rows, max_chars=500)
 
     assert ids == ["one"]
     assert "不是当前对话事实" in content
-    assert "本人：咋啦" in content
+    assert "不得复制示例中的具体笑点" in content
+    assert "不能覆盖 consumed_self_replies" in content
+    assert "<response>\n<message>咋啦</message>\n</response>" in content
 
 
 def test_missing_file_degrades_to_empty(tmp_path):
@@ -187,25 +213,44 @@ def test_generator_injects_examples_and_records_ids(tmp_path, monkeypatch):
 
     assert replies == ["在的"]
     assert generator.last_few_shot_ids == ["style_one"]
-    assert "本人真实聊天风格示例" in generator.last_user_prompt
+    assert "真人本人历史回复" in generator.last_user_prompt
+    request = ET.fromstring(generator.last_user_prompt)
+    assert request.find('./active_skill[@name="casual_chat"]/skill') is not None
+    assert request.find("./style_examples/example") is not None
     assert any(item.get("type") == "persona_few_shot" for item in generator.last_generation_trace)
     assert "咋啦" not in generator.text_for_logging(generator.last_user_prompt)
     assert "style_one" in generator.text_for_logging(generator.last_user_prompt)
-
-
-def test_relationship_resolution_reads_dedicated_section(tmp_path):
-    (tmp_path / "同事甲.md").write_text(
-        "# 人物\n## 与 Bot 的关系\n- 前同事，保持工作联系\n## 其他\n- 朋友喜欢旅游\n",
-        encoding="utf-8",
-    )
-
-    assert resolve_relationship("同事甲", tmp_path) == "colleague"
 
 
 def test_unapproved_report_is_not_ready(tmp_path):
     path = tmp_path / "persona_examples.jsonl"
     path.write_text("", encoding="utf-8")
     (tmp_path / "report.json").write_text('{"review_status":"pending"}', encoding="utf-8")
+
+    assert PersonaFewShotRetriever(path).is_approved() is False
+
+
+def test_untrusted_examples_are_never_retrieved(tmp_path):
+    path = tmp_path / "persona_examples.jsonl"
+    _write_rows(path, [
+        {"id": "human", "relationship": "friend", "context": ["在吗"], "reply": ["在"]},
+        {"id": "bot", "relationship": "friend", "context": ["在吗"], "reply": ["又是旧梗"], "source_provenance": "unverified"},
+    ])
+
+    rows = PersonaFewShotRetriever(path).retrieve("在吗", "朋友", is_group=False)
+
+    assert [row["id"] for row in rows] == ["human"]
+
+
+def test_approval_requires_trusted_human_provenance(tmp_path):
+    path = tmp_path / "persona_examples.jsonl"
+    path.write_text(json.dumps({
+        "id": "legacy", "relationship": "friend", "context": ["在吗"], "reply": ["在"]
+    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    examples_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+    (tmp_path / "report.json").write_text(json.dumps({
+        "review_status": "approved", "examples_sha256": examples_sha256
+    }), encoding="utf-8")
 
     assert PersonaFewShotRetriever(path).is_approved() is False
 

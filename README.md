@@ -58,6 +58,7 @@ Bot 通过 macOS 公开 API 与微信交互，需要以下系统权限：
 | **自动化** | System Events 进程间通信（keystroke、click） | 首次运行时会弹窗授权 |
 
 > 如果截图失败、点击无效或消息发到其他应用，请首先检查上述权限是否已授予。
+> 权限必须授予**实际启动 Bot 的应用**。生产运行建议使用普通终端或 LaunchAgent；不要直接从 Codex、Claude Code 等自动化开发环境启动。截图失败时可先运行 `screencapture -x /tmp/wechat-test.png`：如果系统截图也失败，应先排查宿主权限或微信运行环境，而不是修改项目截图逻辑。
 
 ---
 

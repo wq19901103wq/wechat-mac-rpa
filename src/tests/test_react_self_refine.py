@@ -7,6 +7,8 @@ Self-Refine（Feedback + Iterate）开关及 max_tool_calls 降级逻辑，
 """
 
 import os
+import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
@@ -104,7 +106,7 @@ class TestSelfRefine:
         mock_llm.responses = [
             '{"skills": []}',                       # skill router
             '{"replies": ["test reply"]}',          # ReAct 生成
-            '{"decision": "pass"}',                 # Feedback
+            '{"decision": "pass", "issues": []}',   # Feedback
         ]
         gen = _make_generator(mock_llm, enable_self_refine=True)
         replies = gen.generate([sample_message], [sample_message])
@@ -119,9 +121,9 @@ class TestSelfRefine:
         assert feedback_kwargs["response_format"] == {"type": "json_object"}
         feedback_messages = mock_llm.calls[2]["messages"]
         assert feedback_messages[0]["role"] == "system"
-        assert "强制证据审计" in feedback_messages[0]["content"]
+        assert ET.fromstring(feedback_messages[0]["content"]).tag == "reply_audit"
         assert feedback_messages[2] == {"role": "assistant", "content": '{"replies": ["test reply"]}'}
-        assert feedback_messages[3]["content"] == "现在执行证据审计，只输出规定的 JSON。"
+        assert feedback_messages[3]["content"] == "现在执行回复质量审计，只输出规定的 JSON。"
         # 消息流应包含 system + user + generation assistant + feedback prompt + feedback assistant
         assert len(gen.last_llm_messages) == 5
         assert gen.last_llm_messages[0]["role"] == "system"
@@ -183,6 +185,28 @@ class TestSelfRefine:
         assert gen.last_feedback_decision == "error"
         assert gen.last_iterate_count == 0
 
+    @pytest.mark.parametrize(
+        "feedback",
+        [
+            '{"decision": "pass"}',
+            '{"decision": "unknown", "issues": []}',
+            '{"decision": "pass", "issues": ["不应存在"]}',
+            '{"decision": "fail", "issues": []}',
+            '{"decision": "fail", "issues": "太正式"}',
+        ],
+    )
+    def test_self_refine_rejects_invalid_feedback_schema(self, feedback, sample_message):
+        mock_llm = MockLLM(responses=[
+            '{"skills": []}',
+            '{"replies": ["test reply"]}',
+            feedback,
+        ])
+        gen = _make_generator(mock_llm, enable_self_refine=True)
+
+        assert gen.generate([sample_message], [sample_message]) == ["test reply"]
+        assert gen.last_feedback_decision == "error"
+        assert gen.last_iterate_count == 0
+
     def test_fact_contradiction_triggers_iterate_before_feedback(self, mock_llm, sample_message):
         mock_llm.responses = [
             '{"skills": []}',
@@ -225,6 +249,22 @@ class TestSelfRefine:
         assert gen.last_iterate_count == 1
         assert len(fact_llm.calls) == 2
 
+    def test_iterate_issues_are_structured_json(self, mock_llm, sample_message):
+        mock_llm.responses = [
+            '{"skills": []}',
+            '{"replies": ["bad reply"]}',
+            '{"decision": "fail", "issues": ["称呼错误", "包含 <tag>"]}',
+            '{"replies": ["改好了"]}',
+        ]
+        gen = _make_generator(mock_llm, enable_self_refine=True)
+
+        assert gen.generate([sample_message], [sample_message]) == ["改好了"]
+        revision = mock_llm.calls[3]["messages"][-2]["content"]
+        root = ET.fromstring(revision)
+        assert root.tag == "reply_revision"
+        assert root.findtext("issues_json") == '["称呼错误", "包含 <tag>"]'
+        assert "反馈问题：" not in revision
+
 
 class TestForceSkill:
     """FORCE_SKILL 环境变量的测试。"""
@@ -265,62 +305,6 @@ class TestForceSkill:
         assert "casual_chat" in gen.last_loaded_skills
 
 
-class TestQueueDetection:
-    """队列模式检测的测试。"""
-
-    def test_queue_three_identical_texts(self, mock_llm):
-        """连续 3 条相同文本 → 追加 group_banter。"""
-        mock_llm.responses = [
-            '{"skills": []}',
-            '{"replies": ["警惕资本主义打牌"]}',
-        ]
-        gen = _make_generator(mock_llm, enable_self_refine=False)
-        msgs = [
-            ChatMessage(text="警惕资本主义打牌", sender="老王",
-                        sender_type=SenderType.OTHER, chat_name="群聊"),
-            ChatMessage(text="警惕资本主义打牌", sender="老李",
-                        sender_type=SenderType.OTHER, chat_name="群聊"),
-            ChatMessage(text="警惕资本主义打牌", sender="大刘",
-                        sender_type=SenderType.OTHER, chat_name="群聊"),
-        ]
-        gen.generate(unreplied=[msgs[-1]], all_messages=msgs)
-        assert "group_banter" in gen.last_loaded_skills
-
-    def test_queue_not_triggered_for_two_identical(self, mock_llm):
-        """只有 2 条相同 text → 不触发队列检测。"""
-        mock_llm.responses = [
-            '{"skills": []}',
-            '{"replies": ["ok"]}',
-        ]
-        gen = _make_generator(mock_llm, enable_self_refine=False)
-        msgs = [
-            ChatMessage(text="哈哈", sender="老王",
-                        sender_type=SenderType.OTHER, chat_name="群聊"),
-            ChatMessage(text="哈哈", sender="老李",
-                        sender_type=SenderType.OTHER, chat_name="群聊"),
-        ]
-        gen.generate(unreplied=[msgs[-1]], all_messages=msgs)
-        assert "group_banter" not in gen.last_loaded_skills
-
-    def test_self_messages_dont_trigger_queue(self, mock_llm):
-        """bot 自身的重复消息不触发队列检测。"""
-        mock_llm.responses = [
-            '{"skills": []}',
-            '{"replies": ["好"]}',
-        ]
-        gen = _make_generator(mock_llm, enable_self_refine=False)
-        msgs = [
-            ChatMessage(text="好", sender="我",
-                        sender_type=SenderType.SELF, chat_name="群聊"),
-            ChatMessage(text="好", sender="我",
-                        sender_type=SenderType.SELF, chat_name="群聊"),
-            ChatMessage(text="好", sender="我",
-                        sender_type=SenderType.SELF, chat_name="群聊"),
-        ]
-        gen.generate(unreplied=[msgs[-1]], all_messages=msgs)
-        assert "group_banter" not in gen.last_loaded_skills
-
-
 class TestParseReplies:
     """_parse_replies 方法的单元测试。"""
 
@@ -335,6 +319,18 @@ class TestParseReplies:
         result = gen._parse_replies('{"replies": ["确实气人。"')
         assert result == []
 
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            '{"replies": "你好"}',
+            '{"replies": {"text": "你好"}}',
+            '{"replies": [null, 123, {"text": "你好"}]}',
+        ],
+    )
+    def test_invalid_replies_type_returns_empty(self, mock_llm, raw):
+        gen = _make_generator(mock_llm, enable_self_refine=False)
+        assert gen._parse_replies(raw) == []
+
     def test_plain_text_fallback(self, mock_llm):
         """纯文本（无 JSON 特征）→ 正常文本切分回退。"""
         gen = _make_generator(mock_llm, enable_self_refine=False)
@@ -348,6 +344,83 @@ class TestParseReplies:
 
 
 class TestReActLoop:
+    def test_broken_json_retries_instead_of_becoming_no_reply(self, sample_message):
+        mock_llm = MockLLM(responses=[
+            '{"skills": []}',
+            '{"replies": ["被截断的回复"',
+            '{"replies": ["重试成功"]}',
+        ])
+        gen = _make_generator(mock_llm, enable_self_refine=False)
+
+        with patch("src.reply.generator.time.sleep"):
+            replies = gen.generate([sample_message], [sample_message])
+
+        assert replies == ["重试成功"]
+        assert gen.last_generation_failed is False
+
+    def test_skill_router_uses_end_to_end_deadline(self, sample_message):
+        mock_llm = MockLLM(responses=['{"skills": []}', '{"replies": ["ok"]}'])
+        gen = _make_generator(mock_llm, enable_self_refine=False)
+
+        assert gen.generate([sample_message], [sample_message]) == ["ok"]
+        router_timeout = mock_llm.calls[0]["kwargs"]["timeout"]
+        generation_timeout = mock_llm.calls[1]["kwargs"]["timeout"]
+        assert 0 < generation_timeout <= router_timeout <= 20.0
+
+    def test_reserves_time_for_final_response(self):
+        executed = []
+
+        def _response_func(messages, tools=None, **kwargs):
+            if tools:
+                return MockResponse(tool_calls=[MockToolCall(name="dummy_loop", arguments="{}")])
+            return MockResponse(content='{"replies": ["final"]}')
+
+        mock_llm = MockLLM(response_func=_response_func)
+        gen = _make_generator(mock_llm, enable_self_refine=False)
+        gen.tool_registry.register(
+            name="dummy_loop",
+            description="测试用工具",
+            parameters={"type": "object", "properties": {}},
+            func=lambda: executed.append(1) or "ok",
+        )
+
+        replies, _ = gen._react_generate(
+            [{"role": "user", "content": "test"}],
+            gen.tool_registry.to_openai_schemas(),
+            deadline=time.time() + 2.0,
+        )
+
+        assert replies == ["final"]
+        assert executed == []
+
+    def test_max_tool_calls_counts_individual_calls(self, sample_message):
+        executed = []
+        llm_call_count = 0
+
+        def _response_func(messages, tools=None, **kwargs):
+            nonlocal llm_call_count
+            llm_call_count += 1
+            if llm_call_count == 1:
+                return MockResponse(content='{"skills": []}')
+            if tools:
+                return MockResponse(tool_calls=[
+                    MockToolCall(name="dummy_loop", arguments="{}", id=f"tc_{llm_call_count}_{i}")
+                    for i in range(3)
+                ])
+            return MockResponse(content='{"replies": ["forced final"]}')
+
+        mock_llm = MockLLM(response_func=_response_func)
+        gen = _make_generator(mock_llm, enable_self_refine=False)
+        gen.tool_registry.register(
+            name="dummy_loop",
+            description="测试用工具",
+            parameters={"type": "object", "properties": {}},
+            func=lambda: executed.append(1) or "ok",
+        )
+
+        assert gen.generate([sample_message], [sample_message]) == ["forced final"]
+        assert len(executed) == MAX_TOOL_CALLS
+
     def test_max_tool_calls_limit(self, sample_message):
         """达到 MAX_TOOL_CALLS 后应强制禁用 tools 并返回 JSON，避免无限循环。"""
         call_count = 0

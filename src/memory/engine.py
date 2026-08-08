@@ -15,6 +15,10 @@ try:
 except ImportError:
     Timeout: Any = None  # type: ignore[misc,assignment,no-redef]
 
+from src.memory.evidence import (
+    format_evidence_conversation,
+    strip_unverified_lines,
+)
 from src.memory.wiki_prompts import RUNTIME_DEFAULT_GROUP_WIKI, RUNTIME_UPDATE_GROUP_PROMPT
 from src.utils.chat_utils import _safe_filename
 
@@ -29,20 +33,8 @@ _ALIAS_BLACKLIST = {
     "无", "暂无", "未发现", "未发现其他显著别名",
 }
 
-# 描述性关键词：含这些词的字符串大概率是句子而非别名（与历史 invalid_keywords 对齐）
-_ALIAS_INVALID_KEYWORDS = [
-    "说", "提到", "认为", "和", "与", "让", "叫", "是", "在", "觉得", "告诉", "问",
-    "回答", "表示", "介绍", "@", "称为", "称呼", "未发现", "无其他", "显著别名",
-    "可能别名", "群友", "朋友", "邻居", "无其他别名",
-]
-
 # 房号 / 单元号模式：如 "6幢5号501"、"4-1-703"、"1幢10号802"
 _ROOM_NUMBER_RE = re.compile(r"\d+\s*[幢栋号楼室单元]\s*\d|\d+-\d+-\d+|\d+幢\d+号")
-
-# Bot 自述来源（不可靠）：LLM 落盘前把这类行标 [待验证]
-_BOT_SOURCE_RE = re.compile(r"Bot(?:确认|回应|推测|猜测|推算|推断|提及|判断|答)|未否认|未反驳|Bot猜")
-# 用户/他人明确陈述（可靠）：含这些词时不应因 Bot 字样被误标
-_USER_SOURCE_RE = re.compile(r"自述|本人说|本人告知|本人确认|明确表示|指出|用户确认")
 
 # 别名长度上限：真实昵称不会太长
 _ALIAS_MAX_LEN = 15
@@ -77,12 +69,6 @@ def _split_alias_tokens(text: str) -> List[str]:
     return tokens
 
 
-# 广告群特征：群名带具体斤价（"6.99一斤"、"X.X元X斤...百果园" 等），命中即不入库
-_AD_GROUP_PATTERNS = [
-    re.compile(r"\d+\.?\d*\s*[元块]?\s*.*一斤"),
-    re.compile(r"\d+\.?\d*\s*[元块].*斤"),
-    re.compile(r"\d+\.?\d*\s*一斤"),
-]
 # 常见 emoji Unicode 码点集合（用于群名归一化剥离）
 _EMOJI_CODEPOINTS: frozenset[int] = frozenset(
     [0x24C2]
@@ -248,6 +234,8 @@ class MemoryEngine:
         self._aliases: Dict[str, List[str]] = {}      # 用户名 -> [别名列表]
         self._facts: Dict[str, List[dict]] = {}       # 用户名 -> [事实列表]
         self._corrections: Dict[str, List[str]] = {}  # 群名 -> [纠正列表]
+        # 实体级权威纠正（最高优先级，泛化加载，无硬编码实体名）
+        self._entity_corrections: Dict[str, List[str]] = {}  # 实体名 -> [纠正]
         self._load_overrides()
 
         # 异步更新队列
@@ -286,13 +274,19 @@ class MemoryEngine:
             except Exception as e:
                 _logger.warning(f"加载 facts 失败: {e}")
 
-        # corrections
+        # corrections（群级 + 实体级）
         corrections_path = self.overrides_dir / "corrections.json"
         if corrections_path.exists():
             try:
                 data = json.loads(corrections_path.read_text(encoding="utf-8"))
                 for group, cfg in data.get("groups", {}).items():
                     self._corrections[group] = cfg.get("corrections", [])
+                # 实体级权威纠正：泛化加载，不依赖任何硬编码实体名。
+                # 结构：{"entities": {"<实体名>": {"corrections": [...]}}}
+                for entity, cfg in data.get("entities", {}).items():
+                    corrs = cfg.get("corrections", []) if isinstance(cfg, dict) else []
+                    if corrs:
+                        self._entity_corrections[entity] = list(corrs)
             except Exception as e:
                 _logger.warning(f"加载 corrections 失败: {e}")
 
@@ -310,8 +304,58 @@ class MemoryEngine:
         names.extend(self._aliases.get(resolved, []))
         return list(dict.fromkeys(names))  # 去重保序
 
+    def _entity_corrections_for_doc(self, name: str) -> List[str]:
+        """按实体名（精确或带群后缀的基底名）查找权威纠正。
+
+        数据驱动：遍历 corrections.json 的 entities 键，不硬编码任何实体名。
+        - 精确匹配：name == entity
+        - 基底名匹配：name 以 entity 开头，且紧邻字符是群后缀分隔符
+          （如 "实体甲@某群" 归属实体 "实体甲"），避免误配 "实体甲X"。
+        """
+        if name in self._entity_corrections:
+            return list(self._entity_corrections[name])
+        for entity, corrs in self._entity_corrections.items():
+            if name.startswith(entity):
+                rest = name[len(entity):]
+                if not rest or rest[0] in "@_（( 、，,|/；;":
+                    return list(corrs)
+        return []
+
+    def _entity_key_for_doc(self, name: str) -> Optional[str]:
+        """返回文档名 name 命中的实体纠正键（无则 None）。
+
+        与 _entity_corrections_for_doc 的匹配口径一致（精确名或基底名），
+        用于判定某实体纠正是否已被现有 wiki 文档承载，避免 search_keyword
+        重复添加 correction-only 文档。泛化遍历，不硬编码任何实体名。
+        """
+        if name in self._entity_corrections:
+            return name
+        for entity in self._entity_corrections:
+            if name.startswith(entity):
+                rest = name[len(entity):]
+                if not rest or rest[0] in "@_（( 、，,|/；;":
+                    return entity
+        return None
+
+    def _entity_corrections_text(self, names: List[str]) -> str:
+        """汇总给定名字命中的实体级权威纠正。
+
+        泛化读取 self._entity_corrections（数据驱动，代码不含实体名）。
+        返回可直接嵌入 prompt 的约束文本；无命中时返回空字符串。
+        """
+        lines = []
+        seen = set()
+        for name in names:
+            resolved = self._resolve_alias(name)
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            for corr in self._entity_corrections_for_doc(resolved):
+                lines.append(f"- {resolved}：{corr}")
+        return "\n".join(lines)
+
     def _build_identity_context(self, names: List[str]) -> str:
-        """根据 aliases + facts 构建身份约束文本，防止 LLM 在生成 wiki 时 invent 关系。"""
+        """根据 aliases + facts + 实体级纠正 构建身份约束文本，防止 LLM invent 关系。"""
         lines = []
         seen = set()
         for name in names:
@@ -335,6 +379,12 @@ class MemoryEngine:
                         line += f"（{note}）"
                     lines.append(line)
 
+        # 实体级权威纠正：放在身份约束中，确保更新/生成 wiki 时禁止 contradict
+        corr_text = self._entity_corrections_text(names)
+        if corr_text:
+            lines.append("【权威纠正（必须遵守，禁止 contradict）】")
+            lines.append(corr_text)
+
         if not lines:
             return "（暂无已确认身份信息，请仅根据对话内容推断，不确定的用 [待验证] 标记）"
         return "\n".join(lines)
@@ -342,18 +392,28 @@ class MemoryEngine:
     # ── 读取接口 ──
 
     def get_user_memory(self, user_name: str, max_chars: int = 2000) -> str:
-        """读取用户 wiki（含别名合并 + 外挂 facts），返回压缩后的摘要。facts 放在前面确保不被截断。"""
+        """读取用户 wiki（含别名合并 + 外挂 facts + 实体级纠正），返回压缩后的摘要。
+
+        顺序（高优先级在前）：实体级权威纠正 → 人工 facts → wiki 本体。
+        这样即使截断也保留权威纠正。运行时剔除 [待验证] 派生行。
+        """
         resolved = self._resolve_alias(user_name)
         all_names = self._all_names_for(resolved)
 
-        # 合并所有别名的 wiki
+        # 合并所有别名的 wiki（运行时剔除 [待验证] 派生行）
         wikis = []
         for name in all_names:
             path = self.wiki_dir / "users" / f"{name}.md"
             if path.exists():
-                wikis.append(self._load_wiki(path))
+                wikis.append(strip_unverified_lines(self._load_wiki(path)))
 
-        # 先构建 facts（放在前面，确保截断时不丢失）
+        # 实体级权威纠正（最高优先级）
+        corrections_text = ""
+        corr_text = self._entity_corrections_text([resolved])
+        if corr_text:
+            corrections_text = "## 权威纠正（人工标注，最高优先级）\n" + corr_text
+
+        # 人工 facts
         facts = self._facts.get(resolved, [])
         facts_text = ""
         if facts:
@@ -364,22 +424,27 @@ class MemoryEngine:
                     fact_lines.append(f"  （{f['note']}）")
             facts_text = "\n".join(fact_lines)
 
-        if not wikis and not facts_text:
+        if not wikis and not facts_text and not corrections_text:
             return ""
 
-        # facts 放在 wiki 前面，确保即使截断也保留人工标注
-        wiki_text = "\n\n".join(wikis)
-        if facts_text and wiki_text:
-            wiki_text = facts_text + "\n\n" + wiki_text
-        elif facts_text:
-            wiki_text = facts_text
+        parts = []
+        if corrections_text:
+            parts.append(corrections_text)
+        if facts_text:
+            parts.append(facts_text)
+        if wikis:
+            parts.append("\n\n".join(wikis))
+        wiki_text = "\n\n".join(parts)
 
         return self._compress_wiki(wiki_text, max_chars)
 
     def get_group_memory(self, group_name: str, max_chars: int = 2000) -> str:
-        """读取群聊 wiki（含外挂 corrections），返回压缩后的摘要。"""
+        """读取群聊 wiki（含外挂 corrections），返回压缩后的摘要。
+
+        运行时剔除 [待验证] 派生行，避免不可靠内容进入上下文。
+        """
         path = self.wiki_dir / "groups" / f"{group_name}.md"
-        wiki = self._load_wiki(path) if path.exists() else ""
+        wiki = strip_unverified_lines(self._load_wiki(path)) if path.exists() else ""
 
         # 注入纠正信息
         corrections = self._corrections.get(group_name, [])
@@ -423,10 +488,6 @@ class MemoryEngine:
             return
         if not self._is_valid_main_name(group_name):
             _logger.warning(f"非法群名，跳过 wiki 更新: {group_name}")
-            return
-        # 广告群拦截（FR-14）：群名带具体斤价的团购广告不生成 wiki
-        if any(p.search(group_name) for p in _AD_GROUP_PATTERNS):
-            _logger.debug("广告群跳过 wiki 生成: %s", group_name)
             return
         with self._queue_condition:
             self._update_queue.append({
@@ -545,7 +606,6 @@ class MemoryEngine:
                 max_chars = 10000
             content = self._enforce_wiki_limits(content, max_chars=max_chars)
             content = self._sanitize_wiki_aliases(content, path.stem)
-            content = self._sanitize_wiki_facts(content)
             path.write_text(content, encoding="utf-8")
         except Exception as e:
             _logger.warning(f"保存 wiki 失败 {path}: {e}")
@@ -613,34 +673,6 @@ class MemoryEngine:
                 changed = True
         return "\n".join(lines) if changed else content
 
-    def _sanitize_wiki_facts(self, content: str) -> str:
-        """落盘前清洗 wiki 事实行（运行期护栏）。
-
-        对来源明显为 Bot 自述 / 推测 / 用户未否认 的事实行，若不含用户/他人
-        明确陈述来源，则追加 [待验证]，防止 LLM 把不可靠来源写成确定事实。
-        只处理列表项（- / * 开头），不处理标题和空行。
-        """
-        lines = content.split("\n")
-        changed = False
-        for i, raw in enumerate(lines):
-            stripped = raw.strip()
-            if not stripped:
-                continue
-            if stripped.startswith("#"):
-                continue
-            if not stripped.startswith(("-", "*")):
-                continue
-            # 已经是待验证/暂无的占位行不动
-            if "[待验证]" in stripped or stripped.endswith("（暂无）"):
-                continue
-            # Bot 来源且没有明确用户/他人来源 → 标 [待验证]
-            has_bot = bool(_BOT_SOURCE_RE.search(stripped))
-            has_user = bool(_USER_SOURCE_RE.search(stripped))
-            if has_bot and not has_user:
-                lines[i] = raw.rstrip() + " [待验证]"
-                changed = True
-        return "\n".join(lines) if changed else content
-
     def _save_prompt(self, path: Path, prompt: str) -> None:
         """保存生成该 wiki 使用的 prompt，方便排查。截断过长的 conversation 部分。"""
         try:
@@ -690,47 +722,12 @@ class MemoryEngine:
         return truncated.strip() + "\n（…记忆已截断）"
 
     def _format_conversation(self, messages: List, bot_replies: List[str]) -> str:
-        lines = []
-        last_chat_name = None
-        for msg in messages:
-            chat_name = getattr(msg, "chat_name", "")
-            # 当聊天名称变化时插入分隔线
-            if chat_name and chat_name != last_chat_name:
-                lines.append(f"\n===== {chat_name} =====\n")
-                last_chat_name = chat_name
+        """构建传给 wiki 提取的证据对话文本。
 
-            st = getattr(msg, "sender_type", None)
-            is_self = False
-            if st is not None:
-                if hasattr(st, "value"):
-                    is_self = st.value == "self"
-                else:
-                    is_self = str(st) == "self"
-            sender = "我" if is_self else getattr(msg, "sender", "")
-            text = getattr(msg, 'text', '')
-            account = getattr(msg, 'account', '')
-            # 时间戳（支持历史批量导入）
-            ts = getattr(msg, 'create_time', None)
-            ts_str = ""
-            if ts:
-                try:
-                    ts_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(int(ts)))
-                except Exception as e:
-                    _logger.warning("[MemoryEngine] 时间戳格式化失败: %s (ts=%r)", e, ts)
-            # 组装前缀：[账号][时间]
-            prefix = ""
-            if account:
-                prefix += f"[{account}]"
-            if ts_str:
-                prefix += f"[{ts_str}]"
-            if prefix:
-                lines.append(f"{prefix}{sender}：{text}")
-            else:
-                lines.append(f"{sender}：{text}")
-        if bot_replies:
-            for reply in bot_replies:
-                lines.append(f"我：{reply}")
-        return "\n".join(lines)
+        Bot/self 消息与 bot_replies 一律排除：Bot 自己的话不是有效事实来源。
+        按角色（sender_type == self）排除，不按关键词。
+        """
+        return format_evidence_conversation(messages, bot_replies)
 
     def _do_update(self, task: dict) -> None:
         """执行单次 wiki 更新。"""
@@ -791,16 +788,13 @@ class MemoryEngine:
         raise RuntimeError(f"LLM 生成 wiki 失败（已重试 3 次）: {last_error}")
 
     def _strip_llm_prefix(self, text: str) -> str:
-        """去掉 LLM 常见的开场白、前言等前缀（直到第一个 # 标题）。"""
+        """去掉 LLM 常见的口头开场白（不截断正文，只做前缀删除）。"""
         prefixes = ("好的，", "好的,", "以下是", "根据", "这是", "我来")
         text = text.lstrip()
         for prefix in prefixes:
             if text.startswith(prefix):
-                hash_idx = text.find("# ")
-                if hash_idx != -1:
-                    text = text[hash_idx:]
-                break
-        return text.strip()
+                return text[len(prefix):].lstrip()
+        return text
 
     def _do_update_user(self, task: dict) -> None:
         """执行用户 wiki 更新。"""
@@ -900,7 +894,7 @@ class MemoryEngine:
     def _is_valid_alias(self, alias: str, main_name: str, existing_mains: set) -> bool:
         """单条别名的统一校验。两个提取器共用，保证入库口径一致。
 
-        拒绝：空 / 等于主名 / 是其他人的主名 / 过长 / 含描述性关键词 / 含标点 /
+        拒绝：空 / 等于主名 / 是其他人的主名 / 过长 / 含标点 /
               房号模式 / 微信 ID / 角色词黑名单。
         """
         alias = alias.strip()
@@ -911,8 +905,6 @@ class MemoryEngine:
         if len(alias) > _ALIAS_MAX_LEN:
             return False
         if alias in _ALIAS_BLACKLIST:
-            return False
-        if any(kw in alias for kw in _ALIAS_INVALID_KEYWORDS):
             return False
         if any(c in alias for c in '。，；：！？.,;:!?'):
             return False
@@ -1187,24 +1179,44 @@ class MemoryEngine:
         _logger.info(f"[Search] keyword='{keyword}' raw={raw_keywords} expanded={keywords} resolved='{resolved_keyword}'")
 
         # ── 1. 召回：收集所有文档 ──
+        # 实体级纠正与 [待验证] 剔除都是泛化规则，不针对任何具体名字。
         docs: List[Tuple[str, str, bool]] = []  # (name, content, is_group)
+        covered_entities: set = set()  # 纠正已附着在现有 wiki 文档上的实体
         for path in (self.wiki_dir / "users").glob("*.md"):
             user = path.stem
             if not self._is_valid_main_name(user):
                 _logger.warning(f"非法主名 wiki 文件，跳过搜索: {path.name}")
                 continue
             resolved_user = self._resolve_alias(user)
-            wiki = self._load_wiki(path)
+            wiki = strip_unverified_lines(self._load_wiki(path))
             facts = self._facts.get(resolved_user, [])
             facts_text = ""
             if facts:
                 facts_text = "\n".join([f"- {f.get('relation', '')}：{f.get('value', '')}" for f in facts])
-            content = facts_text + "\n\n" + wiki if facts_text and wiki else (facts_text or wiki)
+            # 实体级权威纠正放最前（支持基底名匹配，如 实体甲@某群 归属 实体甲）
+            corr_text = "\n".join(f"- {c}" for c in self._entity_corrections_for_doc(resolved_user))
+            content = "\n\n".join(
+                p for p in (corr_text, facts_text, wiki) if p
+            )
             if content:
+                # 记录该文档已承载的实体纠正，避免下面重复添加 correction-only 文档
+                ek = self._entity_key_for_doc(resolved_user)
+                if ek is not None:
+                    covered_entities.add(ek)
                 docs.append((resolved_user, content, False))
+
+        # 实体级权威纠正：即使没有对应用户 wiki 文件，也作为"仅纠正"文档参与召回，
+        # 保证每个实体级纠正都不会因缺 wiki 而丢失（泛化遍历，不硬编码实体名）。
+        for entity, corrs in self._entity_corrections.items():
+            if entity in covered_entities:
+                continue
+            corr_text = "\n".join(f"- {c}" for c in corrs)
+            if corr_text:
+                docs.append((entity, corr_text, False))
+
         for path in (self.wiki_dir / "groups").glob("*.md"):
             group = path.stem
-            wiki = self._load_wiki(path)
+            wiki = strip_unverified_lines(self._load_wiki(path))
             corrections = self._corrections.get(group, [])
             corr_text = ""
             if corrections:
@@ -1542,10 +1554,13 @@ class MemoryEngine:
             path = self.wiki_dir / "users" / f"{main_name}.md"
             if not path.exists():
                 continue
-            wiki_content = self._load_wiki(path)
+            wiki_content = strip_unverified_lines(self._load_wiki(path))
             facts = self._facts.get(main_name, [])
             facts_text = "## 已知事实\n" + "\n".join(f"- {f}" for f in facts) if facts else ""
-            full_content = facts_text + "\n\n" + wiki_content if facts_text and wiki_content else (facts_text or wiki_content)
+            corr_text = "\n".join(f"- {c}" for c in self._entity_corrections_for_doc(main_name))
+            full_content = "\n\n".join(
+                p for p in (corr_text, facts_text, wiki_content) if p
+            )
             if not full_content:
                 continue
             header = f"【{main_name} 相关】"
@@ -1564,7 +1579,6 @@ class MemoryEngine:
         - conflicts: 同一别名指向多个主名
         - bloated: 超长度上限的 wiki 文件
         - duplicates: 归一化后同名的群/用户
-        - ad_groups: 命中广告群特征的 wiki
         - stale: （占位）过时近期动态，需 LLM 判定，此处不自动检测
 
         返回结构化 dict。调用方可据此自动截断 bloated、标记 conflicts 供人工审核。
@@ -1582,7 +1596,7 @@ class MemoryEngine:
             if len(mains) > 1:
                 report["conflicts"].append({"alias": alias, "mains": mains})
 
-        # 2. 膨胀 wiki + 4. 广告群
+        # 2. 膨胀 wiki
         for sub in ("users", "groups"):
             d = self.wiki_dir / sub
             if not d.exists():
@@ -1598,9 +1612,6 @@ class MemoryEngine:
                         "path": str(path.relative_to(self.wiki_dir)),
                         "chars": len(content),
                     })
-                if sub == "groups" and any(p.search(path.stem) for p in _AD_GROUP_PATTERNS):
-                    report["ad_groups"].append(path.stem)
-
         # 3. 重复群/用户（归一化后同名）
         for sub in ("users", "groups"):
             d = self.wiki_dir / sub

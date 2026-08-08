@@ -47,7 +47,7 @@ class VisionPipeline:
                 _logger.warning(
                     "未能获取微信窗口画面，可能原因：微信未启动、窗口被最小化、或需要扫码登录"
                 )
-            return None
+            raise
         except Exception:
             _logger.warning(
                 "未能获取微信窗口画面，可能原因：微信未启动、窗口被最小化、或需要扫码登录"

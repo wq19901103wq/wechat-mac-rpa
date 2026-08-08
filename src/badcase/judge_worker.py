@@ -533,16 +533,6 @@ class JudgeWorker:
         checks = data.get("checks", {})
         dims_raw = data.get("dimensions", {})
 
-        # detail→issue 一致性校验：LLM 常在 detail 中写正确结论，但 issue 字段填错
-        for check_name, check_data in checks.items():
-            if isinstance(check_data, dict):
-                detail = check_data.get("detail", "")
-                issue = check_data.get("issue")
-                if issue is True and any(kw in detail for kw in ["issue 应为 false", "issue=false", "无幻觉", "不是幻觉", "不属于幻觉", "无依据事实错误"]):
-                    check_data["issue"] = False
-                elif issue is False and any(kw in detail for kw in ["issue 应为 true", "issue=true", "存在幻觉", "属于幻觉", "无依据事实"]):
-                    check_data["issue"] = True
-
         # 统计 checks issue 数量（仅核心 checks 触发强制 is_badcase）
         CORE_CHECKS = {"幻觉", "事实错误", "时间误判", "自相矛盾", "工具调用", "答非所问"}
         checks_issue_count = sum(
@@ -610,11 +600,9 @@ class JudgeWorker:
             overall_score = max(0, overall_score_raw - checks_issue_count * 12)
         else:
             # issues fallback（兼容旧格式）
-            issues = data.get("issues", [])
             dims = {}
-            for name, keywords in [("幻觉控制",["幻觉","编造","依据","事实错误","时间误判","自相矛盾"]), ("上下文理解",["答非所问","上下文","理解"]), ("回复必要性",["过度","不必","多余","OK","表情"]), ("信息准确性",["截断","误解","工具"]), ("个性一致性",["矛盾","不一致"])]:
-                dims[name] = {"score": 25 if any(any(kw in i for kw in keywords) for i in issues) else 75, "comment": ""}
-            for name in ["简洁度","时间推理","亮点加分项"]:
+            for name in ["幻觉控制", "上下文理解", "回复必要性", "简洁度",
+                         "个性一致性", "时间推理", "信息准确性", "亮点加分项"]:
                 dims[name] = {"score": 50, "comment": ""}
             overall_score = 50
             checks_issue_count = 0

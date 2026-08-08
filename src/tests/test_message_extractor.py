@@ -150,6 +150,33 @@ class TestOtherMessageExtraction:
         assert messages[0].text == "小明 在吗"
 
 
+class TestSystemNoticeDetection:
+    """微信固定系统通知识别"""
+
+    def test_account_safety_notice_with_ocr_spacing_and_trailing_text(self):
+        text = (
+            "对方账号安全性未知，如涉及金钱交易 务必电话确认，"
+            "保护个人财产和隐私安全。我要投诉"
+        )
+
+        assert MessageExtractor._is_system_notice(text, []) is True
+
+    def test_normal_risk_discussion_is_not_system_notice(self):
+        text = "这次转账风险很高，注意资金安全，最好先电话确认一下对方身份。"
+
+        assert MessageExtractor._is_system_notice(text, []) is False
+
+    def test_description_of_safety_warning_is_not_system_notice(self):
+        text = "我看到一个安全提醒，说转账可能有风险，你觉得是真的吗？"
+
+        assert MessageExtractor._is_system_notice(text, []) is False
+
+    def test_single_template_fragment_is_not_system_notice(self):
+        text = "对方账号安全性未知，但我认识这个人。"
+
+        assert MessageExtractor._is_system_notice(text, []) is False
+
+
 class TestMixedLayout:
     """混合场景"""
 

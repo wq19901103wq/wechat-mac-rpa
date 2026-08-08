@@ -3,6 +3,9 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
+from src.capture.window_capture import WeChatNotReadyError
 from src.models.base import ChatMessage, SenderType
 from src.reply.generator import ReplyGenerator
 
@@ -61,6 +64,20 @@ class TestVideoMessageHandling:
         )
         line = ReplyGenerator._format_message_line(msg)
         assert "[视频] 描述" in line
+
+
+class TestLoginRecoveryPropagation:
+    def test_smart_pipeline_propagates_not_ready_to_bot(self):
+        from src.perception.smart_pipeline import SmartPerceptionPipeline
+
+        pipeline = object.__new__(SmartPerceptionPipeline)
+        pipeline._weflow_mode = "ocr"
+        pipeline._weflow_pipeline = None
+        pipeline.capture = MagicMock()
+        pipeline.capture.capture.side_effect = WeChatNotReadyError("需要登录")
+
+        with pytest.raises(WeChatNotReadyError):
+            pipeline.perceive()
 
 
 class TestUnreadDetectionFixes:

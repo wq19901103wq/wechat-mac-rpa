@@ -69,7 +69,7 @@ def main():
         print(f"  • LLM: {model_name} ({base_url})")
         print("  • Prompt: DT style (prompts/persona.md)")
         print("  • 检索: 待启用")
-        interval = 15.0
+        interval = 5.0
         print(f"  • 轮询: 每 {interval:.0f} 秒")
 
         llm = QwenClient()

@@ -111,6 +111,7 @@ For detailed setup, see `docs/01-quickstart/AI_QUICKSTART.md`.
 | Automation | System Events inter-process communication | Granted on first run via popup |
 
 > If screenshots fail, clicks don't work, or messages go to the wrong app, check these permissions first.
+> Grant permissions to the application that **actually launches the Bot**. For production, use a regular terminal or LaunchAgent instead of launching directly from an automated development environment such as Codex or Claude Code. If capture fails, run `screencapture -x /tmp/wechat-test.png`; if that also fails, troubleshoot host permissions or the WeChat runtime environment before changing the capture code.
 
 ---
 

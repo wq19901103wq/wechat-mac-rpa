@@ -8,10 +8,8 @@
      同时归小舅王乔元和二姨王夏兰）→ internal_contradiction
   A2 跨 wiki 昵称投票：全局昵称 → [(归属人, wiki, 源质量分)]，加权票定建议归属，
      平票 flag。只投"昵称→人名"，不动关系词（二哥/小舅是 POV，都正确）
-  A3 Bot 来源行：来源含 Bot确认/Bot回应/Bot推测/Bot猜测/Bot推算/Bot提及/未否认 → suspect
-     （不自动删，送 audit/ review）
-  A4 绝对属性冲突：同人名跨 wiki 学校/职业/城市不一致 → 仅 flag（best-effort）
-  A5 别名行垃圾词：wiki ## 别名 段含 _ALIAS_BLACKLIST 任一词 → 可安全 strip
+  A3 绝对属性冲突：同人名跨 wiki 学校/职业/城市不一致 → 仅 flag（best-effort）
+  A4 别名行垃圾词：wiki ## 别名 段含 _ALIAS_BLACKLIST 任一词 → 可安全 strip
 
 用法：
     python3 scripts/detect_wiki_contradictions.py                # 全量
@@ -33,7 +31,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.memory.engine import (  # noqa: E402
     _ALIAS_BLACKLIST,
-    _ALIAS_INVALID_KEYWORDS,
     _ROOM_NUMBER_RE,
 )
 
@@ -44,11 +41,6 @@ AUDIT_DIR = PROJECT_ROOT / "data" / "memory" / "wiki_audit"
 AUDIT_DIR.mkdir(parents=True, exist_ok=True)
 PILOT_LIST = PROJECT_ROOT / "data" / "memory" / "pilot_list.json"
 OUT_PATH = AUDIT_DIR / "contradictions.json"
-
-# Bot 自述来源（不可靠）：Bot 自己说的、用户未否认的沉默
-_BOT_SOURCE_RE = re.compile(r"Bot(?:确认|回应|推测|猜测|推算|推断|提及|判断|答)|未否认|未反驳|Bot猜")
-# 用户/他人明确陈述（可靠）
-_USER_SOURCE_RE = re.compile(r"自述|提及|说|确认|对话|明确表示|指出|询问")
 
 # 昵称引用：必须前接显式标记词（昵称/群昵称/网名/微信名/微信号/群名），避免把任意引号短语当昵称
 _NICK_RE = re.compile(r"(?:昵称|群昵称|网名|微信名|微信号|群名)\s*[：:、]?\s*[“\"]([^”“\"]{2,12})[”\"]")
@@ -76,8 +68,6 @@ def _is_garbage_alias_token(tok: str) -> bool:
     if not tok or len(tok) > 15:
         return True
     if tok in _ALIAS_BLACKLIST:
-        return True
-    if any(kw in tok for kw in _ALIAS_INVALID_KEYWORDS):
         return True
     if any(c in tok for c in "。，；：！？.,;:!?"):
         return True
@@ -112,20 +102,6 @@ def _split_aliases_respecting_parens(text: str) -> List[str]:
     if current.strip():
         tokens.append(current.strip())
     return tokens
-
-
-def _source_quality(line: str) -> Tuple[float, str]:
-    """返回 (源质量分, 原因)。Bot 类=0.5，用户/他人=2，无源=1。"""
-    has_bot = bool(_BOT_SOURCE_RE.search(line))
-    has_user = bool(_USER_SOURCE_RE.search(line))
-    if has_bot and not has_user:
-        return 0.5, "bot_source"
-    if has_user and not has_bot:
-        return 2.0, "user_source"
-    if has_bot and has_user:
-        # 混合：含 Bot 字样降权但用户也有提及 → 1.2
-        return 1.2, "mixed_source"
-    return 1.0, "no_source"
 
 
 def _split_sections(wiki: str) -> List[Tuple[str, List[str]]]:
@@ -186,20 +162,11 @@ def _scan_wiki(name: str, wiki: str, is_group: bool) -> Dict[str, Any]:
             stripped = line.lstrip(" -").strip()
             if not stripped:
                 continue
-            # A3 Bot 来源行：任何含 Bot 自述标记的行都进 suspect（review 层重验）
-            score, reason = _source_quality(stripped)
-            if reason in ("bot_source", "mixed_source"):
-                bot_suspect.append({
-                    "section": sec_name,
-                    "line": stripped[:200],
-                    "reason": reason,
-                    "quality_score": score,
-                })
             # A1/A2 昵称-归属人
             if _is_significant_nick_for_line(stripped):
                 for nick, owner in _extract_nick_owners(stripped):
                     if _is_significant_nick(nick):
-                        lines_nick.append((nick, owner, stripped[:200], score, sec_name))
+                        lines_nick.append((nick, owner, stripped[:200], 1.0, sec_name))
         # A5 别名行垃圾词：扫 ## 别名 段，以及任意段里以"别名"开头的行（如 - 别名：xxx）
         is_alias_section = "别名" in sec_name
         for raw in sec_lines:
@@ -312,8 +279,7 @@ def _resolve_nick_owner_across_wikis(
                     if cand not in _OWNER_STOPWORDS and not _is_garbage_alias_token(cand):
                         owners.add(cand)
             for o in owners:
-                score, _reason = _source_quality(line)
-                owner_score[o] += score
+                owner_score[o] += 1.0
                 owner_wikis[o].append(name)
     if not owner_score:
         return {"votes": {}, "suggested_owner": None, "gap": 0.0, "needs_review": True}

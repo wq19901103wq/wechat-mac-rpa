@@ -31,6 +31,7 @@
 | action='none' 但应有 send | TROUBLESHOOTING.md | 症状 E |
 | OCR 为空 | TROUBLESHOOTING.md | 症状 F |
 | screenshot 路径异常 | TROUBLESHOOTING.md | 症状 G |
+| 微信已打开但截图失败、隐藏或禁止捕获 | TROUBLESHOOTING.md | 症状 H |
 | **search_memory 返回空** | **MEMORY_SEARCH_TROUBLESHOOTING.md** | **症状 A** |
 | **只返回本人 wiki** | **MEMORY_SEARCH_TROUBLESHOOTING.md** | **症状 B** |
 | **返回不相关人物** | **MEMORY_SEARCH_TROUBLESHOOTING.md** | **症状 C** |

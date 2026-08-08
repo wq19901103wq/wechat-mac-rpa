@@ -3,11 +3,10 @@
 从 data/chats/*.json 批量生成正确的 LLM Wiki。
 
 解决以下问题：
-1. 私聊/群聊分类错误（修复系统消息导致的误判）
+1. 基于结构字段区分私聊、群聊和系统消息
 2. 时间戳缺失（利用 engine.py 新增的时间戳支持）
 3. 同一用户跨聊天信息聚合（按 sender_wxid 聚合）
-4. 话题 wiki（简化版：按关键词聚类）
-5. @chatroom 名称映射（支持 chatroom_names.json）
+4. @chatroom 名称映射（支持 chatroom_names.json）
 
 用法:
     python3 scripts/bulk_import_from_chats.py [--dry-run] [--users-only] [--groups-only]
@@ -33,16 +32,6 @@ from pathlib import Path
 import logging
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-# 加载 .env
-env_file = Path(__file__).parent.parent / ".env"
-if env_file.exists():
-    with open(env_file, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, value = line.split("=", 1)
-                os.environ.setdefault(key.strip(), value.strip())
 
 from src.memory.engine import MemoryEngine
 from src.utils.qwen_client import QwenClient
@@ -92,20 +81,8 @@ def resolve_chat_name(stem: str, data: dict, mapping: dict) -> str:
 # ── 群聊/私聊分类 ──
 
 def is_system_message(msg: dict) -> bool:
-    """判断是否为系统消息（撤回、加入群聊等）。"""
-    text = msg.get("text", "")
-    if not text or not text.strip():
-        return True
-    patterns = [
-        "撤回了一条消息",
-        "加入了群聊",
-        "邀请你加入了群聊",
-        "已成为新群主",
-        "已退出群聊",
-        "已将你移出群聊",
-        "拍了拍",
-    ]
-    return any(p in text for p in patterns)
+    """按持久化的发送者类型判断系统消息。"""
+    return msg.get("sender_type") == "system"
 
 
 def classify_chat(stem: str, data: dict) -> str:
@@ -131,10 +108,6 @@ def classify_chat(stem: str, data: dict) -> str:
 
     # 强信号2: 2+ 个不同 wxid（真实多人在聊天）
     if len(wxid_set) >= 2:
-        return "group"
-
-    # 中信号: 名称特征 + 消息量
-    if any(k in chat_name for k in ["群", "群聊"]) and len(msgs) > 10:
         return "group"
 
     return "private"
@@ -334,7 +307,20 @@ def make_simple_messages(raw_msgs: list, max_msgs: int = 500, chat_name: str = "
 
 # ── 主流程 ──
 
+def _load_env() -> None:
+    env_file = Path(__file__).parent.parent / ".env"
+    if not env_file.exists():
+        return
+    with open(env_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip())
+
+
 def main():
+    _load_env()
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="只统计，不调用 LLM")
     parser.add_argument("--users-only", action="store_true", help="只生成用户 wiki")
@@ -681,73 +667,11 @@ def main():
                     print(f"  [{i}/{total_groups}] ✗ {chat_name} ({err})")
         print(f"  群聊 wiki 完成: {ok_count} 成功, {skip_count} 跳过, {err_count} 失败")
 
-    # 8. 生成话题 wiki（简化版）
-    if not args.users_only and not args.groups_only:
-        print(f"\n{'='*60}")
-        print("生成话题 Wiki（简化版）")
-        print(f"{'='*60}")
-
-        topics_dir = WIKI_DIR / "topics"
-        topics_dir.mkdir(parents=True, exist_ok=True)
-
-        # 基于关键词频率提取话题
-        keyword_msgs = defaultdict(list)
-        for stem, data in all_chats.items():
-            chat_name = resolve_chat_name(stem, data, chatroom_names)
-            for m in data.get("messages", []):
-                text = m.get("text", "")
-                if not text or len(text) < 10:
-                    continue
-                # 简单关键词匹配（股票、餐厅、地点等）
-                keywords = []
-                if any(k in text for k in ["股票", "持股", "清仓", "加仓", "买入", "卖出", "涨停", "跌停", "大盘"]):
-                    keywords.append("股票投资")
-                if any(k in text for k in ["吃饭", "餐厅", "美食", "自助", "火锅", "日料", "烧烤", "聚餐"]):
-                    keywords.append("美食餐饮")
-                if any(k in text for k in ["旅游", "旅行", "酒店", "机票", "出发", "攻略", "景点"]):
-                    keywords.append("旅游出行")
-                if any(k in text for k in ["装修", "家具", "家电", "团购", "小区", "业主", "阳台"]):
-                    keywords.append("装修置业")
-                if any(k in text for k in ["健身", "运动", "跑步", "游泳", "瑜伽", "健身房"]):
-                    keywords.append("健身运动")
-                if any(k in text for k in ["工作", "公司", "职级", "加薪", "离职", "跳槽", "面试", "裁员"]):
-                    keywords.append("职场工作")
-                if any(k in text for k in ["电影", "剧集", "综艺", "追剧", "评分", "推荐"]):
-                    keywords.append("影视娱乐")
-
-                for kw in keywords:
-                    keyword_msgs[kw].append({
-                        "chat": chat_name,
-                        "sender": m.get("sender", ""),
-                        "text": text,
-                        "time": m.get("create_time"),
-                    })
-
-        for topic, msgs in keyword_msgs.items():
-            if len(msgs) < 20:
-                continue
-            # 取最近 100 条
-            recent = sorted(msgs, key=lambda x: x.get("time") or 0)[-100:]
-            lines = [f"# {topic}\n", "\n## 相关讨论\n"]
-            for m in recent:
-                tstr = ""
-                if m.get("time"):
-                    try:
-                        tstr = datetime.fromtimestamp(int(m["time"])).strftime("%Y-%m-%d")
-                    except Exception as e:
-                        _logger.warning("timestamp conversion failed: %s", e)
-                lines.append(f"- [{tstr}] {m['sender']} @ {m['chat']}: {m['text'][:100]}")
-
-            path = topics_dir / f"{topic}.md"
-            path.write_text("\n".join(lines), encoding="utf-8")
-            print(f"  ✓ {topic} ({len(msgs)} 条相关消息)")
-
     print(f"\n{'='*60}")
     print("完成！")
     if not args.users_only and not args.groups_only:
         print(f"  用户 wiki: {WIKI_DIR / 'users'}")
         print(f"  群聊 wiki: {WIKI_DIR / 'groups'}")
-        print(f"  话题 wiki: {WIKI_DIR / 'topics'}")
     print(f"{'='*60}")
 
 

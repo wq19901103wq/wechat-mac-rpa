@@ -150,6 +150,7 @@ class WeChatBot:
 
         self._login_handler = WeChatLoginHandler()
         self.on_message = on_message
+        self.enable_chat_switch = enable_chat_switch
         self.running = False
         self.session_id = __import__('time').strftime("%Y%m%d%H%M%S") + "_" + str(os.getpid())
         self._tick_id = int(time.time())  # 跨重启唯一
@@ -245,10 +246,12 @@ class WeChatBot:
                     return
 
             if result is None:
-                self.logger.log_capture(tick_id, success=False, error="未能获取微信窗口画面，可能原因：微信未启动、窗口被最小化、或需要扫码登录")
-                self.logger.warning(
-                    "未能获取微信窗口画面，可能原因：微信未启动、窗口被最小化、或需要扫码登录"
+                capture_error = (
+                    "未能获取微信窗口画面。请确认微信已登录且窗口未最小化，并检查实际启动 Bot "
+                    "的应用是否已获得屏幕录制权限；如从自动化开发环境启动，请改用已授权的普通终端重试"
                 )
+                self.logger.log_capture(tick_id, success=False, error=capture_error)
+                self.logger.warning(capture_error)
                 self.debug_logger.log_action("none", action_input="", success=False, error="perceive 返回 None")
                 return
 
@@ -444,7 +447,10 @@ class WeChatBot:
             all_messages = getattr(state, "messages", [])
             if not isinstance(all_messages, list):
                 all_messages = []
+            t_gen_start = time.time()
             replies = self.generator.generate(to_reply, all_messages, is_group=is_group, tick_id=tick_id)
+            t_gen_ms = (time.time() - t_gen_start) * 1000
+            self.logger.info(f"[Perf][Tick] LLM generate total={t_gen_ms:.0f}ms replies={len(replies)}")
             reply_text = " | ".join(replies) if replies else ""
             # 写 tick_log
             conn = None

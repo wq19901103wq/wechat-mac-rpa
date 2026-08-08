@@ -14,6 +14,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.memory.history_search import _BGEEncoder, _model_path, _try_import_encoder_deps
 
 
+def embedding_text(row: dict) -> str:
+    profile = row.get("semantic_profile") or {}
+    profile_text = "；".join(
+        f"{key}={value}" for key, value in sorted(profile.items()) if value
+    )
+    parts = ["对话输入：" + "\n".join(row["context"])]
+    if profile_text:
+        parts.append("互动语义：" + profile_text)
+    return "\n".join(parts)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--examples", type=Path, required=True)
@@ -27,7 +38,7 @@ def main() -> None:
     if backend is None or not _model_path().exists():
         raise SystemExit("BGE 编码器不可用")
     encoder = _BGEEncoder(_model_path(), backend)
-    texts = ["\n".join(row["context"]) for row in rows]
+    texts = [embedding_text(row) for row in rows]
     batches = []
     for start in range(0, len(texts), max(1, args.batch_size)):
         batches.append(encoder.encode(texts[start:start + args.batch_size]))
@@ -37,6 +48,7 @@ def main() -> None:
         ids=np.array([row["id"] for row in rows]),
         embeddings=embeddings,
         examples_sha256=np.array(examples_sha256),
+        index_version=np.array(2),
     )
     print(json.dumps({"examples": len(rows), "dim": embeddings.shape[1] if len(rows) else 0, "output": str(output)}, ensure_ascii=False))
 
