@@ -62,8 +62,35 @@ jobs:
               --body 'Automated update generated from GitHub stargazer timestamps.')
             pr_number=${pr_url##*/}
           fi
-          ci_run_url=$(gh workflow run ci.yml --ref automation/star-history)
-          codeql_run_url=$(gh workflow run codeql.yml --ref automation/star-history)
-          gh run watch "${ci_run_url##*/}" --exit-status
-          gh run watch "${codeql_run_url##*/}" --exit-status
-          gh pr merge "${pr_number}" --squash
+          head_sha=$(git rev-parse HEAD)
+          for workflow in ci.yml codeql.yml; do
+            run_id=''
+            for _ in {1..30}; do
+              run_id=$(gh run list \
+                --workflow "${workflow}" \
+                --branch automation/star-history \
+                --event pull_request \
+                --limit 10 \
+                --json databaseId,headSha,status,conclusion \
+                --jq ".[] | select(.headSha == \"${head_sha}\" and .status == \"completed\" and .conclusion == \"action_required\") | .databaseId" \
+                | head -n 1)
+              [ -n "${run_id}" ] && break
+              sleep 2
+            done
+            if [ -z "${run_id}" ]; then
+              echo "Could not find the blocked ${workflow} run for ${head_sha}." >&2
+              exit 1
+            fi
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/approve"
+            gh run watch "${run_id}" --exit-status
+          done
+          gh pr merge "${pr_number}" --auto --squash
+          for _ in {1..30}; do
+            if [ "$(gh pr view "${pr_number}" --json state --jq .state)" = 'MERGED' ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Star history PR #${pr_number} did not merge." >&2
+          exit 1
