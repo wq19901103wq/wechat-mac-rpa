@@ -62,6 +62,8 @@ jobs:
               --body 'Automated update generated from GitHub stargazer timestamps.')
             pr_number=${pr_url##*/}
           fi
-          gh workflow run ci.yml --ref automation/star-history
-          gh workflow run codeql.yml --ref automation/star-history
-          gh pr merge "${pr_number}" --auto --squash
+          ci_run_url=$(gh workflow run ci.yml --ref automation/star-history)
+          codeql_run_url=$(gh workflow run codeql.yml --ref automation/star-history)
+          gh run watch "${ci_run_url##*/}" --exit-status
+          gh run watch "${codeql_run_url##*/}" --exit-status
+          gh pr merge "${pr_number}" --squash
