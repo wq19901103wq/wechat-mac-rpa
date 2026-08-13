@@ -38,6 +38,10 @@ data/**/*.db
 data/**/*.sqlite*
 data/**/*.jsonl
 
+# 本地模型权重（仅保留目录说明）
+models/*
+!models/README.md
+
 # 私人聊天与身份资料：只能保留在本机
 prompts/persona.md
 **/chat_export*/

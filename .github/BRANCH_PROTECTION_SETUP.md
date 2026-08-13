@@ -4,7 +4,7 @@
 
 ## 配置步骤
 
-1. 打开仓库页面：`https://github.com/example-owner/wechat-mac-rpa`
+1. 打开仓库页面：`https://github.com/wq19901103wq/wechat-mac-rpa`
 2. 点击 **Settings** → **Branches**
 3. 在 **Branch protection rules** 下点击 **Add rule**
 4. **Branch name pattern** 填：`main`（或 `master`）

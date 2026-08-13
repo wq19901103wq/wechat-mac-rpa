@@ -17,6 +17,7 @@
 import argparse
 import hashlib
 import json
+import os
 import pickle  # nosec B403
 import sys
 import time
@@ -34,7 +35,12 @@ DEFAULT_INPUT_DIR = Path(__file__).parent.parent / "data" / "exports" / "b"
 DEFAULT_OUTPUT = (
     Path(__file__).parent.parent / "data" / "memory" / "cache" / "vector_index_dense_messages.pkl"
 )
-DEFAULT_MODEL = Path("/Users/yourname/wechat-digital-twin/models/bge-small-zh-v1.5")
+DEFAULT_MODEL = Path(
+    os.environ.get(
+        "WECHAT_BGE_MODEL_PATH",
+        Path(__file__).parent.parent / "models" / "bge-small-zh-v1.5",
+    )
+)
 DEFAULT_BATCH_SIZE = 512
 DEFAULT_MAX_LENGTH = 200
 CONTEXT_WINDOW = 5

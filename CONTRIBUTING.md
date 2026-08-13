@@ -27,7 +27,7 @@ This document outlines how to contribute to the project.
 
 ```bash
 # Clone the repo
-git clone https://github.com/example-owner/wechat-mac-rpa.git
+git clone https://github.com/wq19901103wq/wechat-mac-rpa.git
 cd wechat-mac-rpa
 
 # Create virtual environment

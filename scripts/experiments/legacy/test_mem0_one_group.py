@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import datetime
 import logging
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from src.session.global_store import GlobalStore
 from mem0 import Memory

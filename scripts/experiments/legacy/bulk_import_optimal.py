@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""批量灌库：LLM 1 次 + embed 分批(每批<=10) + 入库"""
+"""批量灌库最优版：LLM 提取只做 1 次"""
 
-import os, json, uuid, sys, re
+import os, json, uuid, sys
 from pathlib import Path
 from datetime import datetime
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from src.session.global_store import GlobalStore
 from openai import OpenAI
@@ -24,8 +24,9 @@ if not target_name:
     sys.exit(1)
 
 state = store.chats[target_name]
-messages = state.messages[-500:]
+messages = state.messages[-2000:]
 
+# 1. 格式化成行（不分 chunk，全部保留）
 lines = []
 for m in messages:
     ts = m.create_time
@@ -38,9 +39,9 @@ for m in messages:
     lines.append(f"[{tstr}] {m.sender}: {m.text}")
 
 full_context = "\n".join(lines)
-print(f"群: {target_name} | 消息: {len(messages)} | 字符: {len(full_context)}")
+print(f"群: {target_name} | 总消息: {len(messages)} | 总字符: {len(full_context)}")
 
-# 1. LLM 一次性提取
+# 2. 一次性调 LLM 提取所有事实（1 次调用！）
 prompt = f"""从以下微信聊天记录中提取所有关键事实。
 要求：
 1. 每人每条观点/行为独立成句
@@ -53,56 +54,48 @@ prompt = f"""从以下微信聊天记录中提取所有关键事实。
 {full_context}
 """
 
-print("LLM 提取中...")
+print("\n调 LLM 提取事实...")
 resp = client.chat.completions.create(
     model="deepseek-v4-flash",
     messages=[{"role": "user", "content": prompt}],
     response_format={"type": "json_object"},
-    temperature=0.1,
 )
 facts = json.loads(resp.choices[0].message.content).get("facts", [])
-print(f"提取到 {len(facts)} 条事实\n")
+print(f"提取到 {len(facts)} 条事实")
 
-# 2. Embed 分批（DashScope 限制 batch<=10）
-print("Embed 分批处理...")
-BATCH = 10
-embeddings = []
-for i in range(0, len(facts), BATCH):
-    batch = facts[i : i + BATCH]
-    r = client.embeddings.create(input=batch, model="text-embedding-v3")
-    embeddings.extend([e.embedding for e in r.data])
-    print(f"  批次 {i // BATCH + 1}/{(len(facts) - 1) // BATCH + 1} 完成")
+# 3. 批量 embed（1 次调用）
+print("批量 embed...")
+embed_resp = client.embeddings.create(input=facts, model="text-embedding-v3")
+embeddings = [e.embedding for e in embed_resp.data]
 
-# 3. 入库
-coll_name = re.sub(r"[^a-zA-Z0-9_-]", "_", target_name)
+# 4. 批量入库（1 次调用）
 chroma = chromadb.PersistentClient(path="data/wechat_bulk_optimal")
-try:
-    chroma.delete_collection(coll_name)
-except Exception as e:
-    _logger.warning("delete collection failed: %s", e)
-collection = chroma.get_or_create_collection(coll_name)
+collection = chroma.get_or_create_collection(target_name)
 collection.add(
     ids=[str(uuid.uuid4()) for _ in facts],
     embeddings=embeddings,
     documents=facts,
     metadatas=[{"source": target_name} for _ in facts],
 )
-print(f"\n入库 {len(facts)} 条完成！")
+print(f"完成！入库 {len(facts)} 条事实\n")
 
-# 4. 展示全部事实
-print("\n" + "=" * 60)
-print(f"全部 {len(facts)} 条事实：")
+# 展示提取的事实
 print("=" * 60)
-for i, fact in enumerate(facts, 1):
+print("提取的事实样例（前 50 条）：")
+print("=" * 60)
+for i, fact in enumerate(facts[:50], 1):
     print(f"{i}. {fact}")
 
-# 5. 搜索测试
+if len(facts) > 50:
+    print(f"\n... 还有 {len(facts) - 50} 条")
+
+# 搜索测试
 print("\n" + "=" * 60)
 print("搜索测试：")
 print("=" * 60)
-for query in ["谁持有腾讯", "清仓阿里", "看好比特币", "加仓", "字节", "职级"]:
-    qe = client.embeddings.create(input=[query], model="text-embedding-v3").data[0].embedding
-    r = collection.query(query_embeddings=[qe], n_results=3)
+for query in ["谁持有腾讯", "清仓阿里", "看好比特币", "推荐", "职级"]:
+    q_embed = client.embeddings.create(input=[query], model="text-embedding-v3").data[0].embedding
+    results = collection.query(query_embeddings=[q_embed], n_results=3)
     print(f"\n🔍 '{query}':")
-    for doc, dist in zip(r["documents"][0], r["distances"][0]):
+    for doc, dist in zip(results["documents"][0], results["distances"][0]):
         print(f"   [{dist:.3f}] {doc}")
