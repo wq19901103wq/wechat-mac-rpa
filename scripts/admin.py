@@ -1082,7 +1082,7 @@ CODE_AUDIT_ISSUES = [
         "title": "API 路径时间戳系统性缺失",
         "file": "src/perception/smart_pipeline.py",
         "lines": "48-142, 893-904",
-        "github_url": "https://github.com/example-owner/wechat-mac-rpa/blob/main/src/perception/smart_pipeline.py#L893",
+        "github_url": "https://github.com/wq19901103wq/wechat-mac-rpa/blob/main/src/perception/smart_pipeline.py#L893",
         "problem": "System Prompt 的 messages 格式只有 sender/text/type，未要求 API 返回时间戳；解析代码固定用 strptime('%Y-%m-%d %H:%M:%S')，但截图中的时间格式是'昨天 21:58'、'11:34'等，完全不匹配。",
         "impact": "所有 API 路径消息 create_time 100% fallback 到 int(time.time())。同 tick 内多条消息时间戳完全相同，导致历史窗口'最近10分钟'cutoff失效、already_handled去重误判、LLM时间推理维度失效。Tick 409已证实此症状。",
         "fix": "1) System Prompt 增加 timestamp 字段要求；2) 解析逻辑支持'昨天 HH:MM'、'HH:MM'、'YYYY-MM-DD HH:MM'多种格式；3) 使用相对时间转换（昨天=今天日期-1天+HH:MM）。"
@@ -1093,7 +1093,7 @@ CODE_AUDIT_ISSUES = [
         "title": "layout_parser 聊天列表时间戳检测逻辑完全错误",
         "file": "src/layout/layout_parser.py",
         "lines": "354",
-        "github_url": "https://github.com/example-owner/wechat-mac-rpa/blob/main/src/layout/layout_parser.py#L354",
+        "github_url": "https://github.com/wq19901103wq/wechat-mac-rpa/blob/main/src/layout/layout_parser.py#L354",
         "problem": "e.text in TIMESTAMP_PATTERNS 永远为False（列表元素是正则串）；e.text[1]==':' 对'11:34'判断第二个字符'1'；e.text[2:].isdigit() 对'11:34'得到':34'.isdigit()。三个条件全部永远为False。",
         "impact": "ChatListItem.timestamp 永远为空。当前无下游直接消费此字段，但这是一个彻底失效的功能——未来任何人基于时间戳做排序/判断都会失败。",
         "fix": "改为正则匹配：any(re.match(p, e.text) for p in TIMESTAMP_PATTERNS)"
@@ -1104,7 +1104,7 @@ CODE_AUDIT_ISSUES = [
         "title": "judge_worker 维度权重表与 Prompt 模板不一致",
         "file": "src/badcase/judge_worker.py",
         "lines": "602-611, 215",
-        "github_url": "https://github.com/example-owner/wechat-mac-rpa/blob/main/src/badcase/judge_worker.py#L602",
+        "github_url": "https://github.com/wq19901103wq/wechat-mac-rpa/blob/main/src/badcase/judge_worker.py#L602",
         "problem": "Prompt中回复必要性20%/简洁度15%，代码中15%/10%；代码多出一个'工具调用正确性'10%维度，Prompt中完全没有。",
         "impact": "Judge LLM按Prompt打分，代码用另一套权重算总分。'工具调用正确性'缺失时fallback到50分，每个case被系统性扣5分，borderline case可能错误判为badcase。",
         "fix": "统一权重表：代码DIM_WEIGHTS与Prompt模板完全一致，或将'工具调用正确性'合并到'信息准确性'中。"
@@ -1115,7 +1115,7 @@ CODE_AUDIT_ISSUES = [
         "title": "WeFlow 模式判断 hasattr 永远为 True",
         "file": "src/session/global_store.py",
         "lines": "390",
-        "github_url": "https://github.com/example-owner/wechat-mac-rpa/blob/main/src/session/global_store.py#L390",
+        "github_url": "https://github.com/wq19901103wq/wechat-mac-rpa/blob/main/src/session/global_store.py#L390",
         "problem": "hasattr(messages[0], 'local_id') 对任何 ChatMessage 永远为True（dataclass定义了该字段）。",
         "impact": "当前_weflow_mode='ocr'，不会触发此分支。但如果未来启用WeFlow持续模式，OCR消息会错误进入_merge_tick_weflow。",
         "fix": "messages[0].local_id is not None"
@@ -1126,7 +1126,7 @@ CODE_AUDIT_ISSUES = [
         "title": "_format_message_line 与 _msg_ts 时间戳提取逻辑不一致",
         "file": "src/reply/generator.py",
         "lines": "772-784, 916-921",
-        "github_url": "https://github.com/example-owner/wechat-mac-rpa/blob/main/src/reply/generator.py#L772",
+        "github_url": "https://github.com/wq19901103wq/wechat-mac-rpa/blob/main/src/reply/generator.py#L772",
         "problem": "_format_message_line对SELF消息不优先用reply_time；_msg_ts对SELF消息优先reply_time。两者fallback路径也不同（timestamp解析 vs time.time()）。",
         "impact": "Bot自己发的消息在prompt中不显示时间标签（因为create_time为空），但会被正确纳入历史窗口。显示与选择逻辑不一致，未来维护者容易困惑。",
         "fix": "统一两个函数的时间戳提取优先级：SELF→reply_time→create_time→timestamp解析→time.time()；OTHER→create_time→timestamp解析→time.time()"
@@ -1137,7 +1137,7 @@ CODE_AUDIT_ISSUES = [
         "title": "Bot 自身消息不设置 create_time",
         "file": "src/bot/wechat_bot.py",
         "lines": "416-420",
-        "github_url": "https://github.com/example-owner/wechat-mac-rpa/blob/main/src/bot/wechat_bot.py#L416",
+        "github_url": "https://github.com/wq19901103wq/wechat-mac-rpa/blob/main/src/bot/wechat_bot.py#L416",
         "problem": "发送成功后创建ChatMessage时只设置了reply_time，没有设置create_time。",
         "impact": "结合P1-2，Bot消息在prompt中永远不显示时间标签。LLM无法判断Bot消息的发送时间，只能依赖消息顺序推断。",
         "fix": "ChatMessage(..., create_time=int(time.time()), reply_time=time.time())"
@@ -1148,7 +1148,7 @@ CODE_AUDIT_ISSUES = [
         "title": "already_handled 可能错误标记连续消息",
         "file": "src/reply/generator.py",
         "lines": "962-975",
-        "github_url": "https://github.com/example-owner/wechat-mac-rpa/blob/main/src/reply/generator.py#L962",
+        "github_url": "https://github.com/wq19901103wq/wechat-mac-rpa/blob/main/src/reply/generator.py#L962",
         "problem": "如果用户连续发3条消息，Bot只回复了第3条，第1/2条也会因为'reply_time > ts'被标记为'⚠️(可跳过)'。",
         "impact": "这是提示性标记不强制跳过，但可能误导LLM跳过需要单独回复的消息。属于设计缺陷。",
         "fix": "更精确匹配：检查Bot回复的上一条消息是否与当前未读消息内容对应，而非仅比较时间。"

@@ -48,7 +48,7 @@ jq . ~/wechat-mac-rpa/data/history/测试群.jsonl
 ### 4. 测试
 
 ```bash
-cd /Users/yourname/wechat-mac-rpa
+cd /path/to/wechat-mac-rpa
 python -m pytest tests/ -v
 ```
 
