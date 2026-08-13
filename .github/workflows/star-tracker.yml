@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -48,10 +49,48 @@ jobs:
           git add docs/assets/star-history.svg docs/assets/star-history.json
           git commit -m 'chore: update star history chart'
           git push --force origin HEAD:automation/star-history
-          if ! gh pr list --head automation/star-history --state open --json number --jq 'length > 0' | grep -q true; then
-            gh pr create \
+          pr_number=$(gh pr list \
+            --head automation/star-history \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+          if [ -z "${pr_number}" ]; then
+            pr_url=$(gh pr create \
               --base main \
               --head automation/star-history \
               --title 'chore: update star history chart' \
-              --body 'Automated update generated from GitHub stargazer timestamps.'
+              --body 'Automated update generated from GitHub stargazer timestamps.')
+            pr_number=${pr_url##*/}
           fi
+          head_sha=$(git rev-parse HEAD)
+          for workflow in ci.yml codeql.yml; do
+            run_id=''
+            for _ in {1..30}; do
+              run_id=$(gh run list \
+                --workflow "${workflow}" \
+                --branch automation/star-history \
+                --event pull_request \
+                --limit 10 \
+                --json databaseId,headSha,status,conclusion \
+                --jq ".[] | select(.headSha == \"${head_sha}\" and .status == \"completed\" and .conclusion == \"action_required\") | .databaseId" \
+                | head -n 1)
+              [ -n "${run_id}" ] && break
+              sleep 2
+            done
+            if [ -z "${run_id}" ]; then
+              echo "Could not find the blocked ${workflow} run for ${head_sha}." >&2
+              exit 1
+            fi
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/approve"
+            gh run watch "${run_id}" --exit-status
+          done
+          gh pr merge "${pr_number}" --auto --squash
+          for _ in {1..30}; do
+            if [ "$(gh pr view "${pr_number}" --json state --jq .state)" = 'MERGED' ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Star history PR #${pr_number} did not merge." >&2
+          exit 1

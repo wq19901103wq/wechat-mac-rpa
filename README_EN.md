@@ -1,11 +1,11 @@
 # WeChat Mac RPA
 
-![CI](https://github.com/example-owner/wechat-mac-rpa/actions/workflows/ci.yml/badge.svg)
-![Quality](https://github.com/example-owner/wechat-mac-rpa/actions/workflows/quality.yml/badge.svg)
-![CodeQL](https://github.com/example-owner/wechat-mac-rpa/actions/workflows/codeql.yml/badge.svg)
+![CI](https://github.com/wq19901103wq/wechat-mac-rpa/actions/workflows/ci.yml/badge.svg)
+![Quality](https://github.com/wq19901103wq/wechat-mac-rpa/actions/workflows/quality.yml/badge.svg)
+![CodeQL](https://github.com/wq19901103wq/wechat-mac-rpa/actions/workflows/codeql.yml/badge.svg)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
-![GitHub stars](https://img.shields.io/github/stars/example-owner/wechat-mac-rpa?style=social)
-![GitHub forks](https://img.shields.io/github/forks/example-owner/wechat-mac-rpa?style=social)
+![GitHub stars](https://img.shields.io/github/stars/wq19901103wq/wechat-mac-rpa?style=social)
+![GitHub forks](https://img.shields.io/github/forks/wq19901103wq/wechat-mac-rpa?style=social)
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![macOS](https://img.shields.io/badge/macOS-12+-000000?logo=apple)
 
@@ -164,7 +164,7 @@ This project is for personal learning and research purposes only. Using automati
 
 ## Star History
 
-[![Star History](docs/assets/star-history.svg)](https://github.com/example-owner/wechat-mac-rpa/stargazers)
+[![Star History](docs/assets/star-history.svg)](https://github.com/wq19901103wq/wechat-mac-rpa/stargazers)
 
 ---
 

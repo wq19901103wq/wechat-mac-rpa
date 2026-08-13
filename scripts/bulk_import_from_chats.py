@@ -52,7 +52,7 @@ class SimpleMsg:
     sender: str
     sender_type: str  # "self" 或 "other"
     text: str
-    create_time: int = None
+    create_time: int | None = None
     account: str = ""
     chat_name: str = ""  # 消息来源的聊天名称，用于 conversation 中分隔不同聊天
 
@@ -120,7 +120,9 @@ def build_wxid_index(all_chats: dict) -> dict:
     建立全局 wxid → 用户信息索引。
     返回: {wxid: {main_name, all_names, total_msgs, chats: {stem: [msgs]}}}
     """
-    raw = defaultdict(lambda: {"names": defaultdict(int), "chats": defaultdict(list)})
+    raw: dict[str, dict] = defaultdict(
+        lambda: {"names": defaultdict(int), "chats": defaultdict(list)}
+    )
 
     for stem, data in all_chats.items():
         for m in data.get("messages", []):
@@ -158,7 +160,7 @@ def build_wxid_index(all_chats: dict) -> dict:
 
 # ── 别名管理 ──
 
-def load_aliases() -> dict:
+def load_aliases() -> tuple[dict, dict]:
     """加载现有 aliases.json，返回 {昵称: 主名} 反向映射。"""
     aliases_path = Path("data/memory/overrides/aliases.json")
     existing = {}
@@ -264,10 +266,11 @@ def estimate_tokens(text: str) -> int:
     return int(cn * 1.5 + other * 0.5) + 4
 
 
-def split_by_tokens(msgs: list, max_tokens: int = 900_000) -> list:
+def split_by_tokens(msgs: list[dict], max_tokens: int = 900_000) -> list[list[dict]]:
     """按 token 估算把消息列表分成多批，每批不超过 max_tokens。保留时间顺序。"""
-    batches = []
-    current_batch, current_tokens = [], 0
+    batches: list[list[dict]] = []
+    current_batch: list[dict] = []
+    current_tokens = 0
     for m in msgs:
         tokens = estimate_tokens(m.get("text", ""))
         if current_tokens + tokens > max_tokens and current_batch:
