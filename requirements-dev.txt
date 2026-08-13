@@ -4,7 +4,7 @@
 pytest>=7.0.0
 pytest-asyncio>=1.4.0
 pytest-cov>=7.1.0
-python-dotenv>=1.0.0
+python-dotenv>=1.2.2
 
 # 代码质量 / CI
 ruff>=0.15.20
