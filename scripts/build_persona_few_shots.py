@@ -200,6 +200,9 @@ def extract_candidates(
             provenance = {_human_provenance(message, human_before) for message in outgoing}
             if None in provenance or len(provenance) != 1:
                 continue
+            source_provenance = provenance.pop()
+            if source_provenance is None:
+                continue
             if not _is_coherent_turn(incoming, outgoing):
                 continue
             if relation == "group":
@@ -236,7 +239,7 @@ def extract_candidates(
                 topic=_topic(context, replies),
                 humor_type=humor_type,
                 response_mode=_response_mode(context, replies),
-                source_provenance=provenance.pop(),
+                source_provenance=source_provenance,
             ))
     return candidates
 
