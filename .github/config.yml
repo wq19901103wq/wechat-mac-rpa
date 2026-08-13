@@ -1,0 +1,28 @@
+# Welcome bot configuration
+# https://github.com/behaviorbot/welcome
+
+# Configuration for new-issue-opened
+newIssueWelcomeComment: >
+  Thanks for opening this issue! 🎉
+
+  If this is a bug report, please make sure you've included:
+  - Your environment info (OS, Python, WeChat version)
+  - Steps to reproduce
+  - Expected vs actual behavior
+
+  We'll get back to you as soon as possible. Consider joining our
+  [Discussions](https://github.com/example-owner/wechat-mac-rpa/discussions) for broader questions!
+
+# Configuration for new-pr-opened
+newPRWelcomeComment: >
+  Welcome! Thanks for opening a pull request! 🎉
+
+  Please make sure you've:
+  - Described what your PR does
+  - Tested your changes
+  - Updated documentation if needed
+
+  A maintainer will review your PR shortly.
+
+# Configuration for first-time-issue-claimed
+# (optional) message when a first-time contributor claims an issue
