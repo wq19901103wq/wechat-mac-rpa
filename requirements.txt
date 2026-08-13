@@ -1,5 +1,5 @@
 # 核心运行依赖
-openai>=2.45.0
+openai>=2.53.0
 defusedxml>=0.7.1
 numpy==1.24.3
 sqlalchemy>=2.0.51,<3.0.0
