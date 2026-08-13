@@ -1,0 +1,12 @@
+-r requirements.txt
+
+# 测试依赖
+pytest>=7.0.0
+pytest-asyncio>=1.4.0
+pytest-cov>=7.1.0
+python-dotenv>=1.0.0
+
+# 代码质量 / CI
+ruff>=0.15.20
+mypy>=2.3.0
+bandit>=1.8.0

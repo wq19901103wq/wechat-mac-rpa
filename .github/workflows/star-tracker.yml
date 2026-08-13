@@ -1,0 +1,57 @@
+name: Track Stars
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Fetch star history
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}" > "${RUNNER_TEMP}/repository.json"
+          if ! gh api --paginate --slurp \
+            -H 'Accept: application/vnd.github.star+json' \
+            "repos/${GITHUB_REPOSITORY}/stargazers?per_page=100" \
+            > "${RUNNER_TEMP}/stargazers.json"; then
+            echo 'Stargazer timestamps are restricted; using aggregate history fallback.'
+            echo '[]' > "${RUNNER_TEMP}/stargazers.json"
+          fi
+      - name: Generate chart
+        run: |
+          python3 scripts/generate_star_history.py \
+            --stargazers "${RUNNER_TEMP}/stargazers.json" \
+            --repository "${RUNNER_TEMP}/repository.json" \
+            --history docs/assets/star-history.json \
+            --history-output docs/assets/star-history.json \
+            --output docs/assets/star-history.svg
+      - name: Publish updated chart
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- docs/assets/star-history.svg docs/assets/star-history.json; then
+            echo 'Star history is unchanged.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c automation/star-history
+          git add docs/assets/star-history.svg docs/assets/star-history.json
+          git commit -m 'chore: update star history chart'
+          git push --force origin HEAD:automation/star-history
+          if ! gh pr list --head automation/star-history --state open --json number --jq 'length > 0' | grep -q true; then
+            gh pr create \
+              --base main \
+              --head automation/star-history \
+              --title 'chore: update star history chart' \
+              --body 'Automated update generated from GitHub stargazer timestamps.'
+          fi

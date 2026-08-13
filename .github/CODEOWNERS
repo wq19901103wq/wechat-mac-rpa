@@ -1,0 +1,12 @@
+# 全局默认审查人：仓库所有者
+* @example-owner
+
+# 核心回复生成逻辑修改需要仓库所有者审查
+src/reply/ @example-owner
+src/bot/ @example-owner
+prompts/ @example-owner
+skills/ @example-owner
+
+# CI/CD 配置修改需要仓库所有者审查
+.github/ @example-owner
+requirements.txt @example-owner
