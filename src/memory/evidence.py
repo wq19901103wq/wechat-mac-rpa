@@ -13,7 +13,11 @@ synthetic data.
   wiki body at runtime so untrusted derived facts never reach the LLM.
 """
 
+import logging
 from typing import Any, List
+
+
+_logger = logging.getLogger(__name__)
 
 
 def is_self_message(msg: Any) -> bool:
@@ -68,7 +72,7 @@ def format_evidence_conversation(messages: List[Any], bot_replies: List[str]) ->
                 ts_str = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(int(ts)))
                 prefix += f"[{ts_str}]"
             except Exception:
-                pass
+                _logger.debug("invalid evidence timestamp: %r", ts, exc_info=True)
         if prefix:
             lines.append(f"{prefix}{sender}：{text}")
         else:
