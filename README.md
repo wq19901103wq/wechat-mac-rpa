@@ -205,7 +205,7 @@ python3 scripts/update_history_index.py --remove-one "MSG_ID"
 ```
 
 - 编码器使用 **ONNX Runtime**，无需 `torch` / `transformers`。
-- 默认模型路径指向本地 `wechat-digital-twin/models/bge-small-zh-v1.5`，可通过 `WECHAT_BGE_MODEL_PATH` 覆盖。
+- 默认模型路径为仓库内的 `models/bge-small-zh-v1.5`，可通过 `WECHAT_BGE_MODEL_PATH` 覆盖。
 - 输出 `data/memory/cache/vector_index_dense_messages.pkl`，可通过 `WECHAT_HISTORY_INDEX_PATH` 覆盖。
 
 **线上召回**

@@ -5,7 +5,7 @@ type: software
 authors:
   - given-names: "wq"
     family-names: "wq"
-repository-code: "https://github.com/example-owner/wechat-mac-rpa"
+repository-code: "https://github.com/wq19901103wq/wechat-mac-rpa"
 abstract: "A macOS WeChat automation framework that uses multimodal AI vision perception instead of protocol reverse engineering. Features include memory system, digital twin, multi-agent architecture, and extensible Skill plugins for smart home control and 3D printer management."
 keywords:
   - WeChat

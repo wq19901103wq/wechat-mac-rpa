@@ -25,7 +25,7 @@
 
 由于安全风险高、操作复杂，该方案已被 Vision OCR 视觉识别方案完全替代。
 
-如需了解旧方案的技术细节，请查阅 `archive/docs/deprecated/GET_DB_KEY.md`、`archive/docs/deprecated/KEY_EXTRACTION_GUIDE.md`。
+如需了解旧方案的技术细节，请查阅 `docs/archive/deprecated/GET_DB_KEY.md`、`docs/archive/deprecated/KEY_EXTRACTION_GUIDE.md`。
 
 ---
 

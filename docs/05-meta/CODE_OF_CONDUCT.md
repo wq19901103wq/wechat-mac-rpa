@@ -10,9 +10,9 @@
 
 | 你的分工 | 读取子守则 | 覆盖内容 |
 |--------|-----------|---------|
-| **测试/QA / 修复 bug / 跑回归** | [../../archive/standards/STANDARDS_TESTING_BUGS.md](../../archive/standards/STANDARDS_TESTING_BUGS.md) | 测试错误零容忍、P0-P2 优先级、CI 红线、错误资产化、待修复清单 |
-| **架构设计 / 写文档 / 更新接口** | [../../archive/standards/STANDARDS_DOCUMENTATION.md](../../archive/standards/STANDARDS_DOCUMENTATION.md) | 文档同步政策、强制进度标签（🚧未实现 → 🚀已上线） |
-| **写代码 / 提交 / 分支管理 / 合并** | [../../archive/standards/STANDARDS_CODING.md](../../archive/standards/STANDARDS_CODING.md) | 一个提交一件事、禁止直推 main、分支存活期 ≤7 天 |
+| **测试/QA / 修复 bug / 跑回归** | [standards/STANDARDS_TESTING_BUGS.md](standards/STANDARDS_TESTING_BUGS.md) | 测试错误零容忍、P0-P2 优先级、CI 红线、错误资产化、待修复清单 |
+| **架构设计 / 写文档 / 更新接口** | [standards/STANDARDS_DOCUMENTATION.md](standards/STANDARDS_DOCUMENTATION.md) | 文档同步政策、强制进度标签（🚧未实现 → 🚀已上线） |
+| **写代码 / 提交 / 分支管理 / 合并** | [standards/STANDARDS_CODING.md](standards/STANDARDS_CODING.md) | 一个提交一件事、禁止直推 main、分支存活期 ≤7 天 |
 
 ---
 
@@ -20,9 +20,9 @@
 
 **当你要...** → **先读...**
 
-- 跑测试 / 发现测试红了 / 修 bug / 确认 bug 收尾 → [../../archive/standards/STANDARDS_TESTING_BUGS.md](../../archive/standards/STANDARDS_TESTING_BUGS.md)
-- 改 `ARCHITECTURE.md` / 更新 API / 写新文档 / 标注进度 → [../../archive/standards/STANDARDS_DOCUMENTATION.md](../../archive/standards/STANDARDS_DOCUMENTATION.md)
-- 提交代码 / 开分支 / 准备合并 / 代码审查 → [../../archive/standards/STANDARDS_CODING.md](../../archive/standards/STANDARDS_CODING.md)
+- 跑测试 / 发现测试红了 / 修 bug / 确认 bug 收尾 → [standards/STANDARDS_TESTING_BUGS.md](standards/STANDARDS_TESTING_BUGS.md)
+- 改 `ARCHITECTURE.md` / 更新 API / 写新文档 / 标注进度 → [standards/STANDARDS_DOCUMENTATION.md](standards/STANDARDS_DOCUMENTATION.md)
+- 提交代码 / 开分支 / 准备合并 / 代码审查 → [standards/STANDARDS_CODING.md](standards/STANDARDS_CODING.md)
 
 ---
 

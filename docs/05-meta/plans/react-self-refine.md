@@ -828,7 +828,7 @@ ORDER BY id DESC LIMIT 50;"
 
 ## 执行选项
 
-计划已完成并保存到 `docs/superpowers/plans/2026-07-05-react-self-refine.md`。
+计划已完成并保存到 `docs/05-meta/plans/react-self-refine.md`。
 
 两种执行方式：
 
