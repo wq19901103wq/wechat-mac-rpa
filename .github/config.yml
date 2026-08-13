@@ -11,7 +11,7 @@ newIssueWelcomeComment: >
   - Expected vs actual behavior
 
   We'll get back to you as soon as possible. Consider joining our
-  [Discussions](https://github.com/example-owner/wechat-mac-rpa/discussions) for broader questions!
+  [Discussions](https://github.com/wq19901103wq/wechat-mac-rpa/discussions) for broader questions!
 
 # Configuration for new-pr-opened
 newPRWelcomeComment: >

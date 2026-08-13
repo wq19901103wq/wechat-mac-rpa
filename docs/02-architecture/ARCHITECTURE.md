@@ -806,7 +806,7 @@ class UIInteractor:
 
 **职责**: 当 `WindowCapture` 检测到微信窗口尺寸异常（未登录/浮窗）时，尝试自动恢复。
 
-> **⚠️ 跨层协调器特例**：`login_recovery` 是系统中唯一的**跨层协调器**，它内部需要协调 capture (L2) + ocr (L2) + action (L4) 三层的能力来完成恢复流程。因此它不可避免地会跨越 L2-L4 的边界。作为特例，它被放在 action 层（因为最终手段是 UI 点击），但**不允许任何下层模块反向依赖它**。
+> **⚠️ 跨层协调器特例**：`login_recovery` 是系统中唯一的**跨层协调器**，它内部需要协调 L2 capture + L2 ocr + L4 action 三层的能力来完成恢复流程。因此它不可避免地会跨越 L2-L4 的边界。作为特例，它被放在 action 层（因为最终手段是 UI 点击），但**不允许任何下层模块反向依赖它**。
 >
 > 分层约束：
 > - `WindowCapture` (L2) **禁止** import `WeChatLoginHandler`。窗口异常时只抛 `WeChatNotReadyError`，由上层处理恢复。

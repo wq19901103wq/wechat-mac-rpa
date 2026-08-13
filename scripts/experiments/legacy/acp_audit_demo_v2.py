@@ -1,180 +1,35 @@
 """
-ACP 代码审计 Demo
-独立运行: python scripts/acp_audit_demo.py
+ACP 代码审计 Demo v2 - 使用 kimi --print 直接调用，更稳定
 端口: 8767
 """
 import asyncio
 import json
+import os
+
 import sys
-
+import logging
 from pathlib import Path
-from typing import Optional
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-sys.path.insert(0, '/Users/yourname/.local/share/uv/tools/kimi-cli/lib/python3.13/site-packages')
 
-import acp
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
+
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-
 import uvicorn
 
-
-WORK_DIR = "/Users/yourname/wechat-mac-rpa"
-KIMI_PYTHON = "/Users/yourname/.local/share/uv/tools/kimi-cli/bin/python"
+_logger = logging.getLogger(__name__)
 
 
-# ============ ACP Client ============
-
-class AuditAcpClient(acp.Client):
-    """收集 ACP agent 的回复、思考、工具调用"""
-
-    def __init__(self):
-        self.messages: list[str] = []
-        self.thoughts: list[str] = []
-        self.tool_calls: list[dict] = []
-        self.done_event = asyncio.Event()
-
-    def reset(self):
-        self.messages.clear()
-        self.thoughts.clear()
-        self.tool_calls.clear()
-        self.done_event.clear()
-
-    def on_connect(self, conn):
-        pass
-
-    def session_update(self, session_id, update, **kwargs):
-        if isinstance(update, acp.schema.AgentMessageChunk):
-            text = update.content.text if update.content else ""
-            self.messages.append(text)
-        elif isinstance(update, acp.schema.AgentThoughtChunk):
-            text = update.content.text if update.content else ""
-            self.thoughts.append(text)
-        elif isinstance(update, acp.schema.ToolCallStart):
-            self.tool_calls.append({
-                "title": update.title,
-                "status": update.status,
-                "tool_call_id": update.tool_call_id,
-            })
-        elif isinstance(update, acp.schema.ToolCallProgress):
-            # 更新已有 tool call 状态
-            for tc in self.tool_calls:
-                if tc.get("tool_call_id") == update.tool_call_id:
-                    tc["status"] = update.status
-                    break
-        elif hasattr(update, 'session_update') and update.session_update == "usage_update":
-            self.done_event.set()
-
-    def request_permission(self, options, session_id, tool_call, **kwargs):
-        return acp.schema.RequestPermissionResponse(approved=True)
-
-    def get_full_reply(self) -> str:
-        # Kimi Code 在工具调用模式下，分析结果可能在 thoughts 里
-        # 合并 messages 和 thoughts，优先用 messages（正式回复）
-        reply = "".join(self.messages)
-        thoughts = "".join(self.thoughts)
-        if reply and thoughts:
-            return f"【分析过程】\n{thoughts}\n\n【最终结论】\n{reply}"
-        if reply:
-            return reply
-        return thoughts
-
-    def get_thought_text(self) -> str:
-        return "".join(self.thoughts)
+WORK_DIR = str(Path(__file__).resolve().parents[3])
+KIMI_BIN = os.environ.get("KIMI_BIN", "kimi")
 
 
-# ============ ACP Manager ============
+# ============ Analyze with kimi --print ============
 
-class AcpManager:
-    """管理 kimi acp 子进程和 session"""
-
-    def __init__(self):
-        self.client = AuditAcpClient()
-        self.conn: Optional[acp.client.ClientSideConnection] = None
-        self.process = None
-        self.session_id: Optional[str] = None
-        self._connected = False
-
-    async def connect(self):
-        """启动 kimi acp 并建立连接"""
-        if self._connected:
-            return
-
-        print("[ACP] Starting kimi acp process...")
-        ctx = acp.spawn_agent_process(
-            self.client,
-            "kimi", "acp",
-            cwd=WORK_DIR,
-        )
-        self._ctx = ctx
-        self._gen = ctx.__aenter__()
-        self.conn, self.process = await self._gen
-        self._connected = True
-        print(f"[ACP] Process started, pid={self.process.pid}")
-
-        # Initialize
-        init_resp = await self.conn.initialize(
-            protocol_version=acp.PROTOCOL_VERSION,
-            client_info=acp.schema.Implementation(name="audit-demo", version="0.1"),
-        )
-        print(f"[ACP] Initialized, protocol={init_resp.protocol_version}")
-
-    async def new_session(self):
-        """创建新 session"""
-        await self.connect()
-        resp = await self.conn.new_session(cwd=WORK_DIR)
-        self.session_id = resp.session_id
-        print(f"[ACP] Session created: {self.session_id}")
-        return self.session_id
-
-    async def analyze(self, issue: dict, notes: str, timeout: int = 120) -> dict:
-        """
-        分析单个 issue。
-        返回: {"reply": str, "thoughts": str, "tool_calls": list, "success": bool, "error": str}
-        """
-        await self.connect()
-        if not self.session_id:
-            await self.new_session()
-
-        self.client.reset()
-
-        # 构造 prompt
-        prompt = self._build_prompt(issue, notes)
-        print(f"[ACP] Sending prompt ({len(prompt)} chars)...")
-
-        try:
-            resp = await asyncio.wait_for(
-                self.conn.prompt(
-                    [acp.text_block(prompt)],
-                    session_id=self.session_id,
-                ),
-                timeout=timeout,
-            )
-            print(f"[ACP] PromptResponse: stop_reason={resp.stop_reason}")
-
-            # prompt() 返回时所有 session_update 应该已处理完毕
-            # 但额外给事件循环一个机会处理任何 pending 的回调
-            await asyncio.sleep(0.5)
-
-            return {
-                "success": True,
-                "reply": self.client.get_full_reply(),
-                "thoughts": self.client.get_thought_text(),
-                "tool_calls": self.client.tool_calls,
-                "stop_reason": resp.stop_reason,
-            }
-
-        except asyncio.TimeoutError:
-            return {"success": False, "error": "分析超时", "reply": self.client.get_full_reply()}
-        except Exception as e:
-            import traceback
-            print(f"[ACP] Error: {e}")
-            traceback.print_exc()
-            return {"success": False, "error": "分析异常，请查看服务端日志", "reply": self.client.get_full_reply()}
-
-    def _build_prompt(self, issue: dict, notes: str) -> str:
-        return f"""你是一个代码审计专家。请分析以下代码问题并给出修复方案。
+async def analyze_with_kimi(issue: dict, notes: str, timeout: int = 300) -> dict:
+    """使用 kimi --print 直接调用，非交互式"""
+    
+    prompt = f"""你是一个代码审计专家。请分析以下代码问题并给出修复方案。
 
 ## 问题信息
 - 标题: {issue['title']}
@@ -198,23 +53,60 @@ class AcpManager:
 4. 用中文回复
 """
 
-    async def close(self):
-        if self.conn:
-            await self.conn.close()
-            self.conn = None
-        if hasattr(self, '_ctx'):
-            await self._ctx.__aexit__(None, None, None)
-            self._ctx = None
-        self._connected = False
-        print("[ACP] Closed")
+    cmd = [
+        KIMI_BIN,
+        "--quiet",
+        "--yolo",
+        "-p", prompt,
+        "-w", WORK_DIR,
+    ]
+    
+    print(f"[Analyze] Running: {' '.join(cmd[:6])}...")
+    
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=WORK_DIR,
+        )
+        
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=timeout,
+        )
+        
+        reply = stdout.decode('utf-8', errors='replace')
+        stderr_text = stderr.decode('utf-8', errors='replace')
+        
+        print(f"[Analyze] Done, stdout={len(reply)} chars, stderr={len(stderr_text)} chars, returncode={proc.returncode}")
+        
+        # 过滤掉stderr中的日志行（只保留 kimi 的回复）
+        if stderr_text:
+            print(f"[Analyze] stderr preview: {stderr_text[:500]}")
+        
+        return {
+            "success": True,
+            "reply": reply,
+            "stderr": stderr_text,
+            "returncode": proc.returncode,
+        }
+        
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception as e:
+            _logger.warning("proc.kill failed: %s", e)
+        return {"success": False, "error": f"分析超时（>{timeout}秒）"}
+    except Exception as e:
+        print(f"[Analyze] Error: {e}")
+        return {"success": False, "error": "分析异常，请查看服务端日志"}
 
 
 # ============ FastAPI App ============
 
-app = FastAPI(title="ACP Audit Demo")
-acp_manager = AcpManager()
+app = FastAPI(title="ACP Audit Demo v2")
 
-# 7 条发现（简化版）
 AUDIT_ISSUES = [
     {
         "key": "api_timestamp_missing",
@@ -322,14 +214,11 @@ async def index():
                     <span class="status" id="status-{issue['key']}"></span>
                 </div>
                 <div class="result" id="result-{issue['key']}" style="display:none">
-                    <div class="result-tabs">
-                        <button class="tab-btn active" onclick="showTab('{issue['key']}', 'reply')">AI 方案</button>
-                        <button class="tab-btn" onclick="showTab('{issue['key']}', 'thoughts')">思考过程</button>
-                        <button class="tab-btn" onclick="showTab('{issue['key']}', 'tools')">工具调用</button>
+                    <div class="result-header">
+                        <span>AI 分析结果</span>
+                        <button class="btn-copy" onclick="copyResult('{issue['key']}')">复制</button>
                     </div>
-                    <div class="tab-content" id="tab-reply-{issue['key']}"></div>
-                    <div class="tab-content" id="tab-thoughts-{issue['key']}" style="display:none"></div>
-                    <div class="tab-content" id="tab-tools-{issue['key']}" style="display:none"></div>
+                    <div class="result-content" id="result-content-{issue['key']}"></div>
                 </div>
             </div>
         </div>
@@ -450,33 +339,51 @@ async def index():
         background: var(--bg);
         border: 1px solid var(--border);
         border-radius: 8px;
-        padding: 16px;
+        overflow: hidden;
     }}
-    .result-tabs {{
+    .result-header {{
         display: flex;
-        gap: 8px;
-        margin-bottom: 12px;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+        color: var(--text-secondary);
     }}
-    .tab-btn {{
+    .btn-copy {{
         background: transparent;
         border: 1px solid var(--border);
         color: var(--text-secondary);
-        padding: 4px 12px;
+        padding: 2px 10px;
         border-radius: 4px;
         cursor: pointer;
+        font-size: 12px;
+    }}
+    .result-content {{
+        padding: 16px;
+        font-size: 14px;
+        line-height: 1.7;
+        white-space: pre-wrap;
+        max-height: 500px;
+        overflow-y: auto;
+    }}
+    .result-content code {{
+        background: #21262d;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: 'SF Mono', monospace;
         font-size: 13px;
     }}
-    .tab-btn.active {{
-        background: var(--blue);
-        color: white;
-        border-color: var(--blue);
+    .result-content pre {{
+        background: #0d1117;
+        padding: 12px;
+        border-radius: 6px;
+        overflow-x: auto;
+        border: 1px solid var(--border);
     }}
-    .tab-content {{
-        font-size: 14px;
-        line-height: 1.6;
-        white-space: pre-wrap;
-        max-height: 400px;
-        overflow-y: auto;
+    .result-content pre code {{
+        background: transparent;
+        padding: 0;
     }}
     .loading {{
         color: var(--yellow);
@@ -486,13 +393,6 @@ async def index():
     }}
     .error {{
         color: var(--red);
-    }}
-    .tool-item {{
-        padding: 8px;
-        background: var(--card-bg);
-        border-radius: 4px;
-        margin-bottom: 8px;
-        font-size: 13px;
     }}
 </style>
 </head>
@@ -515,9 +415,10 @@ async function analyzeIssue(key) {{
     const btn = document.querySelector('#card-' + key + ' .btn-analyze');
     const status = document.getElementById('status-' + key);
     const result = document.getElementById('result-' + key);
+    const content = document.getElementById('result-content-' + key);
     
     btn.disabled = true;
-    status.textContent = '分析中...';
+    status.textContent = '⏳ 分析中（约 1-3 分钟）...';
     status.className = 'status loading';
     result.style.display = 'none';
     
@@ -530,23 +431,10 @@ async function analyzeIssue(key) {{
         const data = await resp.json();
         
         if (data.success) {{
-            status.textContent = '✓ 分析完成';
+            status.textContent = '✓ 分析完成 (' + data.reply.length + ' 字符)';
             status.className = 'status success';
-            
-            document.getElementById('tab-reply-' + key).innerHTML = markdownToHtml(data.reply);
-            document.getElementById('tab-thoughts-' + key).textContent = data.thoughts || '(无思考过程)';
-            
-            const toolsEl = document.getElementById('tab-tools-' + key);
-            if (data.tool_calls && data.tool_calls.length > 0) {{
-                toolsEl.innerHTML = data.tool_calls.map(tc => 
-                    `<div class="tool-item">🛠️ ${{tc.title}} <span style="color:var(--green)">${{tc.status}}</span></div>`
-                ).join('');
-            }} else {{
-                toolsEl.textContent = '(无工具调用)';
-            }}
-            
+            content.textContent = data.reply;
             result.style.display = 'block';
-            showTab(key, 'reply');
         }} else {{
             status.textContent = '✗ ' + (data.error || '失败');
             status.className = 'status error';
@@ -559,27 +447,11 @@ async function analyzeIssue(key) {{
     }}
 }}
 
-function showTab(key, tab) {{
-    const card = document.getElementById('card-' + key);
-    card.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    card.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
-    
-    event.target.classList.add('active');
-    document.getElementById('tab-' + tab + '-' + key).style.display = 'block';
-}}
-
-function markdownToHtml(text) {{
-    if (!text) return '';
-    return text
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/`(.*?)`/g, '<code style="background:#30363d;padding:2px 4px;border-radius:3px;">$1</code>')
-        .replace(/```([\s\S]*?)```/g, '<pre style="background:#0d1117;padding:12px;border-radius:6px;overflow-x:auto;"><code>$1</code></pre>')
-        .replace(/^- (.*$)/gim, '<li>$1</li>')
-        .replace(/\\n/g, '<br>');
+function copyResult(key) {{
+    const text = document.getElementById('result-content-' + key).textContent;
+    navigator.clipboard.writeText(text).then(() => {{
+        alert('已复制到剪贴板');
+    }});
 }}
 </script>
 </body>
@@ -592,16 +464,8 @@ async def api_analyze(request: Request):
     body = await request.json()
     issue = body.get("issue", {})
     notes = body.get("notes", "")
-
-    print(f"[API] Analyze request: {issue.get('key')}")
-    result = await acp_manager.analyze(issue, notes, timeout=120)
-    print(f"[API] Analyze done: success={result['success']}, reply_len={len(result.get('reply', ''))}")
+    result = await analyze_with_kimi(issue, notes, timeout=300)
     return JSONResponse(result)
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    await acp_manager.close()
 
 
 if __name__ == "__main__":

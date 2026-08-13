@@ -6,7 +6,7 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     reviewers:
-      - "example-owner"
+      - "wq19901103wq"
     labels:
       - "dependencies"
 
@@ -16,7 +16,7 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 3
     reviewers:
-      - "example-owner"
+      - "wq19901103wq"
     labels:
       - "dependencies"
       - "github-actions"

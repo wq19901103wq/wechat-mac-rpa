@@ -155,7 +155,7 @@ if curr_hash == self._last_hash and self._last_result is not None:
 
 ```bash
 # 提取最近一轮的各阶段耗时
-cd /Users/yourname/wechat-mac-rpa
+cd /path/to/wechat-mac-rpa
 grep -E "\[Perf\]|\[SmartPipeline\] (截图成功|本地处理完成|API请求成功|完成)" \
   data/logs/runtime_$(date +%Y%m%d).log | tail -50
 ```
