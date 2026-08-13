@@ -1170,7 +1170,7 @@ class ReplyGenerator:
             prompt = prompt_path.read_text(encoding="utf-8")
         else:
             # fallback 到默认 prompt
-            prompt = "<persona>你是示例用户甲本人。用户不是在跟AI聊天，是在微信上给示例用户甲发消息。</persona>"
+            prompt = "<instructions><persona>你是示例用户甲本人。用户不是在跟AI聊天，是在微信上给示例用户甲发消息。</persona></instructions>"
 
         return prompt
 
