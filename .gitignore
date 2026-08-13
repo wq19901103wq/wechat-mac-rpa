@@ -1,0 +1,103 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 运行时数据
+data/debug/
+data/logs/
+data/reports/
+*.log
+*.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 备份文件
+*.bak
+*.bak.*
+
+# macOS
+.DS_Store
+
+# pytest
+.pytest_cache/
+# 环境变量（包含 API key）
+.env
+
+# 运行时生成的数据
+data/screenshots/
+data/global_state.json
+data/memory/
+data/**/*.db
+data/**/*.sqlite*
+data/**/*.jsonl
+
+# 私人聊天与身份资料：只能保留在本机
+prompts/persona.md
+**/chat_export*/
+**/chat_exports*/
+**/wechat_export*/
+**/conversation_dump*/
+**/private_few_shot*/
+**/private_fewshot*/
+**/screenshots/private/
+*.sqlite
+*.sqlite3
+*.db
+
+# PID 文件
+bot.pid
+
+# 敏感配置
+.env
+*.env
+!.env.example
+
+# 运行时数据目录
+data/
+
+# IDE
+.claude/
+
+# 运行时 PID
+admin.pid
+
+# Judge 缓存（运行时生成）
+src/tests/fixtures/reply_quality/*/judge_*.json
+
+# 测试运行时自动生成的缓存/样本（非人工标注 fixture）
+src/tests/fixtures/auto_cases/
+src/tests/fixtures/judge_quality/cache/
+src/tests/fixtures/judge_quality_v2/cache/
+src/tests/fixtures/reply_stability/cache/
+
+# 含真实个人数据的 fixtures（已清理，禁止重新添加）
+tests_integration/fixtures/
+src/tests/fixtures/unread_false_positive/
+src/tests/fixtures/unread_badge/
+src/tests/fixtures/reply_quality/
+src/tests/fixtures/tool_decision/
+
+# 含真实个人数据的测试代码（本地保留，禁止提交）
+src/tests/test_chat_list_unread.py
+src/tests/test_chat_list_unread_integration.py
+src/tests/test_*_benchmark.py
+tests_integration/test_full_pipeline_real_screenshots.py
+src/tests/test_memory_search_regression.py
+
+# 内部提示词与纪律守则
+AGENTS.md
+prompts/
+!prompts/persona.md.example
+!prompts/fact_check.md
+!prompts/fact_verify.md
+backups/
+.privacy-rewrite.git/
+bandit-report.json
+.coverage

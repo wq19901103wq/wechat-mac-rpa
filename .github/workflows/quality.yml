@@ -1,0 +1,84 @@
+name: Quality
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  ruff-critical:
+    name: Ruff Critical Checks
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: "pip"
+      - run: pip install ruff
+      - run: ruff check src --select E9,F63,F7,F82
+
+  ruff-style:
+    name: Ruff Style / Import Checks
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: "pip"
+      - run: pip install ruff
+      # 目前仓库遗留风格问题较多，先只报告不阻塞 merge； issues 输出到日志。
+      - run: ruff check src || true
+
+  mypy:
+    name: Mypy Type Check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: "pip"
+      - run: pip install mypy types-requests types-beautifulsoup4 types-Pillow
+      # 类型检查现已清零，阻塞 merge。
+      - run: mypy src
+
+  bandit:
+    name: Bandit Security Scan
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: "pip"
+      - run: pip install bandit
+      # 使用 .bandit 配置：排除 tests 目录的 B101 assert_used，其余 Medium/High 阻塞。
+      - run: bandit -c .bandit -r src -f json -o bandit-report.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          if-no-files-found: ignore
+
+  coverage:
+    name: Test Coverage
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: "pip"
+      - run: pip install -r requirements-dev.txt
+      - run: |
+          pytest src/tests --cov=src --cov-report=xml --cov-report=term
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.xml
+          if-no-files-found: ignore

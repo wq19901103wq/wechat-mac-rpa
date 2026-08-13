@@ -1,0 +1,10 @@
+name: "CodeQL config"
+
+queries:
+  - uses: security-extended
+  - uses: security-and-quality
+
+paths-ignore:
+  - archive
+  - scripts/admin.py
+  - src/badcase/review_server.py

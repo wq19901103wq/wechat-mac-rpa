@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "wechat-mac-rpa: Visual AI Agent for WeChat Automation on macOS"
+type: software
+authors:
+  - given-names: "wq"
+    family-names: "wq"
+repository-code: "https://github.com/example-owner/wechat-mac-rpa"
+abstract: "A macOS WeChat automation framework that uses multimodal AI vision perception instead of protocol reverse engineering. Features include memory system, digital twin, multi-agent architecture, and extensible Skill plugins for smart home control and 3D printer management."
+keywords:
+  - WeChat
+  - automation
+  - RPA
+  - AI agent
+  - multimodal
+  - vision
+  - macOS
+  - AppleScript
+license: MIT
+version: 0.1.0
+date-released: "2024-01-01"
