@@ -20,7 +20,7 @@ tinytuya>=1.19.0
 paho-mqtt>=2.1.0
 
 # Web 服务
-fastapi>=0.137.1
+fastapi>=0.141.1
 uvicorn>=0.23.0
 
 # 历史原文检索（search_history 工具，可选）
