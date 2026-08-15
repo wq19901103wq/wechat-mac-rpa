@@ -5,6 +5,11 @@
 
 > 本文主体是 2026-05 的历史状态记录，不应作为当前 benchmark 数值来源。当前口径以 README 的“Benchmark 快照”和私有自动报告为准。
 
+## 隐私清理状态（2026-08-15）
+
+- ✅ 仓库内容与当前 Git 历史已匿名化；私人配置统一保存在 Git 忽略的 `data/` 和 `.env` 中。
+- ⏳ **唯一未完成项**：等待 GitHub Support 清理平台管理的缓存、悬空对象和 `refs/pull/*` 残留；处理完成前不得宣称隐私清理全部完成。
+
 ## 当前状态
 - ✅ 项目架构：双感知管道（SmartPerceptionPipeline 主力 + VisionPipeline 备用）
 - ✅ 微信运行（版本 4.1.8）
@@ -27,7 +32,7 @@
 - ⏳ Memory Search alias_wangzong("示例别名辛")召回失败
 - ⏳ 昵称识别准确率仍需优化
 - ⏳ 多显示器场景支持
-- ⏳ GitHub 推送（网络超时，待手动 push）
+- ✅ GitHub 推送已完成（当前 `main` 与 `origin/main` 同步）
 
 ## 最近修复
 
