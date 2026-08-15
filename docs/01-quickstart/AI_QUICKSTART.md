@@ -49,7 +49,7 @@ jq . ~/wechat-mac-rpa/data/history/测试群.jsonl
 
 ```bash
 cd /path/to/wechat-mac-rpa
-python -m pytest tests/ -v
+python -m pytest src/tests -v
 ```
 
 ---
