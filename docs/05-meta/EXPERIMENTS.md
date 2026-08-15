@@ -24,7 +24,7 @@
 ### 验证方法
 - [ ] 跑 `python3 scripts/doc_lint.py && python3 scripts/doc_review.py`
 - [ ] 跑 `python3 tests/test_integration.py`
-- [ ] 跑 `python3 -m pytest tests/ src/tests/ -v`
+- [ ] 跑 `python3 -m pytest src/tests/ -v`
 - [ ] 手动截图验证 [N] 轮
 - [ ] 其他: [说明]
 
