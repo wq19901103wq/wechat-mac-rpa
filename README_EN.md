@@ -93,7 +93,8 @@ Calibrate an LLM-as-Judge with a small amount of human annotation. Once the Judg
 
 - **Environment**: macOS 12+, Python 3.10+, WeChat Mac
 - **Install**: `pip install -r requirements.txt`
-- **Config**: Copy `.env.example` to `.env`, fill in API keys
+- **Config**: Copy `.env.example` to `.env` and fill in API keys; copy `prompts/persona.md.example` to `data/persona.md` and customize the local persona
+- **Privacy**: `.env` and `data/` are excluded from Git by default; never commit API keys, chat history, or a real persona
 - **Permissions**: Enable Screen Recording and Accessibility for your terminal (System Settings → Privacy & Security)
 - **Run**: `python3 run_bot.py`
 - **Test**: Install development dependencies with `pip install -r requirements-dev.txt`, then run `python3 -m pytest src/tests -v`

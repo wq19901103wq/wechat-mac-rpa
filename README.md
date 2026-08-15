@@ -23,7 +23,8 @@
 
 - **环境**：macOS 12+，Python 3.10+，微信 Mac 版
 - **依赖**：`pip install -r requirements.txt`
-- **配置**：复制 `.env.example` 为 `.env`，填入 API Key
+- **配置**：复制 `.env.example` 为 `.env`，填入 API Key；复制 `prompts/persona.md.example` 为 `data/persona.md`，填写本地人设
+- **隐私**：`.env` 与 `data/` 默认不进入 Git；不要把 API Key、聊天记录或真实人设提交到仓库
 - **权限**：Bot 依赖 macOS 辅助功能/屏幕录制权限，详见下文[权限说明](#权限说明)
 - **启动**：`python3 run_bot.py`
 - **管理后台（LaunchAgent 常驻）**：
