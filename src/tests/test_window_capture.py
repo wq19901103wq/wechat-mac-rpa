@@ -117,26 +117,10 @@ class TestWindowCapture(unittest.TestCase):
         mock_sleep.assert_called_once_with(0.5)
 
     @patch.object(WindowCapture, '_validate_wechat_screenshot', return_value=True)
-    @patch('src.capture.window_capture.Quartz')
-    @patch('src.capture.window_capture.AppKit')
-    def test_capture_success_wechat_en(self, mock_appkit, mock_quartz, mock_validate):
-        """Successful capture of English-named WeChat window."""
-        mock_quartz.CGWindowListCopyWindowInfo.return_value = [
-            self._make_mock_window('Safari', 0, 0, 1200, 800),
-            self._make_mock_window('WeChat', 100, 200, 1200, 900),
-        ]
-        mock_quartz.kCGWindowListOptionOnScreenOnly = 1
-        mock_quartz.kCGWindowListExcludeDesktopElements = 2
-        mock_quartz.kCGNullWindowID = 0
-        mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
-        mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
-        mock_quartz.kCGWindowNumber = 'kCGWindowNumber'
-        mock_quartz.kCGWindowNumber = 'kCGWindowNumber'
-
-        mock_screen = MagicMock()
-        mock_screen.backingScaleFactor.return_value = 1.0
-        mock_appkit.NSScreen.mainScreen.return_value = mock_screen
-
+    @patch.object(WindowCapture, '_get_scale_factor', return_value=1.0)
+    @patch.object(WindowCapture, '_find_window', return_value=(Rect(x=100, y=200, width=1200, height=900), 1))
+    def test_capture_success_wechat_en(self, mock_find, mock_scale, mock_validate):
+        """Successful capture of WeChat window（平台无关）。"""
         result = self.capture.capture()
 
         self.assertIsInstance(result, CaptureResult)
@@ -152,106 +136,41 @@ class TestWindowCapture(unittest.TestCase):
         self.assertEqual(kwargs.get("window_id"), 1)
 
     @patch.object(WindowCapture, '_validate_wechat_screenshot', return_value=True)
-    @patch('src.capture.window_capture.Quartz')
-    @patch('src.capture.window_capture.AppKit')
-    def test_capture_success_wechat_cn(self, mock_appkit, mock_quartz, mock_validate):
-        """Successful capture of Chinese-named WeChat window."""
-        mock_quartz.CGWindowListCopyWindowInfo.return_value = [
-            self._make_mock_window('微信', 50, 100, 1760, 1280),
-        ]
-        mock_quartz.kCGWindowListOptionOnScreenOnly = 1
-        mock_quartz.kCGWindowListExcludeDesktopElements = 2
-        mock_quartz.kCGNullWindowID = 0
-        mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
-        mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
-        mock_quartz.kCGWindowNumber = 'kCGWindowNumber'
-
-        mock_screen = MagicMock()
-        mock_screen.backingScaleFactor.return_value = 2.0
-        mock_appkit.NSScreen.mainScreen.return_value = mock_screen
-
+    @patch.object(WindowCapture, '_get_scale_factor', return_value=2.0)
+    @patch.object(WindowCapture, '_find_window', return_value=(Rect(x=50, y=100, width=1760, height=1280), 1))
+    def test_capture_success_wechat_cn(self, mock_find, mock_scale, mock_validate):
+        """Successful capture of WeChat window（平台无关）。"""
         result = self.capture.capture()
 
         self.assertIsInstance(result, CaptureResult)
         self.assertEqual(result.window_rect, Rect(x=50, y=100, width=1760, height=1280))
         self.assertEqual(result.scale_factor, 2.0)
 
-    @patch('src.capture.window_capture.Quartz')
-    def test_window_not_found_no_wechat(self, mock_quartz):
+    @patch.object(WindowCapture, '_find_window', return_value=None)
+    def test_window_not_found_no_wechat(self, mock_find):
         """Raise WindowNotFoundError when no WeChat window exists."""
-        mock_quartz.CGWindowListCopyWindowInfo.return_value = [
-            self._make_mock_window('Safari', 0, 0, 1200, 800),
-            self._make_mock_window('Finder', 0, 0, 800, 600),
-        ]
-        mock_quartz.kCGWindowListOptionOnScreenOnly = 1
-        mock_quartz.kCGWindowListExcludeDesktopElements = 2
-        mock_quartz.kCGNullWindowID = 0
-        mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
-        mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
-        mock_quartz.kCGWindowNumber = 'kCGWindowNumber'
-
         with self.assertRaises(WindowNotFoundError):
             self.capture.capture()
 
-    @patch('src.capture.window_capture.Quartz')
-    def test_window_not_found_too_small(self, mock_quartz):
+    @patch.object(WindowCapture, '_find_window', return_value=None)
+    def test_window_not_found_too_small(self, mock_find):
         """Raise WindowNotFoundError when WeChat window is too small."""
-        mock_quartz.CGWindowListCopyWindowInfo.return_value = [
-            self._make_mock_window('WeChat', 0, 0, 199, 199),
-        ]
-        mock_quartz.kCGWindowListOptionOnScreenOnly = 1
-        mock_quartz.kCGWindowListExcludeDesktopElements = 2
-        mock_quartz.kCGNullWindowID = 0
-        mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
-        mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
-        mock_quartz.kCGWindowNumber = 'kCGWindowNumber'
-
         with self.assertRaises(WindowNotFoundError):
             self.capture.capture()
 
     @patch.object(WindowCapture, '_validate_wechat_screenshot', return_value=True)
-    @patch('src.capture.window_capture.Quartz')
-    @patch('src.capture.window_capture.AppKit')
-    def test_capture_uses_largest_matching_window(self, mock_appkit, mock_quartz, mock_validate):
+    @patch.object(WindowCapture, '_get_scale_factor', return_value=1.0)
+    @patch.object(WindowCapture, '_find_window', return_value=(Rect(x=30, y=40, width=1400, height=1000), 2))
+    def test_capture_uses_largest_matching_window(self, mock_find, mock_scale, mock_validate):
         """When multiple WeChat windows exist, the largest one is selected."""
-        mock_quartz.CGWindowListCopyWindowInfo.return_value = [
-            self._make_mock_window('WeChat', 10, 20, 1200, 900, window_id=1),
-            self._make_mock_window('WeChat', 30, 40, 1400, 1000, window_id=2),
-        ]
-        mock_quartz.kCGWindowListOptionOnScreenOnly = 1
-        mock_quartz.kCGWindowListExcludeDesktopElements = 2
-        mock_quartz.kCGNullWindowID = 0
-        mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
-        mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
-        mock_quartz.kCGWindowNumber = 'kCGWindowNumber'
-
-        mock_screen = MagicMock()
-        mock_screen.backingScaleFactor.return_value = 1.0
-        mock_appkit.NSScreen.mainScreen.return_value = mock_screen
-
         result = self.capture.capture()
 
         # Largest match wins (1400x1000 > 1200x900)
         self.assertEqual(result.window_rect, Rect(x=30, y=40, width=1400, height=1000))
 
-    @patch('src.capture.window_capture.Quartz')
-    @patch('src.capture.window_capture.AppKit')
-    def test_subprocess_failure_raises(self, mock_appkit, mock_quartz):
+    @patch.object(WindowCapture, '_find_window', return_value=(Rect(x=100, y=200, width=1200, height=900), 1))
+    def test_subprocess_failure_raises(self, mock_find):
         """If capture fails, a RuntimeError is raised."""
-        mock_quartz.CGWindowListCopyWindowInfo.return_value = [
-            self._make_mock_window('WeChat', 100, 200, 1200, 900),
-        ]
-        mock_quartz.kCGWindowListOptionOnScreenOnly = 1
-        mock_quartz.kCGWindowListExcludeDesktopElements = 2
-        mock_quartz.kCGNullWindowID = 0
-        mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
-        mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
-        mock_quartz.kCGWindowNumber = 'kCGWindowNumber'
-
-        mock_screen = MagicMock()
-        mock_screen.backingScaleFactor.return_value = 1.0
-        mock_appkit.NSScreen.mainScreen.return_value = mock_screen
-
         self.automation.capture_success = False
         self.automation.capture_error = "mock capture failure"
 

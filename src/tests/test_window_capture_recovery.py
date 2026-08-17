@@ -76,26 +76,16 @@ class TestWindowCaptureRecovery(unittest.TestCase):
         }
 
     @patch.object(WindowCapture, '_validate_wechat_screenshot', return_value=True)
+    @patch.object(WindowCapture, '_get_scale_factor', return_value=1.0)
+    @patch.object(WindowCapture, '_find_window', side_effect=[
+        (Rect(x=500, y=200, width=560, height=760), 1),
+        (Rect(x=100, y=100, width=1760, height=1280), 1),
+    ])
     @patch('src.capture.window_capture.time.sleep')
-    @patch('src.capture.window_capture.Quartz')
-    @patch('src.capture.window_capture.AppKit')
     def test_small_window_triggers_activation_and_retry(
-        self, mock_appkit, mock_quartz, mock_sleep, mock_validate
+        self, mock_sleep, mock_find, mock_scale, mock_validate
     ):
-        """窗口尺寸过小时应自动激活微信并重试截图"""
-        mock_quartz.CGWindowListCopyWindowInfo.side_effect = [
-            [self._make_mock_window('微信', 500, 200, 560, 760)],
-            [self._make_mock_window('微信', 100, 100, 1760, 1280)],
-        ]
-        mock_quartz.kCGWindowListOptionOnScreenOnly = 1
-        mock_quartz.kCGWindowListExcludeDesktopElements = 2
-        mock_quartz.kCGNullWindowID = 0
-        mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
-        mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
-        mock_quartz.kCGWindowNumber = 'kCGWindowNumber'
-
-        mock_appkit.NSScreen.mainScreen.return_value.backingScaleFactor.return_value = 1.0
-
+        """窗口尺寸过小时应自动激活微信并重试截图（平台无关）"""
         automation = MockCaptureAutomation()
         capture = WindowCapture(automation=automation)
         result = capture.capture()
@@ -108,25 +98,13 @@ class TestWindowCaptureRecovery(unittest.TestCase):
         self.assertEqual(result.window_rect.width, 1760)
         self.assertEqual(result.window_rect.height, 1280)
 
+    @patch.object(WindowCapture, '_get_scale_factor', return_value=1.0)
+    @patch.object(WindowCapture, '_find_window', return_value=(Rect(x=500, y=200, width=560, height=760), 1))
     @patch('src.capture.window_capture.time.sleep')
-    @patch('src.capture.window_capture.Quartz')
-    @patch('src.capture.window_capture.AppKit')
     def test_persistent_small_window_raises_not_ready(
-        self, mock_appkit, mock_quartz, mock_sleep
+        self, mock_sleep, mock_find, mock_scale
     ):
-        """激活重试后仍然只有小窗口时，应抛出 WeChatNotReadyError"""
-        mock_quartz.CGWindowListCopyWindowInfo.return_value = [
-            self._make_mock_window('微信', 500, 200, 560, 760),
-        ]
-        mock_quartz.kCGWindowListOptionOnScreenOnly = 1
-        mock_quartz.kCGWindowListExcludeDesktopElements = 2
-        mock_quartz.kCGNullWindowID = 0
-        mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
-        mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
-        mock_quartz.kCGWindowNumber = 'kCGWindowNumber'
-
-        mock_appkit.NSScreen.mainScreen.return_value.backingScaleFactor.return_value = 1.0
-
+        """激活重试后仍然只有小窗口时，应抛出 WeChatNotReadyError（平台无关）"""
         automation = MockCaptureAutomation()
         capture = WindowCapture(automation=automation)
         with self.assertRaises(WeChatNotReadyError) as ctx:
@@ -135,46 +113,21 @@ class TestWindowCaptureRecovery(unittest.TestCase):
         self.assertIn("扫码", str(ctx.exception))
         self.assertTrue(any(c[0] == "activate_app" and c[1] == ("WeChat",) for c in automation.calls))
 
-    @patch('src.capture.window_capture.Quartz')
-    @patch('src.capture.window_capture.AppKit')
-    def test_no_window_raises_window_not_found(
-        self, mock_appkit, mock_quartz
-    ):
-        """完全找不到微信窗口时保持原有行为"""
-        mock_quartz.CGWindowListCopyWindowInfo.return_value = []
-        mock_quartz.kCGWindowListOptionOnScreenOnly = 1
-        mock_quartz.kCGWindowListExcludeDesktopElements = 2
-        mock_quartz.kCGNullWindowID = 0
-        mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
-        mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
-        mock_quartz.kCGWindowNumber = 'kCGWindowNumber'
-
-        mock_appkit.NSScreen.mainScreen.return_value.backingScaleFactor.return_value = 1.0
-
+    @patch.object(WindowCapture, '_find_window', return_value=None)
+    def test_no_window_raises_window_not_found(self, mock_find):
+        """完全找不到微信窗口时保持原有行为（平台无关）"""
         automation = MockCaptureAutomation()
         capture = WindowCapture(automation=automation)
         with self.assertRaises(WindowNotFoundError):
             capture.capture()
 
+    @patch.object(WindowCapture, '_get_scale_factor', return_value=1.0)
+    @patch.object(WindowCapture, '_find_window', return_value=(Rect(x=500, y=200, width=560, height=760), 1))
     @patch('src.capture.window_capture.time.sleep')
-    @patch('src.capture.window_capture.Quartz')
-    @patch('src.capture.window_capture.AppKit')
     def test_small_window_raises_not_ready(
-        self, mock_appkit, mock_quartz, mock_sleep
+        self, mock_sleep, mock_find, mock_scale
     ):
-        """小窗口时直接抛出 WeChatNotReadyError，由上层处理恢复"""
-        mock_quartz.CGWindowListCopyWindowInfo.return_value = [
-            self._make_mock_window('微信', 500, 200, 560, 760),
-        ]
-        mock_quartz.kCGWindowListOptionOnScreenOnly = 1
-        mock_quartz.kCGWindowListExcludeDesktopElements = 2
-        mock_quartz.kCGNullWindowID = 0
-        mock_quartz.kCGWindowOwnerName = 'kCGWindowOwnerName'
-        mock_quartz.kCGWindowBounds = 'kCGWindowBounds'
-        mock_quartz.kCGWindowNumber = 'kCGWindowNumber'
-
-        mock_appkit.NSScreen.mainScreen.return_value.backingScaleFactor.return_value = 1.0
-
+        """小窗口时直接抛出 WeChatNotReadyError，由上层处理恢复（平台无关）"""
         automation = MockCaptureAutomation()
         capture = WindowCapture(automation=automation)
         with self.assertRaises(WeChatNotReadyError) as ctx:

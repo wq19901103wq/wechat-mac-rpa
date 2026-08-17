@@ -98,7 +98,8 @@ class TestPasteVerification:
         assert result.success is True
         assert automation.get_frontmost_app("WeChat")[0] is True
         # 至少应包含 focus、paste、verify、return 相关的 automation 调用
-        assert any(c[0] == "run_applescript" for c in automation.calls)
+        # （语义化方法 paste/copy_selection 在 mock 上走 send_keys）
+        assert any(c[0] == "send_keys" for c in automation.calls)
         assert any(c[0] == "get_clipboard_text" for c in automation.calls)
 
     def test_paste_verification_fail_then_retry(self):

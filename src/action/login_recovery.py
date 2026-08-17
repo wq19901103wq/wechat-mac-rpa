@@ -13,9 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional
 
-import Quartz
-
-from src.action.system_automation import MacOSSystemAutomation, SystemAutomation
+from src.action.system_automation import SystemAutomation, get_system_automation
 from src.models.base import OCRTextElement, Rect
 from src.ocr.vision_ocr import VisionOCREngine
 
@@ -52,11 +50,20 @@ class WeChatLoginHandler:
         self.login_keywords = login_keywords or ["登录", "进入微信", "确认登录"]
         self.min_effective_width = min_effective_width
         self.min_effective_height = min_effective_height
-        self.automation = automation or MacOSSystemAutomation()
+        self.automation = automation or get_system_automation()
         self.ocr = VisionOCREngine()
 
     def _find_window(self) -> Optional[Rect]:
         """查找面积最大的微信窗口"""
+        import sys
+
+        if sys.platform == "win32":
+            ok, rect, _err = self.automation.get_window_rect("WeChat")
+            if ok and rect is not None:
+                return rect
+            return None
+        import Quartz
+
         window_list = Quartz.CGWindowListCopyWindowInfo(
             Quartz.kCGWindowListOptionOnScreenOnly |
             Quartz.kCGWindowListExcludeDesktopElements,
@@ -117,7 +124,13 @@ class WeChatLoginHandler:
             center_x = window_rect.x + btn_rect.x + btn_rect.width // 2
             center_y = window_rect.y + btn_rect.y + btn_rect.height // 2
 
-            # 方法 1: AppleScript 点击（需要辅助功能权限）
+            import sys
+
+            if sys.platform == "win32":
+                # Windows：坐标点击（微信主窗口需已激活）
+                return self.automation.click_at(center_x, center_y)
+
+            # macOS：AppleScript 点击（需要辅助功能权限）
             script = f'''
                 tell application "System Events"
                     tell process "WeChat"

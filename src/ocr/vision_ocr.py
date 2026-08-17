@@ -10,9 +10,6 @@ import logging
 import os
 from typing import List
 
-import Quartz
-import Vision
-from Foundation import NSURL, NSArray
 from PIL import Image
 
 from src.models.base import OCRTextElement, Point, Rect
@@ -25,6 +22,8 @@ class VisionOCREngine:
 
     def __init__(self, language: str = "zh-Hans"):
         self.language = language
+        self._last_image_width: int = 0
+        self._last_image_height: int = 0
 
     def recognize(self, image_path: str) -> List[OCRTextElement]:
         """
@@ -39,7 +38,18 @@ class VisionOCREngine:
         Raises:
             FileNotFoundError: 图片路径不存在
         """
+        import sys
+
+        if sys.platform == "win32":
+            return self._recognize_windows(image_path)
+
         import time
+
+        # macOS：Vision 框架（lazy import，避免 Windows 上 import 失败）
+        import Quartz
+        import Vision
+        from Foundation import NSArray, NSURL
+
         t0 = time.time()
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image not found: {image_path}")
@@ -109,6 +119,69 @@ class VisionOCREngine:
         elements.sort(key=lambda e: e.center.y)
         t_ms = (time.time() - t0) * 1000
         _logger.info(f"[Perf][OCR] recognize: {t_ms:.0f}ms, elements={len(elements)}")
+        return elements
+
+    def _recognize_windows(self, image_path: str) -> List[OCRTextElement]:
+        """Windows 兜底 OCR：优先 pytesseract（需安装 Tesseract + chi_sim 语言包）。
+
+        返回空列表表示 OCR 不可用（感知层可降级），不抛异常。
+        """
+        try:
+            import pytesseract
+            from PIL import Image as PILImage
+        except ImportError:
+            _logger.warning("Windows OCR 需要 pytesseract，未安装")
+            return []
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Image not found: {image_path}")
+        img = PILImage.open(image_path).convert("RGB")
+        self._last_image_width, self._last_image_height = img.size
+        try:
+            data = pytesseract.image_to_data(
+                img, lang="chi_sim+eng", output_type=pytesseract.Output.DICT
+            )
+        except Exception as e:
+            _logger.warning("pytesseract OCR 失败（可能未安装 Tesseract 或语言包）: %s", e)
+            return []
+
+        # 按 block/par/line 合并词为文本行
+        lines: dict[tuple, dict] = {}
+        for i in range(len(data["text"])):
+            if not data["text"][i].strip():
+                continue
+            key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+            entry = lines.setdefault(
+                key,
+                {"texts": [], "conf": [], "left": [], "top": [], "width": [], "height": []},
+            )
+            entry["texts"].append(data["text"][i])
+            entry["conf"].append(data["conf"][i])
+            entry["left"].append(data["left"][i])
+            entry["top"].append(data["top"][i])
+            entry["width"].append(data["width"][i])
+            entry["height"].append(data["height"][i])
+
+        elements: List[OCRTextElement] = []
+        for entry in lines.values():
+            text = "".join(entry["texts"]).strip()
+            if not text:
+                continue
+            x = min(entry["left"])
+            y = min(entry["top"])
+            width = max(lt + wd for lt, wd in zip(entry["left"], entry["width"])) - x
+            height = max(t + ht for t, ht in zip(entry["top"], entry["height"])) - y
+            valid_conf = [c for c in entry["conf"] if c >= 0]
+            confidence = sum(valid_conf) / max(len(valid_conf), 1) / 100.0
+            elements.append(
+                OCRElement(
+                    text=text,
+                    bbox=Rect(x=x, y=y, width=width, height=height),
+                    center=Point(x=x + width // 2, y=y + height // 2),
+                    confidence=confidence,
+                )
+            )
+        elements.sort(key=lambda el: el.center.y)
+        _logger.info("Windows OCR(pytesseract) 识别 %d 个元素", len(elements))
         return elements
 
     @property

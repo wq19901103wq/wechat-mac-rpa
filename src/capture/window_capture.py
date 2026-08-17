@@ -10,10 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-import AppKit
-import Quartz
-
-from src.action.system_automation import MacOSSystemAutomation, SystemAutomation
+from src.action.system_automation import SystemAutomation, get_system_automation
 from src.models.base import Rect
 
 _logger = logging.getLogger("src.window_capture")
@@ -64,10 +61,17 @@ class WindowCapture:
         self.min_height = 200
         self.min_effective_width = min_effective_width
         self.min_effective_height = min_effective_height
-        self.automation = automation or MacOSSystemAutomation()
+        self.automation = automation or get_system_automation()
 
     def _find_window(self) -> Optional[tuple]:
-        """使用 Quartz 查找微信窗口，返回面积最大的有效窗口 (Rect, window_id) 或 None"""
+        """查找微信主窗口，返回面积最大的有效窗口 (Rect, window_id) 或 None"""
+        import sys
+
+        if sys.platform == "win32":
+            return self._find_window_windows()
+        # macOS：使用 Quartz
+        import Quartz
+
         # 先尝试 OnScreenOnly（正常情况）
         result = self._find_window_with_options(
             Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
@@ -80,8 +84,27 @@ class WindowCapture:
             )
         return result
 
+    def _find_window_windows(self) -> Optional[tuple]:
+        """Windows：通过 automation 查找微信主窗口（含隐藏窗口）。"""
+        import win32gui
+
+        hwnd = self.automation.find_main_window("WeChat")
+        if not hwnd:
+            return None
+        rect = win32gui.GetWindowRect(hwnd)
+        width = rect[2] - rect[0]
+        height = rect[3] - rect[1]
+        if width <= self.min_width or height <= self.min_height:
+            return None
+        return (
+            Rect(x=rect[0], y=rect[1], width=width, height=height),
+            hwnd,
+        )
+
     def _find_window_with_options(self, options: int) -> Optional[tuple]:
         """使用指定 options 查找微信窗口，返回 (Rect, window_id) 或 None"""
+        import Quartz
+
         window_list = Quartz.CGWindowListCopyWindowInfo(
             options, Quartz.kCGNullWindowID
         )
@@ -124,6 +147,13 @@ class WindowCapture:
 
     def _get_scale_factor(self) -> float:
         """获取主屏幕的 Retina 缩放因子"""
+        import sys
+
+        if sys.platform == "win32":
+            # Windows 侧坐标已按物理像素（DPI aware），无需额外缩放
+            return 1.0
+        import AppKit
+
         try:
             screen = AppKit.NSScreen.mainScreen()
             if screen is not None:

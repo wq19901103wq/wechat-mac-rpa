@@ -12,7 +12,7 @@ import logging
 import time
 from typing import Optional
 
-from src.action.system_automation import MacOSSystemAutomation, SystemAutomation
+from src.action.system_automation import SystemAutomation, get_system_automation
 from src.models.base import ChatListItem, Rect
 
 _logger = logging.getLogger("src.chat_list_clicker")
@@ -34,7 +34,7 @@ class ChatListClicker:
     ):
         self.window_rect = window_rect
         self.scale_factor = scale_factor
-        self.automation = automation or MacOSSystemAutomation()
+        self.automation = automation or get_system_automation()
 
     def _can_click(self) -> bool:
         """检查是否距离上次点击已超过最小冷却时间。"""

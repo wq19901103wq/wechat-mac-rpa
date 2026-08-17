@@ -123,8 +123,8 @@ class TestWeChatMessageSender:
                  patch.object(sender, "automation") as mock_auto, \
                  patch.object(sender, "_paste", return_value=(0, "")) as mock_paste, \
                  patch.object(sender, "_send_return", return_value=(0, "")) as mock_return:
-                # automation.run_applescript 用于"复制文件到剪贴板"，返回成功
-                mock_auto.run_applescript.return_value = (0, "", "")
+                # automation.set_clipboard_file 用于"复制文件到剪贴板"，返回成功
+                mock_auto.set_clipboard_file.return_value = True
                 result = sender.send_file(tmp_path)
 
             assert result.success is True
@@ -134,8 +134,8 @@ class TestWeChatMessageSender:
             mock_focus.assert_called_once()
             mock_paste.assert_called_once()
             mock_return.assert_called_once()
-            # 复制文件到剪贴板的 applescript 至少调一次
-            mock_auto.run_applescript.assert_called()
+            # 复制文件到剪贴板至少调一次（平台无关语义化接口）
+            mock_auto.set_clipboard_file.assert_called_once()
         finally:
             import os
             os.unlink(tmp_path)

@@ -12,7 +12,7 @@ import time
 import unicodedata
 from abc import ABC, abstractmethod
 
-from src.action.system_automation import MacOSSystemAutomation, SystemAutomation
+from src.action.system_automation import SystemAutomation, get_system_automation
 from src.models.base import ActionResult
 
 _logger = logging.getLogger("src.message_sender")
@@ -60,7 +60,7 @@ class WeChatMessageSender(MessageSender):
         automation: SystemAutomation | None = None,
     ):
         self.silent_mode = silent_mode
-        self.automation = automation or MacOSSystemAutomation()
+        self.automation = automation or get_system_automation()
         # 白名单：静默模式下仍然实际发送的聊天（逗号分隔的聊天名）
         raw = os.environ.get("SILENT_WHITELIST", "")
         self._silent_whitelist = {n.strip() for n in raw.split(",") if n.strip()}
@@ -134,18 +134,11 @@ class WeChatMessageSender(MessageSender):
         return 1, "pbcopy 失败"
 
     def _paste(self, delay: float) -> tuple[int, str]:
-        """执行 AppleScript Command+V 粘贴。"""
-        script = f'''
-            tell application "System Events"
-                tell process "WeChat"
-                    keystroke "v" using command down
-                    delay {delay}
-                end tell
-            end tell
-        '''
-        rc, _, stderr = self.automation.run_applescript(script, timeout=5)
-        _logger.info(f"[Sender] paste returncode: {rc}, delay={delay}s")
-        return rc, stderr[:200]
+        """粘贴剪贴板内容（平台无关：macOS Cmd+V / Windows Ctrl+V）。"""
+        ok = self.automation.paste()
+        time.sleep(delay)
+        _logger.info(f"[Sender] paste ok: {ok}, delay={delay}s")
+        return (0, "") if ok else (1, "粘贴失败")
 
     def _clear_clipboard(self) -> None:
         """清空剪贴板，防止 verify 读到旧内容。"""
@@ -155,18 +148,8 @@ class WeChatMessageSender(MessageSender):
         """验证输入框内容：Command+A + Command+C + pbpaste。
         返回 (pasted_text, verify_script_rc, pbpaste_rc)。
         """
-        script = '''
-            tell application "System Events"
-                tell process "WeChat"
-                    keystroke "a" using command down
-                    delay 0.2
-                    keystroke "c" using command down
-                    delay 0.2
-                end tell
-            end tell
-        '''
-        rc_verify, _, stderr = self.automation.run_applescript(script, timeout=5)
-        verify_rc = rc_verify
+        verify_ok = self.automation.copy_selection()
+        verify_rc = 0 if verify_ok else 1
 
         ok, pasted_text = self.automation.get_clipboard_text()
         pbpaste_rc = 0 if ok else 1
@@ -182,18 +165,8 @@ class WeChatMessageSender(MessageSender):
 
     def _clear_input(self) -> None:
         """清空微信输入框内容。"""
-        script = '''
-            tell application "System Events"
-                tell process "WeChat"
-                    keystroke "a" using command down
-                    delay 0.1
-                    key code 51
-                    delay 0.1
-                end tell
-            end tell
-        '''
-        rc, _, _ = self.automation.run_applescript(script, timeout=5)
-        _logger.info(f"[Sender] 清空输入框 returncode: {rc}")
+        ok = self.automation.clear_input()
+        _logger.info(f"[Sender] 清空输入框 ok: {ok}")
 
     @staticmethod
     def _clipboard_text_matches(expected: str, actual: str) -> bool:
@@ -220,18 +193,9 @@ class WeChatMessageSender(MessageSender):
 
     def _send_return(self) -> tuple[int, str]:
         """按 Return 键发送消息（先取消全选避免替换为换行）。"""
-        script = '''
-            tell application "System Events"
-                tell process "WeChat"
-                    key code 124
-                    delay 0.1
-                    keystroke return
-                end tell
-            end tell
-        '''
-        rc, _, stderr = self.automation.run_applescript(script, timeout=5)
-        _logger.info(f"[Sender] return 发送 returncode: {rc}")
-        return rc, stderr[:200]
+        ok = self.automation.press_enter()
+        _logger.info(f"[Sender] return 发送 ok: {ok}")
+        return (0, "") if ok else (1, "回车发送失败")
 
     # ------------------------------------------------------------------
     # 主发送方法
@@ -486,14 +450,12 @@ class WeChatMessageSender(MessageSender):
             # 3. 清空输入框，避免旧内容干扰
             self._clear_input()
 
-            # 4. 用 AppleScript 把文件复制到剪贴板
-            safe_path = abs_path.replace('"', '\\"')
-            script = f'''
-                set the clipboard to (POSIX file "{safe_path}")
-            '''
-            rc, _, stderr = self.automation.run_applescript(script, timeout=5)
-            if rc != 0:
-                return ActionResult(success=False, error=f"复制文件到剪贴板失败: {stderr[:200]}")
+            # 4. 把文件复制到剪贴板（平台无关：macOS POSIX file / Windows CF_HDROP）
+            if not self.automation.set_clipboard_file(abs_path):
+                return ActionResult(
+                    success=False,
+                    error="复制文件到剪贴板失败：当前平台/环境不支持文件剪贴板",
+                )
 
             # 5. 粘贴（文件粘贴需要比文本更长的延迟）
             rc, err = self._paste(delay=0.8)
