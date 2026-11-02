@@ -8,5 +8,5 @@ python-dotenv>=1.0.0
 
 # 代码质量 / CI
 ruff>=0.15.20
-mypy>=2.3.0
+mypy>=2.4.1
 bandit>=1.8.0
