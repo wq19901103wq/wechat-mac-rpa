@@ -8,7 +8,6 @@
 - **FR-1**: 提供与 `VisionPipeline.perceive()` 完全兼容的接口（duck typing）。
 - **FR-2**: 本地预判：通过像素差异判断截图是否有实质变化。消息区域或聊天列表区域任一有变化即触发 API；两区域均无变化时跳过 API 调用。
 - **FR-3**: 有变化时：本地 Layout 提供聊天列表位置 + qwen3.6-flash API 提供消息/昵称/未读数识别。
-- **FR-4**: 支持 WeFlow 分流模式（`weflow` / `hybrid` / `ocr`）。
 - **FR-5**: 合并本地 Layout 和 API 的聊天列表结果（本地提供准确 `rect`，API 提供准确 `nickname`/`unread_count`）。
 - **FR-6**: 过滤 API 误识别的未读角标（时间戳、群人数、非数字、>99）。
 - **FR-7**: 窗口尺寸检查：小于 800x600 视为异常（登录浮窗），返回 None。
@@ -73,8 +72,6 @@ API prompt 中明确要求排除截图最底部的输入框区域（未发送草
 |------|------|
 | 窗口捕获失败 | 返回 None，记录 warning |
 | API 请求失败 | 降级为本地 OCR（空 messages） |
-| WeFlow 失败且模式为 `weflow` | 返回 None |
-| WeFlow 失败且模式为 `hybrid` | Fallback 到 OCR |
 
 ## 7. 依赖关系
 - 依赖 `src.capture`, `src.ocr`, `src.layout`

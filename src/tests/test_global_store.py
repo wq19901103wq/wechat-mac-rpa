@@ -4,6 +4,7 @@
 import os
 import tempfile
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -65,6 +66,89 @@ class TestGlobalStore:
         state, unreplied = store.merge_tick("群1", [msg])
         assert len(unreplied) == 0
 
+    def test_merge_tick_does_not_deduplicate_against_distant_history(self, store):
+        name = "好友"
+        history = [
+            ChatMessage("难受", name, SenderType.OTHER, name),
+            ChatMessage("难受", "自己", SenderType.SELF, name),
+            ChatMessage("", name, SenderType.OTHER, name, message_type="image",
+                        image_description="一个切开的榴莲，露出黄色的果肉"),
+        ] + [ChatMessage(f"旧记录{i}", name, SenderType.OTHER, name) for i in range(60)]
+        store.chats[name] = ChatState("friend", name, messages=list(history),
+                                     _msg_ids={_msg_id(name, msg) for msg in history})
+        tick = [
+            ChatMessage("今天去新开的书店吗", name, SenderType.OTHER, name, observed_at=100),
+            ChatMessage("难受", "自己", SenderType.SELF, name, observed_at=100),
+            ChatMessage("刚好买到了想看的书", name, SenderType.OTHER, name, observed_at=100),
+            ChatMessage("没事的", name, SenderType.OTHER, name, observed_at=100),
+            ChatMessage("之后有空再去看看", name, SenderType.OTHER, name, observed_at=100),
+            ChatMessage("下次再聊", name, SenderType.OTHER, name, observed_at=100),
+            ChatMessage("", name, SenderType.OTHER, name, observed_at=100, message_type="image",
+                        image_description="一个黄色的卡通牛头人形象，背景模糊"),
+            ChatMessage("好了么", name, SenderType.OTHER, name, observed_at=100),
+        ]
+
+        state, _ = store.merge_tick(name, tick)
+        assert state.messages[-8:] == tick
+        state, _ = store.merge_tick(name, tick)
+        assert len(state.messages) == len(history) + 8
+        store.save()
+        restored = GlobalStore(state_file=store._state_file)
+        assert [(m.text, m.sender_type, m.image_description) for m in restored.chats[name].messages
+                if m.observed_at == 100] == [(m.text, m.sender_type, m.image_description) for m in tick]
+
+    @pytest.mark.parametrize("message_type", ["text", "image"])
+    @pytest.mark.parametrize("sender_type", [SenderType.SELF, SenderType.OTHER])
+    def test_merge_tick_fuzzy_dedup_respects_sender_role(self, store, message_type, sender_type):
+        opposite = SenderType.OTHER if sender_type == SenderType.SELF else SenderType.SELF
+        old = ChatMessage("难受", "自己" if opposite == SenderType.SELF else "好友", opposite, "好友",
+                          message_type=message_type, image_description="一个黄色的卡通牛头人形象，背景模糊")
+        new = ChatMessage("难受", "自己" if sender_type == SenderType.SELF else "好友", sender_type, "好友",
+                          message_type=message_type, image_description=old.image_description)
+        store.merge_tick("好友", [old])
+        state, _ = store.merge_tick("好友", [new])
+        assert [m.sender_type for m in state.messages] == [opposite, sender_type]
+
+    @pytest.mark.parametrize('reverse', [False, True])
+    def test_sticker_text_field_drift_does_not_trigger_another_reply(self, store, reverse):
+        old = ChatMessage('', 'A', SenderType.OTHER, '群1', message_type='sticker',
+                          image_description="一只柴犬/金毛犬的头像表情包，戴着墨镜，配文'顺带路过'",
+                          image_text='顺带路过', observed_at=100)
+        repeated = replace(old, text='顺带路过', image_text='',
+                           image_description='一个戴墨镜的黄色卡通猫头表情包', observed_at=200)
+        if reverse:
+            old, repeated = repeated, old
+        state, unreplied = store.merge_tick('群1', [old], is_group=True)
+        store.mark_replied('群1', unreplied[0], '收到')
+        state, unreplied = store.merge_tick('群1', [repeated], is_group=True)
+        assert len(state.messages) == 1
+        assert state.messages[0].replied
+        assert unreplied == []
+
+    @pytest.mark.parametrize('message_type', ['text', 'sticker'])
+    def test_fuzzy_dedup_preserves_different_group_speakers(self, store, message_type):
+        old = ChatMessage('顺带路过', 'A', SenderType.OTHER, '群1', message_type=message_type,
+                          image_description='一只戴墨镜的黄色小狗', image_text='顺带路过')
+        new = replace(old, sender='B', image_description='一个戴墨镜的黄色卡通猫头表情包')
+        store.merge_tick('群1', [old], is_group=True)
+        state, unreplied = store.merge_tick('群1', [new], is_group=True)
+        assert [msg.sender for msg in state.messages] == ['A', 'B']
+        assert [msg.sender for msg in unreplied] == ['A', 'B']
+
+    def test_same_sticker_can_be_sent_again_after_later_messages(self, store):
+        old = ChatMessage('', 'A', SenderType.OTHER, '群1', message_type='sticker',
+                          image_description='一只戴墨镜的小狗', image_text='顺带路过')
+        first = ChatMessage('到哪了', 'B', SenderType.OTHER, '群1')
+        second = ChatMessage('正在楼下等你', '自己', SenderType.SELF, '群1')
+        state, unreplied = store.merge_tick('群1', [old, first, second], is_group=True)
+        store.mark_replied('群1', unreplied[0], '收到')
+        store.mark_replied('群1', unreplied[1], '正在楼下等你')
+        repeated = replace(old, text='顺带路过', image_text='', image_description='戴墨镜的猫头')
+        state, unreplied = store.merge_tick('群1', [first, second, repeated], is_group=True)
+        assert len(state.messages) == 4
+        assert len(unreplied) == 1
+        assert unreplied[0].image_description == '戴墨镜的猫头'
+
     def test_mark_replied(self, store):
         """标记回复后消息不再出现在未回复列表"""
         msg = ChatMessage(text="hi", sender="A", sender_type=SenderType.OTHER, chat_name="群1")
@@ -110,6 +194,36 @@ class TestGlobalStore:
         assert state.messages[0].replied is True
         assert state.messages[0].reply_text == "ok"
 
+    @pytest.mark.parametrize('create_time', [None, 50])
+    def test_first_observation_survives_repeat_and_restart(self, store, create_time):
+        msg = ChatMessage('hi', 'A', SenderType.OTHER, '群1', observed_at=100.25, create_time=create_time)
+        store.merge_tick('群1', [msg])
+        store.save()
+        restored = GlobalStore(state_file=store._state_file)
+        repeated = ChatMessage('hi', 'A', SenderType.OTHER, '群1', observed_at=200)
+        state, _ = restored.merge_tick('群1', [repeated])
+        assert len(state.messages) == 1
+        assert state.messages[0].observed_at == 100.25
+        assert state.messages[0].create_time is None
+        restored.save()
+        assert GlobalStore(state_file=store._state_file).chats['群1'].messages[0].observed_at == 100.25
+
+    def test_legacy_database_adds_observation_column_without_inventing_time(self, store):
+        from sqlalchemy import text
+        from src.db import init_db
+
+        store.merge_tick('群1', [ChatMessage('hi', 'A', SenderType.OTHER, '群1', create_time=50)])
+        store.save()
+        with store._chat_repo._session() as session:
+            engine = session.get_bind()
+        with engine.begin() as conn:
+            conn.execute(text('ALTER TABLE messages DROP COLUMN observed_at'))
+        init_db(engine.url.database)
+        init_db(engine.url.database)
+        msg = GlobalStore(state_file=store._state_file).chats['群1'].messages[0]
+        assert msg.observed_at is None
+        assert msg.create_time == 50
+
     def test_self_sender_type_survives_persistence(self, store):
         msg = ChatMessage(
             text="我发的",
@@ -120,7 +234,7 @@ class TestGlobalStore:
             sender_wxid="wxid_self",
             create_time=1700000000,
         )
-        store.merge_tick("群1", [msg], mode="weflow")
+        store.merge_tick("群1", [msg])
         store.save()
 
         store2 = GlobalStore(state_file=store._state_file)
@@ -266,34 +380,6 @@ class TestGlobalStore:
         # 未回复列表包含所有对方消息（包括旧的历史中未回复的）
         assert len(unreplied) == 4  # msg0, msg2, msg4, new1
 
-    def test_merge_tick_weflow_bot_reply_time_update(self, store):
-        """_merge_tick_weflow 对 bot 重复消息应更新 reply_time 而不是简单跳过"""
-        # 使用独立 chat_name，避免与其他测试残留数据冲突
-        # 模拟 WeFlow 返回的 bot 历史消息（有 local_id，无 reply_time）
-        weflow_bot = ChatMessage(
-            text="same",
-            sender="自己",
-            sender_type=SenderType.SELF,
-            chat_name="weflow_test",
-            local_id=100,
-        )
-        state, _ = store.merge_tick("weflow_test", [weflow_bot], mode="weflow")
-        assert len(state.messages) == 1
-        assert state.messages[0].reply_time is None
-
-        # 模拟 bot 手动注入的相同内容消息（无 local_id，有 reply_time）
-        manual_bot = ChatMessage(
-            text="same",
-            sender="bot",
-            sender_type=SenderType.SELF,
-            chat_name="weflow_test",
-            reply_time=99999.0,
-        )
-        state, _ = store.merge_tick("weflow_test", [manual_bot], mode="weflow")
-        # 不应新增消息，但应更新已有消息的 reply_time
-        assert len(state.messages) == 1
-        assert state.messages[0].reply_time == 99999.0
-
 
 class TestIsGroupChatName:
     def test_chinese_parentheses(self):
@@ -313,8 +399,8 @@ class TestIsGroupChatName:
 class TestGlobalStoreDbSync:
     """GlobalStore 同步到 SQLite 的回归测试。"""
 
-    def test_weflow_mode_syncs_with_chatroom_id(self):
-        """WeFlow 消息自带 chatroom_id，直接按 chatroom_id 入库。"""
+    def test_source_chatroom_id_syncs_to_db(self):
+        """消息自带 chatroom_id，直接按 chatroom_id 入库。"""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = os.path.abspath(tmpdir)
             state_file = os.path.join(tmpdir, "state.json")

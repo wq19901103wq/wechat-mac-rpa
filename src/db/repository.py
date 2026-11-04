@@ -303,9 +303,9 @@ class ChatHistoryRepository:
                 for msg in messages:
                     content = msg.get("content") or msg.get("text") or ""
                     wxid = msg.get("wxid") or msg.get("sender_wxid") or ""
-                    create_time = msg.get("create_time")
+                    create_time = msg.get("observed_at") if msg.get("observed_at") is not None else msg.get("create_time")
                     if create_time is None:
-                        create_time = msg.get("timestamp") or now
+                        create_time = msg.get("observed_at") or msg.get("timestamp") or now
 
                     if not wxid:
                         continue
@@ -330,6 +330,7 @@ class ChatHistoryRepository:
                         "reply_text": msg.get("reply_text"),
                         "reply_time": msg.get("reply_time"),
                         "create_time": create_time,
+                        "observed_at": msg.get("observed_at"),
                         "raw_type": msg.get("raw_type"),
                         "source_file": source_file,
                         "content_hash": self._content_hash(content),
@@ -556,11 +557,11 @@ class ChatHistoryRepository:
         """根据聊天名和消息解析 chatroom_id。
 
         优先级：
-        1. 消息里已有 chatroom_id（WeFlow 模式）直接使用。
+        1. 消息里已有来源 chatroom_id 时直接使用。
         2. OCR 模式：按 display_name 查 DB，只有唯一匹配时才复用，
            否则生成稳定合成 ID，避免同名群误合并或新群丢失。
         """
-        # 1. WeFlow 模式
+        # 1. 来源消息已有 chatroom_id
         for m in messages:
             cid = m.get("chatroom_id")
             if cid:

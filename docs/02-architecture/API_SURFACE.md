@@ -380,21 +380,11 @@ class GlobalStore:
         self,
         chat_name: str,
         messages: List[ChatMessage],
-        mode: str = "ocr",
         is_group: bool = False,
     ) -> Tuple[ChatState, List[ChatMessage]]:
         """合并 tick 检测到的消息，返回 (state, 未回复的消息列表)。"""
 
     def mark_replied(self, chat_name: str, target_msg: ChatMessage, reply_text: str): ...
-
-    def inject_history(
-        self,
-        chat_name: str,
-        messages: List[ChatMessage],
-        mode: str = "weflow",
-        is_group: bool = False,
-    ) -> int:
-        """批量注入历史消息，返回注入的消息数量。"""
 
     def get_unreplied(self, chat_name: str) -> List[ChatMessage]: ...
 
@@ -413,7 +403,6 @@ class GlobalStore:
 class GlobalStore:
     def _merge_tick_legacy(self, chat_name: str, messages: List[ChatMessage], is_group: bool = False) -> List[ChatMessage]: ...
     def _merge_tick_lcs(self, chat_name: str, messages: List[ChatMessage], is_group: bool = False) -> List[ChatMessage]: ...
-    def _merge_tick_weflow(self, chat_name: str, messages: List[ChatMessage]) -> List[ChatMessage]: ...
     def _load(self): ...
     @staticmethod
     def _dict_to_msg(m: dict, chat_name: str) -> ChatMessage: ...
@@ -793,7 +782,6 @@ class WeChatBot:
 **内部实现（不推荐外部调用）**:
 ```python
 class WeChatBot:
-    def _inject_weflow_history(self, weflow_pipeline) -> None: ...
     def _try_switch_to_unread_chat(self, result: PerceptionResult) -> str: ...
 ```
 

@@ -71,8 +71,6 @@ class TestLoginRecoveryPropagation:
         from src.perception.smart_pipeline import SmartPerceptionPipeline
 
         pipeline = object.__new__(SmartPerceptionPipeline)
-        pipeline._weflow_mode = "ocr"
-        pipeline._weflow_pipeline = None
         pipeline.capture = MagicMock()
         pipeline.capture.capture.side_effect = WeChatNotReadyError("需要登录")
 

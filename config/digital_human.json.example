@@ -1,0 +1,8 @@
+{
+  "repository": "../digital-human",
+  "instances_root": "../digital-human/instances",
+  "env_file": "../digital-human/.env",
+  "instance": "YOUR_INSTANCE",
+  "timeout_seconds": 900,
+  "review_client": "group"
+}

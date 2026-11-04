@@ -10,12 +10,19 @@ from typing import Callable, Optional
 from src.action.chat_list_clicker import ChatListClicker
 from src.action.login_recovery import LoginRecoveryStatus, WeChatLoginHandler
 from src.action.message_sender import WeChatMessageSender
+from src.benchmarks.production_replay_archive import (
+    DecisionPointCutoff,
+    ProductionReplayArchive,
+    ReplaySender,
+    ReplaySideEffectSink,
+    guarded_tool_registry,
+)
 from src.capture.window_capture import WeChatNotReadyError
 from src.logging.bot_logger import BotLogger, get_logger
 from src.memory import MemoryEngine
 from src.models.base import ActionResult, ChatMessage, PerceptionResult, SenderType
-from src.perception.vision_pipeline import VisionPipeline
-from src.reply.generator import ReplyGenerator, _get_judge_worker
+from src.perception.smart_pipeline import SmartPerceptionPipeline
+from src.reply.digital_human import DigitalHumanReplyGenerator, load_digital_human_config
 from src.reply.policy import ReplyPolicy
 from src.session.global_store import GlobalStore
 from src.tools import get_registry, register_builtin_tools
@@ -49,16 +56,12 @@ class WeChatBot:
         if perception is not None:
             self.perception = perception
         else:
-            self.perception = VisionPipeline(profile)
+            self.perception = SmartPerceptionPipeline(profile)
         self.global_store = GlobalStore()
         self.policy = ReplyPolicy(require_at_in_group=False)
+        self.group_reply_enabled = os.environ.get("WECHAT_GROUP_REPLY_ENABLED", "0") == "1"
 
-        if llm_client is not None:
-            actual_llm = llm_client
-        elif use_openclaw:
-            actual_llm = _try_create_openclaw_client()
-        else:
-            actual_llm = None
+        del use_openclaw
 
         # 启动时自动同步 knowledge_source.md → JSON / wiki
         try:
@@ -70,23 +73,15 @@ class WeChatBot:
         except Exception as e:
             print(f"[knowledge] 同步失败: {e}")
 
-        # 先创建记忆引擎（ReplyGenerator 初始化时需要）
-        self.memory_engine: MemoryEngine = MemoryEngine(llm_client=actual_llm)
+        self.memory_engine: MemoryEngine = MemoryEngine(llm_client=llm_client)
         # 注册工具到全局注册表
         registry = get_registry()
         register_builtin_tools(registry)
-        # 再创建 Generator，把 memory_engine 和 tool_registry 直接传入
-        # JudgeWorker 默认关闭（deepseek token 消耗大），通过 ENABLE_JUDGE_WORKER=1 开启
-        judge_worker = _get_judge_worker() if os.environ.get("ENABLE_JUDGE_WORKER", "0") == "1" else None
-        if judge_worker is None:
-            self.logger.info("JudgeWorker 已禁用（ENABLE_JUDGE_WORKER 未设置），跳过 badcase 审计以节省 deepseek token")
-        self.generator = ReplyGenerator(
-            llm_client=actual_llm,
-            memory_engine=self.memory_engine,
-            tool_registry=registry,
-            judge_worker=judge_worker,
-            enable_timestamps=True,
-        )
+        self.logger.info("正在初始化 digital-human，完成后开始聊天轮询...")
+        startup_started = time.monotonic()
+        self.generator = DigitalHumanReplyGenerator(**load_digital_human_config(), tool_registry=registry)
+        self.logger.info("digital-human 初始化完成，耗时 %.2f 秒；使用 production；群聊回复%s；禁止回退原 C0",
+                         time.monotonic() - startup_started, "已开启" if self.group_reply_enabled else "已关闭")
         self.sender = WeChatMessageSender(silent_mode=os.environ.get("WECHAT_SILENT_MODE") == "1")
 
         # 动态注册 send_file 工具（需要 sender 实例）
@@ -172,56 +167,76 @@ class WeChatBot:
         project_root = Path(__file__).parent.parent.parent
         (project_root / "data").mkdir(parents=True, exist_ok=True)
 
-        # ===== WeFlow 全量初始化 =====
-        self._weflow_mode = os.getenv("WEFLOW_MODE", "ocr")
-        print(f"[WeFlow] 模式检测: WEFLOW_MODE={self._weflow_mode}")
-        if self._weflow_mode in ("weflow", "hybrid"):
+        # 只在显式开启时归档真实生产 tick；默认路径和行为完全不变。
+        self.replay_archive = None
+        self._replay_cutoff_reached = False
+        replay_root = os.environ.get("WECHAT_PRODUCTION_REPLAY_ARCHIVE_DIR", "").strip()
+        if replay_root:
             try:
-                has_wf = hasattr(self.perception, '_weflow_pipeline')
-                wf_val = getattr(self.perception, '_weflow_pipeline', None)
-                print(f"[WeFlow] pipeline检查: hasattr={has_wf}, value={wf_val}")
-                if has_wf and wf_val:
-                    weflow = wf_val
-                    init_ok = weflow.initialize()
-                    print(f"[WeFlow] initialize() 返回: {init_ok}")
-                    if init_ok:
-                        self._inject_weflow_history(weflow)
-                        print(f"[WeFlow] 全量初始化完成: {weflow.init_total_messages} 条消息")
-                        # 历史注入完成后，切回 OCR 模式运行，不再依赖 WeFlow API
-                        self._weflow_mode = "ocr"
-                        # 同步修改 perception 层的模式，确保后续 tick 不走 WeFlow
-                        perception = getattr(self, 'perception', None)
-                        if perception and hasattr(perception, '_weflow_mode'):
-                            perception._weflow_mode = "ocr"
-                            print("[WeFlow] 历史注入完成，perception 层已切换为 OCR 模式")
-                        else:
-                            print("[WeFlow] 历史注入完成，后续切换为 OCR 模式运行")
-                    else:
-                        print(f"[WeFlow] 初始化失败: {weflow.get_init_status().get('error')}")
-                else:
-                    print("[WeFlow] perception 中没有 _weflow_pipeline，跳过历史注入")
+                replay_archive = ProductionReplayArchive(
+                    replay_root,
+                    self.session_id,
+                    {
+                        "perception": "ocr",
+                        "enable_chat_switch": self.enable_chat_switch,
+                        "group_reply_enabled": self.group_reply_enabled,
+                        "silent_mode": self.sender.silent_mode,
+                        "no_reply_chats": sorted(self.no_reply_chats),
+                    },
+                )
+                project_root = Path(__file__).parent.parent.parent
+                dependency_files = [
+                    Path(__file__),
+                    project_root / "src" / "reply" / "generator.py",
+                    project_root / "src" / "reply" / "digital_human.py",
+                    project_root / "config" / "digital_human.json",
+                    project_root / "src" / "reply" / "few_shot.py",
+                    project_root / "src" / "reply" / "session_memory.py",
+                    project_root / "src" / "reply" / "evidence_utils.py",
+                    project_root / "src" / "llm" / "openclaw_client.py",
+                    project_root / "src" / "utils" / "llm_client.py",
+                    project_root / "src" / "utils" / "qwen_client.py",
+                    project_root / "src" / "tools" / "tool_registry.py",
+                    project_root / "prompts" / "feedback.md",
+                    project_root / "prompts" / "fact_check.md",
+                    project_root / "prompts" / "fact_verify.md",
+                    project_root / "prompts" / "iterate.md",
+                ]
+                persona_path = Path(os.environ.get("PERSONA_PATH", "data/persona.md"))
+                if not persona_path.is_absolute():
+                    persona_path = project_root / persona_path
+                dependency_files.append(persona_path)
+                few_shot_path = Path(os.environ.get(
+                    "PERSONA_FEW_SHOT_PATH",
+                    str(project_root / "data" / "few_shot" / "persona_examples.jsonl"),
+                ))
+                if not few_shot_path.is_absolute():
+                    few_shot_path = project_root / few_shot_path
+                dependency_files.extend([
+                    few_shot_path,
+                    few_shot_path.with_name("report.json"),
+                    few_shot_path.with_name("persona_embeddings.npz"),
+                ])
+                dependency_files.extend(sorted((project_root / "skills").glob("*/SKILL.md")))
+                replay_archive.capture_session_start(
+                    self.global_store,
+                    source_files=dependency_files,
+                )
+                replay_archive.install_generator(self.generator)
+                side_effect_sink = ReplaySideEffectSink(
+                    replay_archive.session_dir / "blocked_side_effects.jsonl"
+                )
+                replay_sender = ReplaySender(side_effect_sink, self.sender)
+                replay_tool_registry = guarded_tool_registry(
+                    self.generator.tool_registry,
+                    side_effect_sink,
+                )
+                self.replay_archive = replay_archive
+                self.sender = replay_sender
+                self.generator.tool_registry = replay_tool_registry
+                self.enable_chat_switch = False
             except Exception as e:
-                print(f"[WeFlow] 启动初始化异常: {e}")
-                import traceback
-                traceback.print_exc()
-                self._weflow_mode = "ocr"
-
-    def _inject_weflow_history(self, weflow_pipeline) -> None:
-        """将 WeFlow 全量历史注入 GlobalStore。"""
-        try:
-            history_map = weflow_pipeline.export_all_history()
-            total = 0
-            for talker, messages in history_map.items():
-                if not messages:
-                    continue
-                # 用第一条消息的 chat_name 作为 key
-                chat_name = messages[0].chat_name or talker
-                is_group = _is_group_chat_name(chat_name)
-                injected = self.global_store.inject_history(chat_name, messages, mode="weflow", is_group=is_group)
-                total += injected
-            print(f"[WeFlow] 历史注入完成: {total} 条消息注入 GlobalStore")
-        except Exception as e:
-            print(f"[WeFlow] 历史注入失败: {e}")
+                raise RuntimeError("生产回放安全初始化失败；已拒绝退回普通生产模式") from e
 
     def tick(self) -> None:
         """执行一轮: 感知 -> 去重 -> 决策 -> 回复."""
@@ -232,11 +247,18 @@ class WeChatBot:
 
         # 在 tick 一开始就初始化调试日志，即使 perceive() 失败也有记录
         self.debug_logger.start_tick(tick_id, "")
+        if self.replay_archive is not None:
+            try:
+                self.replay_archive.begin_tick(tick_id, self.global_store)
+            except Exception as e:
+                raise DecisionPointCutoff("生产回放 tick 起点归档失败，已安全停止") from e
 
         try:
             try:
                 result = self.perception.perceive()
             except WeChatNotReadyError:
+                if self.replay_archive is not None:
+                    raise DecisionPointCutoff("生产回放不执行登录恢复，已安全停止")
                 recovery = self._login_handler.handle()
                 if recovery.status == LoginRecoveryStatus.SUCCESS:
                     result = self.perception.perceive()
@@ -277,7 +299,7 @@ class WeChatBot:
                             continue
                         setattr(self.debug_logger.current, k, v)
 
-            if result.screenshot_path:
+            if result.screenshot_path and self.replay_archive is None:
                 try:
                     saved_path = self.global_store.save_screenshot(
                         result.screenshot_path, session_id=str(tick_id)
@@ -288,6 +310,12 @@ class WeChatBot:
                         self.debug_logger.current.screenshot_path = str(saved_path)
                 except Exception as e:
                     self.logger.warning("截图保存失败: %s", e)
+
+            if self.replay_archive is not None:
+                try:
+                    self.replay_archive.capture_perception(tick_id, result)
+                except Exception as e:
+                    raise DecisionPointCutoff("生产回放感知结果归档失败，已安全停止") from e
 
             messages = result.messages
             raw_chat_name = result.chat_name or ""
@@ -302,7 +330,10 @@ class WeChatBot:
                 else:
                     self.logger.warning("当前聊天名为空且无消息，可能未打开任何聊天窗口")
                     # 先尝试从服务号/公众号/文章列表等异常视图返回
-                    recovered = self._recover_from_non_chat_view(result)
+                    recovered = (
+                        self._recover_from_non_chat_view(result)
+                        if self.replay_archive is None else False
+                    )
                     if recovered:
                         self.debug_logger.log_action("recover", action_input="back_button", success=True, error="尝试从服务号/公众号列表返回")
                         return
@@ -318,7 +349,10 @@ class WeChatBot:
             # API/Layout 识别到当前是服务号/订阅号/公众号列表，触发返回
             if chat_name in self._SERVICE_ACCOUNT_NAMES:
                 self.logger.warning(f"当前聊天名为'{chat_name}'，处于服务号/公众号列表，尝试返回")
-                recovered = self._recover_from_non_chat_view(result)
+                recovered = (
+                    self._recover_from_non_chat_view(result)
+                    if self.replay_archive is None else False
+                )
                 if recovered:
                     self.debug_logger.log_action("recover", action_input="back_button", success=True, error=f"尝试从{chat_name}列表返回")
                     return
@@ -334,7 +368,7 @@ class WeChatBot:
             )
 
             state, unreplied = self.global_store.merge_tick(
-                chat_name, messages, mode=self._weflow_mode, is_group=is_group
+                chat_name, messages, is_group=is_group
             )
 
             # 记录 Session 层输入输出
@@ -380,6 +414,17 @@ class WeChatBot:
                 message_details=msg_dicts,
             )
 
+            if is_group and not self.group_reply_enabled:
+                self.logger.log_decision(
+                    tick_id, should_reply=False, reason="群聊回复已关闭",
+                    latest_text=unreplied[-1].text if unreplied else "",
+                )
+                self.debug_logger.log_action("none", action_input="", success=False, error="群聊回复已关闭")
+                switch_target = self._try_switch_to_unread_chat(result)
+                if switch_target:
+                    self.debug_logger.log_action("switch", action_input=switch_target, success=True)
+                return
+
             if not unreplied:
                 self.logger.log_decision(tick_id, should_reply=False, reason="无未回复消息", latest_text="")
                 self.debug_logger.log_action("none", action_input="", success=False, error="无未回复消息")
@@ -390,7 +435,7 @@ class WeChatBot:
                 return
 
             for msg in unreplied:
-                if self.on_message:
+                if self.on_message and self.replay_archive is None:
                     self.on_message(msg, state)
 
             # 收集所有需要回复的未读消息
@@ -420,8 +465,9 @@ class WeChatBot:
                 )
                 self.debug_logger.log_action("none", action_input="", success=False, error=skip_reason)
                 # 标记为已处理，避免反复重试占满轮询
-                for msg in unreplied:
-                    self.global_store.mark_replied(chat_name, msg, "")
+                if self.replay_archive is None:
+                    for msg in unreplied:
+                        self.global_store.mark_replied(chat_name, msg, "")
                 # 尝试切换到其他未读聊天（可能是白名单）
                 switch_target = self._try_switch_to_unread_chat(result)
                 if switch_target:
@@ -436,8 +482,9 @@ class WeChatBot:
                     latest_text=unreplied[-1].text if unreplied else "",
                 )
                 self.debug_logger.log_action("none", action_input="", success=False, error="免回复聊天")
-                for msg in unreplied:
-                    self.global_store.mark_replied(chat_name, msg, "")
+                if self.replay_archive is None:
+                    for msg in unreplied:
+                        self.global_store.mark_replied(chat_name, msg, "")
                 switch_target = self._try_switch_to_unread_chat(result)
                 if switch_target:
                     self.debug_logger.log_action("switch", action_input=switch_target, success=True)
@@ -448,10 +495,51 @@ class WeChatBot:
             if not isinstance(all_messages, list):
                 all_messages = []
             t_gen_start = time.time()
+            if self.replay_archive is not None:
+                try:
+                    self.replay_archive.capture_generator_pre_state(tick_id, self.generator)
+                except Exception as e:
+                    raise DecisionPointCutoff("生产回放生成前状态归档失败，已安全停止") from e
             replies = self.generator.generate(to_reply, all_messages, is_group=is_group, tick_id=tick_id)
             t_gen_ms = (time.time() - t_gen_start) * 1000
-            self.logger.info(f"[Perf][Tick] LLM generate total={t_gen_ms:.0f}ms replies={len(replies)}")
             reply_text = " | ".join(replies) if replies else ""
+            # 先封存生成决策，再写 tick_log、发送或推进状态。
+            if self.debug_logger.current is not None:
+                self.debug_logger.log_reply_generation(
+                    system_prompt=getattr(self.generator, 'last_system_prompt', ''),
+                    user_prompt=self.generator.text_for_logging(getattr(self.generator, 'last_user_prompt', '')),
+                    raw_response=getattr(self.generator, 'last_raw_response', ''),
+                    llm_calls=getattr(self.generator, 'last_llm_calls', []),
+                    tool_calls=getattr(self.generator, 'last_tool_calls', []),
+                    trace=getattr(self.generator, 'last_generation_trace', []),
+                    loaded_skills=getattr(self.generator, 'last_loaded_skills', []),
+                    skill_injected_content=getattr(self.generator, 'last_skill_injected_content', ''),
+                    active_llm=getattr(self.generator, 'last_active_llm', ''),
+                )
+            self.debug_logger.log_bot_decision(
+                chat_name=chat_name,
+                new_messages_count=len(unreplied),
+                should_reply=True,
+                reply_target=unreplied[-1].text if unreplied else "",
+                reply_text=reply_text,
+            )
+            if self.replay_archive is not None:
+                try:
+                    self.replay_archive.capture_decision_point(
+                        tick_id,
+                        self.debug_logger.current,
+                        list(replies),
+                        generator=self.generator,
+                    )
+                    raise DecisionPointCutoff(
+                        "single-step replay stopped at archived decision point"
+                    )
+                except DecisionPointCutoff:
+                    raise
+                except Exception as e:
+                    raise DecisionPointCutoff("生产回放决策点归档失败，已安全停止") from e
+
+            self.logger.info(f"[Perf][Tick] LLM generate total={t_gen_ms:.0f}ms replies={len(replies)}")
             # 写 tick_log
             conn = None
             try:
@@ -553,27 +641,6 @@ class WeChatBot:
                 reason=f"触发回复条件 (未读 {len(unreplied)} 条，需回复 {len(to_reply)} 条，生成 {len(replies)} 条回复)",
                 latest_text=unreplied[-1].text, reply_text=reply_text
             )
-            # 记录 LLM 回复生成的完整链路（含多轮调用 + 工具调用）
-            if self.debug_logger.current is not None:
-                self.debug_logger.log_reply_generation(
-                    system_prompt=getattr(self.generator, 'last_system_prompt', ''),
-                    user_prompt=self.generator.text_for_logging(getattr(self.generator, 'last_user_prompt', '')),
-                    raw_response=getattr(self.generator, 'last_raw_response', ''),
-                    llm_calls=getattr(self.generator, 'last_llm_calls', []),
-                    tool_calls=getattr(self.generator, 'last_tool_calls', []),
-                    trace=getattr(self.generator, 'last_generation_trace', []),
-                    loaded_skills=getattr(self.generator, 'last_loaded_skills', []),
-                    skill_injected_content=getattr(self.generator, 'last_skill_injected_content', ''),
-                    active_llm=getattr(self.generator, 'last_active_llm', ''),
-                )
-            self.debug_logger.log_bot_decision(
-                chat_name=chat_name,
-                new_messages_count=len(unreplied),
-                should_reply=True,
-                reply_target=unreplied[-1].text if unreplied else "",
-                reply_text=reply_text,
-            )
-
             if not replies:
                 if getattr(self.generator, "last_generation_failed", False) is True:
                     self.logger.log_decision(
@@ -588,6 +655,18 @@ class WeChatBot:
                         success=False,
                         error="LLM 生成失败，未标记已处理",
                     )
+                    return
+                exposure_block = getattr(self.generator, "last_exposure_block", None)
+                if isinstance(exposure_block, dict) and exposure_block:
+                    self.logger.log_decision(
+                        tick_id, should_reply=False,
+                        reason=f"大模型回复审查拦截，本轮不发送 ({exposure_block['rule']}，未读 {len(unreplied)} 条)",
+                        latest_text=unreplied[-1].text if unreplied else ""
+                    )
+                    self.debug_logger.log_action("none", action_input="", success=False,
+                                                 error=f"大模型回复审查拦截: {exposure_block.get('issues', [])}")
+                    for msg in to_reply:
+                        self.global_store.mark_replied(chat_name, msg, "(未回复)")
                     return
                 # LLM 返回空 replies = 判断无需回复（群聊没@我/纯表情包等），
                 # 属正常决策。补明确日志，避免被误读为"漏回"。
@@ -693,6 +772,9 @@ class WeChatBot:
                     )
             return
 
+        except DecisionPointCutoff:
+            self._replay_cutoff_reached = True
+            raise
         except Exception as exc:
             self.logger.log_exception(tick_id, phase="tick", exc=exc)
             if self.debug_logger.current:
@@ -700,16 +782,25 @@ class WeChatBot:
             raise
         finally:
             if self.debug_logger.current is not None:
+                if self.replay_archive is not None:
+                    try:
+                        self.replay_archive.finish_tick(tick_id, self.debug_logger.current)
+                    except Exception as e:
+                        self.logger.warning("生产回放归档失败: %s", e)
                 try:
                     path = self.debug_logger.save()
                     self.logger.debug(f"调试日志已保存: {path}")
                 except Exception as e:
                     self.logger.warning("调试日志保存失败: %s", e)
                 self.debug_logger.current = None
-            self.save_sessions()
+            if self.replay_archive is None:
+                self.save_sessions()
 
     def save_sessions(self) -> None:
         """保存全局状态到磁盘（增量保存，只保存有变化的聊天）。"""
+        if self.replay_archive is not None:
+            self.logger.info("生产单步回放不保存全局状态")
+            return
         try:
             self.global_store.save()
         except Exception as e:
@@ -746,6 +837,9 @@ class WeChatBot:
             tick_started = time.monotonic()
             try:
                 self.tick()
+            except DecisionPointCutoff as e:
+                self.running = False
+                self.logger.info("生产单步回放已在安全边界停止: %s", e)
             except Exception as e:
                 self.logger.error(f"Tick #{self._tick_id} 未捕获异常: {e}", exc_info=True)
             # 每 60 个 tick（约 15 分钟，按 15s 间隔）输出一次 DeepSeek token 统计
@@ -799,146 +893,41 @@ class WeChatBot:
             return False
 
     def _try_switch_to_unread_chat(self, result: PerceptionResult) -> str:
-        """检测到其他聊天有未读时，切换到未读数最多的那个。
-
-        WeFlow 模式下优先使用 API 轮询检测未读（比 OCR 识别角标更可靠）。
-        防抖：10 秒内不重复切换同一个目标，防止反复点击导致右侧折叠。
-        """
+        """根据截图未读角标，切换到未读数最多的聊天。"""
         if not getattr(self, 'enable_chat_switch', True):
             return ""
 
         current_chat = _normalize_chat_name(result.chat_name)
-        target_name = ""
-        target_unread: int | str = 0
-
-        # ===== WeFlow 模式：API 轮询检测未读 =====
-        if self._weflow_mode in ("weflow", "hybrid"):
-            try:
-                weflow = getattr(self.perception, '_weflow_pipeline', None)
-                self.logger.info(f"[WeFlow] 切换检测: weflow={weflow is not None}, initialized={getattr(weflow, '_initialized', False)}")
-                if weflow and weflow._initialized:
-                    unread_chats = weflow.check_unread_all()
-                    self.logger.info(f"[WeFlow] check_unread_all 返回 {len(unread_chats)} 个未读")
-                    # 过滤当前聊天和免回复列表
-                    for item in unread_chats:
-                        name = _normalize_chat_name(item["name"])
-                        self.logger.info(f"[WeFlow] 未读候选: {name} ({item['unread_count']}条), current={current_chat}")
-                        if name == current_chat:
-                            continue
-                        if name in {_normalize_chat_name(c) for c in self.no_reply_chats}:
-                            continue
-                        target_name = item["name"]
-                        target_unread = item["unread_count"]
-                        break
-                    if target_name:
-                        self.logger.info(f"[WeFlow] 检测到未读: {target_name} ({target_unread}条)")
-            except Exception as e:
-                self.logger.warning(f"[WeFlow] 未读检测失败: {e}")
-
-        # ===== OCR fallback：截图识别未读角标 =====
-        # WeFlow 模式下：API 已经检测过未读，如果 API 返回空（没有未读），
-        # 直接信任 API，不 fallback 到 OCR（OCR 在小窗口中误识别率太高，会导致无限切换）
-        # 但仅在 WeFlow 实际已初始化且执行了检测时才信任结果
-        if self._weflow_mode in ("weflow", "hybrid"):
-            weflow = getattr(self.perception, '_weflow_pipeline', None)
-            if weflow and weflow._initialized and not target_name:
-                return ""
-
-        if not target_name:
-            chat_list_items = result.chat_list_items
-            if not chat_list_items:
-                return ""
-
-            unread_items = [
-                item for item in chat_list_items
-                if item.unread_count
-                and _normalize_chat_name(item.nickname) != current_chat
-                and _normalize_chat_name(item.nickname) not in {
-                    _normalize_chat_name(c) for c in self.no_reply_chats
-                }
-            ]
-            if not unread_items:
-                return ""
-
-            # 优先选择未读数最多的
-            unread_items.sort(key=lambda item: int(item.unread_count) if item.unread_count.isdigit() else 0, reverse=True)
-            target = unread_items[0]
-            target_name = target.nickname
-            target_unread = target.unread_count
-
-        if not target_name:
+        no_reply = {_normalize_chat_name(c) for c in self.no_reply_chats}
+        unread_items = [
+            item for item in result.chat_list_items
+            if item.unread_count
+            and _normalize_chat_name(item.nickname) != current_chat
+            and _normalize_chat_name(item.nickname) not in no_reply
+        ]
+        if not unread_items:
             return ""
 
+        target = max(unread_items, key=lambda item: int(item.unread_count) if item.unread_count.isdigit() else 0)
+        target_name = target.nickname
         target_norm = _normalize_chat_name(target_name)
-
-        # 防抖：10 秒内不重复切换同一个目标
         now = time.time()
         if target_norm == self._last_switch_target and (now - self._last_switch_time) < self._switch_debounce_seconds:
-            self.logger.info(f"[WeFlow] 防抖: {target_name} 最近已切换，跳过")
+            self.logger.info(f"防抖: {target_name} 最近已切换，跳过")
+            return ""
+        if result.window_rect is None:
+            self.logger.info("window_rect 为 None，无法切换")
             return ""
 
-        window_rect = result.window_rect
-        scale_factor = result.scale_factor
-        if window_rect is None:
-            self.logger.info("[WeFlow] window_rect 为 None，无法切换")
+        clicker = ChatListClicker(result.window_rect, result.scale_factor)
+        if not clicker.click_item(target):
+            self.logger.info(f"点击失败: '{target_name}'")
             return ""
 
-        clicker = ChatListClicker(window_rect, scale_factor)
-
-        # WeFlow 模式：在截图的 chat_list_items 中找匹配的 rect
-        target_item = None
-        if self._weflow_mode in ("weflow", "hybrid"):
-            weflow = getattr(self.perception, '_weflow_pipeline', None)
-            for item in result.chat_list_items:
-                # 1) 直接昵称匹配
-                if _normalize_chat_name(item.nickname) == target_norm:
-                    target_item = item
-                    self.logger.info(f"[WeFlow] chat_list_items 昵称匹配 '{target_name}'")
-                    break
-                # 2) talker 匹配（API 返回的是 talker/wxid，OCR 显示的是昵称）
-                if weflow:
-                    item_talker = weflow._resolve_talker(item.nickname)
-                    if item_talker and _normalize_chat_name(item_talker) == target_norm:
-                        target_item = item
-                        self.logger.info(f"[WeFlow] chat_list_items talker 匹配 '{target_name}' via '{item.nickname}'")
-                        break
-            if target_item is None:
-                self.logger.info(f"[WeFlow] chat_list_items 中无匹配 '{target_name}' 的项，共 {len(result.chat_list_items)} 个")
-
-        # fallback 1: OCR 列表中的第一个未读项
-        if target_item is None:
-            unread_items = [
-                item for item in result.chat_list_items
-                if item.unread_count and _normalize_chat_name(item.nickname) != current_chat
-                and _normalize_chat_name(item.nickname) not in {_normalize_chat_name(c) for c in self.no_reply_chats}
-            ]
-            self.logger.info(f"[WeFlow] chat_list_items 未读项: {len(unread_items)}/{len(result.chat_list_items)}")
-            if unread_items:
-                target_item = unread_items[0]
-                target_name = target_item.nickname
-                target_unread = target_item.unread_count
-            elif result.chat_list_items and self._weflow_mode in ("weflow", "hybrid"):
-                # fallback 2: WeFlow 检测到未读但 OCR 列表中无未读标记，尝试点击列表第一项
-                #（WeFlow 已知有未读，但 OCR 未识别到角标，可能是小窗口中角标太小）
-                target_item = result.chat_list_items[0]
-                self.logger.info(f"[WeFlow] 未读 '{target_name}' 无精确 rect，尝试点击列表第一项 '{target_item.nickname}'")
-
-        if target_item is None:
-            self.logger.info(f"[WeFlow] 无法找到可点击的列表项，chat_list_items={len(result.chat_list_items)}")
-            return ""
-
-        self.logger.info(f"[WeFlow] 准备点击 '{target_item.nickname}' at ({target_item.rect.x},{target_item.rect.y})")
-        clicked = clicker.click_item(target_item)
-        if not clicked:
-            self.logger.info(f"[WeFlow] 点击失败: '{target_item.nickname}'")
-            return ""
-
-        # 不再做点击后二次截图验证，依赖 5 秒 tick 兜底：
-        # 若误点进服务号/公众号列表，下一轮 tick 会识别并触发返回按钮。
         self._last_switch_target = target_norm
         self._last_switch_time = now
-        self.logger.info(f"🔄 切换聊天: {target_name!r} (未读 {target_unread})")
-        self.debug_logger.log_bot_decision(switch_target=target_name, switch_reason=f"未读 {target_unread}")
+        self.logger.info(f"🔄 切换聊天: {target_name!r} (未读 {target.unread_count})")
+        self.debug_logger.log_bot_decision(switch_target=target_name, switch_reason=f"未读 {target.unread_count}")
         return target_name
 
     def send_to_chat(self, chat_name: str, text: str) -> ActionResult:

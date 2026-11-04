@@ -80,32 +80,38 @@ def _msg_id(chat_name: str, msg: ChatMessage, is_group: bool = False) -> str:
     return f"{chat_name}|{normalized_sender}|{text_hash}"
 
 
+def _media_matches(a: ChatMessage, b: ChatMessage, threshold: float) -> bool:
+    if a.message_type != b.message_type:
+        return False
+    if a.message_type == "sticker":
+        texts_a = {_normalize_text(value) for value in (a.text, a.image_text) if value}
+        texts_b = {_normalize_text(value) for value in (b.text, b.image_text) if value}
+        if (texts_a & texts_b) - {""}:
+            return True
+    combined_a = f"{a.image_description or ''} {a.image_text or ''}".strip()
+    combined_b = f"{b.image_description or ''} {b.image_text or ''}".strip()
+    return _jaccard_2gram(combined_a, combined_b) >= threshold
+
+
 def _is_fuzzy_duplicate(state, msg: ChatMessage, lookback: int = 10) -> bool:
     """模糊去重：对最近 lookback 条消息做文本相似度比较。
 
     OCR 偶尔错几个字，精确 hash 会失效。用 difflib.SequenceMatcher
     计算相似度，>= threshold 视为同一条消息。
 
-    图片/表情/混合消息：基于 image_description 做 2-gram Jaccard 模糊去重。
+    媒体消息复用对齐匹配，表情包文字可在 text / image_text 间迁移。
 
     阈值按消息长度动态调整：越短的消息要求越严格（避免不同短句误判）。
     只对 lookback 条消息比较，避免遍历全部历史影响性能。
     """
-    # 媒体消息：基于 image_description 做 2-gram Jaccard
     if msg.message_type in MEDIA_MESSAGE_TYPES:
-        desc = msg.image_description
-        if not desc:
-            return False
         for hist_msg in state.messages[-lookback:]:
-            if hist_msg.sender_type.value == "self":
+            if hist_msg.sender_type != msg.sender_type:
                 continue
-            if hist_msg.message_type not in MEDIA_MESSAGE_TYPES:
+            if _normalize_sender(state.chat_name, hist_msg, state.is_group) != _normalize_sender(
+                    state.chat_name, msg, state.is_group):
                 continue
-            hist_desc = hist_msg.image_description
-            if not hist_desc:
-                continue
-            sim = _jaccard_2gram(desc, hist_desc)
-            if sim >= 0.08:
+            if _media_matches(hist_msg, msg, 0.08):
                 return True
         return False
 
@@ -126,8 +132,10 @@ def _is_fuzzy_duplicate(state, msg: ChatMessage, lookback: int = 10) -> bool:
 
     normalized = _normalize_text(text)
     for hist_msg in state.messages[-lookback:]:
-        # 跳过 Bot 自己的消息，避免拿 Bot 回复去重用户新消息
-        if hist_msg.sender_type.value == "self":
+        if hist_msg.sender_type != msg.sender_type:
+            continue
+        if _normalize_sender(state.chat_name, hist_msg, state.is_group) != _normalize_sender(
+                state.chat_name, msg, state.is_group):
             continue
         # 跳过媒体类消息（不参与文字模糊去重）
         if hist_msg.message_type in MEDIA_MESSAGE_TYPES:
@@ -145,17 +153,18 @@ def _match_single(a: ChatMessage, b: ChatMessage, chat_name: str, is_group: bool
     """直接比较两条消息是否匹配（用于对齐）。
 
     文字：SequenceMatcher >= 0.80
-    图片：2-gram Jaccard >= 0.001（容错极大，应对 qwen 描述不稳定）
+    媒体：表情包识别文字相同，或 2-gram Jaccard >= 0.20。
     """
-    # 精确匹配（使用标准化 sender）
-    if _msg_id(chat_name, a, is_group) == _msg_id(chat_name, b, is_group):
-        return True
     # sender_type 不同直接不匹配（避免自己消息和对方消息误匹配）
     if a.sender_type != b.sender_type:
+        return False
+    if _normalize_sender(chat_name, a, is_group) != _normalize_sender(chat_name, b, is_group):
         return False
     # 类型不同直接不匹配
     if a.message_type != b.message_type:
         return False
+    if _msg_id(chat_name, a, is_group) == _msg_id(chat_name, b, is_group):
+        return True
     # 文字消息
     if a.message_type == "text":
         text_a = _normalize_text(a.text)
@@ -163,14 +172,7 @@ def _match_single(a: ChatMessage, b: ChatMessage, chat_name: str, is_group: bool
         if not text_a or not text_b:
             return False
         return difflib.SequenceMatcher(None, text_a, text_b).ratio() >= 0.80
-    # 图片/表情/混合：合并 image_description + image_text 后做 Jaccard
-    # 应对 API 描述不稳定（有时把图上文字放 image_description，有时放 image_text）
-    combined_a = f"{a.image_description or ''} {a.image_text or ''}".strip()
-    combined_b = f"{b.image_description or ''} {b.image_text or ''}".strip()
-    if not combined_a or not combined_b:
-        return False
-    sim = _jaccard_2gram(combined_a, combined_b)
-    return sim >= 0.20
+    return _media_matches(a, b, 0.20)
 
 
 def _lcs_match(history: List[ChatMessage], tick: List[ChatMessage], chat_name: str, is_group: bool = False) -> set:
@@ -301,11 +303,6 @@ class GlobalStore:
         """新算法：LCS 序列对齐（独立出来用于 A/B 对比测试）。"""
         state = self.chats[chat_name]
 
-        def _in_history(msg: ChatMessage) -> bool:
-            return _msg_id(chat_name, msg, is_group) in state._msg_ids or _is_fuzzy_duplicate(
-                state, msg, lookback=len(state.messages)
-            )
-
         # tick 内去重
         seen_ids = set()
         unique_messages = []
@@ -337,7 +334,10 @@ class GlobalStore:
                           i, match_flag, msg.sender, msg.sender_type.value, msg.text or "")
 
         if not matched:
-            new_messages = [msg for msg in messages if not _in_history(msg)]
+            recent_ids = {_msg_id(chat_name, msg, is_group) for msg in history_window}
+            new_messages = [msg for msg in messages
+                            if _msg_id(chat_name, msg, is_group) not in recent_ids
+                            and not _is_fuzzy_duplicate(state, msg, lookback=search_window)]
             _logger.debug("[LCS] %s 无 LCS 匹配，_in_history 过滤后新消息=%d条", chat_name, len(new_messages))
             return new_messages
 
@@ -374,15 +374,10 @@ class GlobalStore:
         self,
         chat_name: str,
         messages: List[ChatMessage],
-        mode: str = "ocr",
         is_group: bool = False,
     ) -> Tuple[ChatState, List[ChatMessage]]:
         """
         合并 tick 检测到的消息，返回 (state, 未回复的消息列表).
-
-        mode: "ocr" | "weflow" | "hybrid"
-            - ocr: 使用原有 LCS + 模糊匹配去重
-            - weflow/hybrid: 使用 localId 精确去重（如果消息有 local_id）
         """
         if chat_name not in self.chats:
             self.chats[chat_name] = ChatState(
@@ -397,12 +392,7 @@ class GlobalStore:
             state.is_group = is_group
             self._dirty.add(chat_name)
 
-        # 选择去重策略
-        if mode in ("weflow", "hybrid"):
-            _logger.info("[GlobalStore] %s 使用 WeFlow 精确去重 (%d 条)", chat_name, len(messages))
-            new_messages = self._merge_tick_weflow(chat_name, messages)
-        else:
-            new_messages = self._merge_tick_lcs(chat_name, messages, is_group)
+        new_messages = self._merge_tick_lcs(chat_name, messages, is_group)
 
         # 添加新消息到历史
         if new_messages:
@@ -451,128 +441,6 @@ class GlobalStore:
                 # 不 break，继续标记所有匹配的消息（OCR 不稳定可能导致同一条消息存了多份）
         if marked:
             self._dirty.add(chat_name)
-
-    def _merge_tick_weflow(self, chat_name: str, messages: List[ChatMessage]) -> List[ChatMessage]:
-        """WeFlow 精确去重：基于 localId + Bot 消息 text 去重。
-
-        复杂度：O(n)，只需要一次集合查找。
-        对 Bot 自己发送的消息基于 text 去重，但保留最新的 reply_time，
-        避免 Bot 手动注入的回复被跳过后，历史上下文里看不到 bot 自己的消息。
-        """
-        state = self.chats[chat_name]
-        seen_ids = {
-            getattr(m, "local_id", None)
-            for m in state.messages
-            if hasattr(m, "local_id") and getattr(m, "local_id", None) is not None
-        }
-        # Bot 自己发的消息：保存对象引用，以便更新 reply_time
-        bot_entries = {
-            m.text: m
-            for m in state.messages
-            if m.sender_type == SenderType.SELF
-        }
-        new_messages = []
-        for m in messages:
-            lid = getattr(m, "local_id", None)
-            if lid is not None and lid in seen_ids:
-                continue
-            # Bot 自己发的消息，如果 text 已存在，更新 reply_time 而不是跳过
-            if m.sender_type == SenderType.SELF and m.text in bot_entries:
-                existing = bot_entries[m.text]
-                m_reply_time = getattr(m, "reply_time", None)
-                existing_reply_time = getattr(existing, "reply_time", None)
-                if m_reply_time and (
-                    not existing_reply_time
-                    or m_reply_time > existing_reply_time
-                ):
-                    existing.reply_time = m_reply_time
-                continue
-            new_messages.append(m)
-            if lid is not None:
-                seen_ids.add(lid)
-            if m.sender_type == SenderType.SELF:
-                bot_entries[m.text] = m
-        if new_messages:
-            _logger.debug(
-                "[GlobalStore] WeFlow 去重: %s 新消息 %d 条 (历史 %d 条)",
-                chat_name,
-                len(new_messages),
-                len(state.messages),
-            )
-        return new_messages
-
-    def inject_history(
-        self,
-        chat_name: str,
-        messages: List[ChatMessage],
-        mode: str = "weflow",
-        is_group: bool = False,
-    ) -> int:
-        """批量注入历史消息（WeFlow 全量初始化时使用）。
-
-        与 merge_tick 不同：
-        - 不裁剪历史（允许超过 max_messages）
-        - 不去重（假设输入已去重）
-        - 标记 replied=True（历史消息不需要回复）
-
-        Returns:
-            注入的消息数量
-        """
-        # 按 create_time 正序排序，防止 WeFlow 返回倒序消息导致
-        # merge_tick 裁剪时误删较新的历史（含 bot 自己的回复）
-        if messages:
-            messages = sorted(messages, key=lambda m: getattr(m, "create_time", 0) or 0)
-
-        if chat_name not in self.chats:
-            self.chats[chat_name] = ChatState(
-                chat_id=f"chat_{len(self.chats)}",
-                chat_name=chat_name,
-                is_group=is_group,
-            )
-
-        state = self.chats[chat_name]
-        # 如果传入的 is_group 与当前状态不同，更新状态
-        if state.is_group != is_group:
-            state.is_group = is_group
-            self._dirty.add(chat_name)
-        count = 0
-
-        if mode in ("weflow", "hybrid") and messages and getattr(messages[0], "local_id", None) is not None:
-            # WeFlow 模式：基于 localId 去重后注入
-            seen_ids = {
-                getattr(m, "local_id", None)
-                for m in state.messages
-                if hasattr(m, "local_id") and getattr(m, "local_id", None) is not None
-            }
-            for msg in messages:
-                lid = getattr(msg, "local_id", None)
-                if lid is not None and lid in seen_ids:
-                    continue
-                new_msg = replace(msg, chat_name=chat_name, replied=True)
-                state.messages.append(new_msg)
-                if lid is not None:
-                    seen_ids.add(lid)
-                count += 1
-        else:
-            # OCR 模式：基于原有去重键注入
-            for msg in messages:
-                mid = _msg_id(chat_name, msg, is_group)
-                if mid in state._msg_ids:
-                    continue
-                new_msg = replace(msg, chat_name=chat_name, replied=True)
-                state.messages.append(new_msg)
-                state._msg_ids.add(_msg_id(chat_name, new_msg, is_group))
-                count += 1
-
-        if count:
-            self._dirty.add(chat_name)
-            _logger.debug(
-                "[GlobalStore] 注入历史: %s +%d 条 (总计 %d 条)",
-                chat_name,
-                count,
-                len(state.messages),
-            )
-        return count
 
     def get_unreplied(self, chat_name: str) -> List[ChatMessage]:
         """获取某聊天中所有未回复的消息（按时间顺序）"""
@@ -626,7 +494,8 @@ class GlobalStore:
             image_description=db_msg.image_description or "",
             local_id=db_msg.local_id,
             server_id=db_msg.server_id,
-            create_time=db_msg.create_time,
+            create_time=db_msg.create_time if db_msg.observed_at is None else None,
+            observed_at=db_msg.observed_at,
             raw_type=db_msg.raw_type,
             sender_wxid=db_msg.wxid,
         )
@@ -683,6 +552,7 @@ class GlobalStore:
             "local_id": m.local_id,
             "server_id": m.server_id,
             "create_time": m.create_time,
+            "observed_at": m.observed_at,
             "raw_type": m.raw_type,
             "sender_wxid": m.sender_wxid,
             "chatroom_id": m.chatroom_id,

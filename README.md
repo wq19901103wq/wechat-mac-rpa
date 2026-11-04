@@ -11,9 +11,9 @@
 
 **中文** | [English](README_EN.md)
 
-让 AI 像人一样"看"着微信界面，自动回复消息。默认 OCR / SmartPipeline 模式**不碰协议、不读数据库、不注入代码**；可选 WeFlow 模式会读取用户授权的本地数据库副本，用于初始化历史记忆。
+让 AI 通过微信界面交互并生成回复。当前 Bot 默认通过截图/OCR 感知消息，私聊、群聊统一使用 digital-human production 生成器。截图消息使用首次观察时间，缺少可靠时间或明确发言人时拒绝生成。详见 [digital-human 接入](docs/03-guides/DIGITAL_HUMAN_DRAFT.md)。
 
-基于**多模态视觉感知**与**LLM Agent**的 macOS 微信自动化框架。默认模式不是协议逆向或 Hook，而是把微信当作纯黑盒 GUI 应用：用计算机视觉读取界面，用大语言模型理解对话，用系统级自动化操作界面。
+基于**多模态视觉感知**与**LLM Agent**的 macOS 微信自动化框架。截图/OCR 用于识别聊天与消息，digital-human 负责生成回复，系统级自动化负责界面交互。
 
 核心设计：**感知 → 推理 → 行动 → 记忆 → 数据飞轮**，五个子系统构成完整的认知闭环。每一次认知循环的完整链路都被结构化日志逐条记录，形成**可追溯、可回归、可量化**的生产质量资产。
 
@@ -21,12 +21,14 @@
 
 ## 快速开始
 
+- **源码依赖**：默认直接使用相邻的 `../digital-human` 主仓库。RPA 通过常驻子进程调用其草稿函数，优先使用 DH 自己的 `.venv`；更新源码后重启 Bot 加载。详见 [接入说明](docs/03-guides/DIGITAL_HUMAN_DRAFT.md#源码依赖)。
 - **环境**：macOS 12+，Python 3.10+，微信 Mac 版
-- **依赖**：`pip install -r requirements.txt`
-- **配置**：复制 `.env.example` 为 `.env`，填入 API Key；复制 `prompts/persona.md.example` 为 `data/persona.md`，填写本地人设
+- **依赖**：`python3 -m venv .venv`，然后执行 `.venv/bin/python -m pip install -r requirements.txt`；运行时使用同一个项目虚拟环境，避免混用全局 Anaconda 依赖。
+- **配置**：复制 `.env.example` 为 `.env`，填入所需 API Key；复制 `config/digital_human.json.example` 为 `config/digital_human.json`，配置 DH 的 `repository`、`instance`、私有材料 `instances_root`、`env_file`，可显式指定 `settings_file`。准备实例的 production 材料，详见 [digital-human 接入](docs/03-guides/DIGITAL_HUMAN_DRAFT.md)
 - **隐私**：`.env` 与 `data/` 默认不进入 Git；不要把 API Key、聊天记录或真实人设提交到仓库
 - **权限**：Bot 依赖 macOS 辅助功能/屏幕录制权限，详见下文[权限说明](#权限说明)
-- **启动**：`python3 run_bot.py`
+- **仅生成草稿**：`.venv/bin/python scripts/digital_human_draft.py --screenshot`，只输出草稿，不发送消息。
+- **启动 Bot**：`.venv/bin/python run_bot.py`，按发送策略处理消息，静默白名单内仍可能自动发送。
 - **管理后台（LaunchAgent 常驻）**：
   ```bash
   # 首次加载（用户登录时自动启动，崩溃自动重启）
@@ -107,12 +109,12 @@ graph LR
 
 感知层的任务是**忠实还原界面上的文字、布局和状态**，不"理解"对话，只负责提取。
 
-当前两条感知管道并行运行：
+项目保留以下 OCR 感知管道：
 
-- **SmartPipeline**（主力）：本地预判 + 多模态 API 兜底。先用像素 Diff 判断截图是否有实质变化，无变化时零 API 调用直接跳过；有变化时调用多模态大模型提取消息内容。
+- **SmartPipeline** 的 OCR 路径：本地预判 + 多模态 API 兜底。先用像素 Diff 判断截图是否有实质变化，无变化时零 API 调用直接跳过；有变化时调用多模态大模型提取消息内容。
 - **VisionPipeline**（Fallback）：纯本地 OCR 备用管道，在多模态 API 不可用时降级运行。
 
-WeFlowPipeline 不直接参与感知，而是作为**记忆系统的初始化来源**：启动时从微信数据库导出全量历史聊天记录，按聊天聚合后注入 GlobalStore，让 Bot 上线第一天就拥有完整的背景知识。
+当前默认入口为 SmartPipeline 截图/OCR 路径。digital-human 的观察输入使用截图捕获时间，无需原始聊天 ID；该时间仅代表首次观察，不代表微信发送时间。下图描述感知流程。
 
 ```mermaid
 graph TB
@@ -131,7 +133,7 @@ graph TB
 
 推理层是 Bot 的"大脑"。它不直接操作界面，只决定**说什么**和**用什么工具**。
 
-核心设计是**二级路由**：先用轻量调用判断用户意图是否匹配某个复杂 Skill，再决定投入哪条推理路径。
+当前默认生成入口是 digital-human production；以下二级路由为保留的旧生成器能力，不参与默认私聊、群聊回复。其设计是先判断用户意图是否匹配复杂 Skill，再选择推理路径。
 
 - **轻量化 Agent**（日常路径）：运行完整的 ReAct 循环——分析意图 → 调用工具 → 观察结果 → 重新推理。Agent 自行决定调用 `search_memory`、`web_search`、`browse_url` 等工具，也可以加载 Skills 进行深度组合推理。
 - **Hermes 路径**：匹配到复杂 Skill 且 Hermes 模型可用时，切换长上下文模型，加载完整 Skill 正文进行单轮深度推理，不启用 ReAct 工具循环。
@@ -375,7 +377,7 @@ Judge 一旦可信，回路二就可以大规模自动化运转，**人工不再
 wechat-mac-rpa/
 ├── src/
 │   ├── bot/               # L5: 主循环编排
-│   ├── perception/        # L3.5: SmartPipeline / VisionPipeline / WeFlowPipeline
+│   ├── perception/        # L3.5: SmartPipeline / VisionPipeline
 │   ├── layout/            # L3: 布局解析
 │   ├── message/           # L3: 消息提取
 │   ├── session/           # L4: 全局消息存储（LCS 去重 + 持久化）
@@ -472,11 +474,10 @@ erDiagram
 
 | 术语 | 说明 |
 |------|------|
-| **Tick** | Bot 主循环的一次迭代（当前启动入口间隔 15 秒；底层方法默认参数 5 秒），包含 感知 → 去重 → 决策 → 回复 |
+| **Tick** | Bot 主循环的一次迭代（当前启动入口间隔 5 秒），包含 感知 → 去重 → 决策 → 回复 |
 | **Perception** | 感知层，将微信窗口截图转换为结构化数据（聊天名、消息列表、未读数等） |
 | **Layout** | 布局解析，把 OCR 文字元素按 UI 区域分组（聊天列表、标题栏、消息区等） |
 | **SmartPipeline** | 感知层实现之一：OCR + 视觉模型 API，带像素 diff 缓存，降低 API 调用频率 |
-| **WeFlow** | 感知层实现之一：通过 WeChatDB 导出历史消息，用于首次全量初始化 |
 | **GlobalStore** | 全局消息存储，负责跨 tick 去重、会话状态维护和持久化 |
 | **Judge** | LLM-as-a-Judge，用于评估回复质量、自动标注 badcase |
 | **Skill** | Markdown 格式的可插拔知识卡片，可被工具动态加载 |
@@ -504,10 +505,9 @@ erDiagram
 
 ---
 
-## 数据安全与 WeFlow
+## 数据安全
 
-- **OCR / SmartPipeline 模式**：Bot 仅通过 macOS 公开 API 截取微信窗口画面，不读取微信本地数据库。
-- **WeFlow 模式**：可选启用，用于首次启动时全量导出历史消息以初始化记忆。该导出基于用户已授权的本地 WeChat 数据库副本，Bot 不会修改或上传原始数据库。
+- **OCR 路径**：通过 macOS 公开 API 截取微信窗口画面，不再依赖额外的本地读库服务。
 - API Key、原始数据库、聊天记录和记忆索引保存在本地 `.env`、`data/` 目录，不上传至本项目自建服务器。启用外部 LLM / 多模态 API 时，相关 Prompt 或截图会按功能需要发送给所配置的 API 服务商，请同时遵守服务商的数据政策。
 
 ## 免责声明

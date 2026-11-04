@@ -3,6 +3,13 @@
 import logging
 import sys, os, fcntl, signal
 from pathlib import Path
+
+project_python = Path(__file__).absolute().parent / ".venv" / "bin" / "python"
+if (__name__ == "__main__" and project_python.is_file()
+        and Path(sys.prefix).absolute() != project_python.parent.parent):
+    print(f"使用项目 Python: {project_python}", flush=True)
+    os.execv(str(project_python), [str(project_python), "-u", str(Path(__file__).absolute()), *sys.argv[1:]])
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 # 加载 .env
@@ -17,8 +24,8 @@ if env_file.exists():
 
 from src.bot.wechat_bot import WeChatBot
 from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
-from src.perception.smart_pipeline import SmartPerceptionPipeline
-from src.utils.qwen_client import QwenClient
+from src.logging.bot_logger import get_logger
+from src.reply.digital_human import load_digital_human_config
 
 _logger = logging.getLogger(__name__)
 
@@ -64,21 +71,21 @@ def main():
         print("🤖 wechat-twin Bot")
         print("=" * 60)
         print("配置:")
-        model_name = os.environ.get("LLM_MODEL", "deepseek-v4-flash")
-        base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
-        print(f"  • LLM: {model_name} ({base_url})")
-        print("  • Prompt: DT style (data/persona.md)")
-        print("  • 检索: 待启用")
+        digital_human = load_digital_human_config()
+        print(f"  • 私聊/群聊: digital-human production ({digital_human['instance']})")
+        print(f"  • 仓库: {digital_human['repository']}")
+        print(f"  • 请求超时: {digital_human['timeout']}s；失败不回退旧生成器")
+        print("  • 消息来源: 微信窗口截图 / OCR")
         interval = 5.0
         print(f"  • 轮询: 每 {interval:.0f} 秒")
 
-        llm = QwenClient()
-        perception = SmartPerceptionPipeline(PROFILE_WECHAT_MAC_1760X1280)
-        bot = WeChatBot(
-            profile=PROFILE_WECHAT_MAC_1760X1280,
-            llm_client=llm,
-            perception=perception,
-        )
+        try:
+            bot = WeChatBot(
+                profile=PROFILE_WECHAT_MAC_1760X1280,
+            )
+        except Exception:
+            get_logger().error("Bot 启动失败", exc_info=True)
+            raise
 
         def _request_stop(signum, _frame):
             print(f"\n👋 收到信号 {signum}，将在当前 tick 结束后停止...")
@@ -93,6 +100,10 @@ def main():
             bot.running = False
         finally:
             print("\n👋 正在保存状态并停止后台任务...")
+            try:
+                bot.generator.close()
+            except Exception as e:
+                _logger.warning("关闭 digital-human 失败: %s", e)
             bot.save_sessions()
             if hasattr(bot, 'memory_engine') and bot.memory_engine:
                 bot.memory_engine.shutdown()

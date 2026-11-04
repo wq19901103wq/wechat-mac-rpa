@@ -55,6 +55,9 @@ def init_db(db_path: Optional[Path] = None):
     engine = get_engine(Path(db_path) if db_path else None)
     Base.metadata.create_all(bind=engine)
     with engine.begin() as conn:
+        columns = {row[1] for row in conn.execute(text("PRAGMA table_info(messages)"))}
+        if "observed_at" not in columns:
+            conn.execute(text("ALTER TABLE messages ADD COLUMN observed_at FLOAT"))
         result = conn.execute(text(
             "UPDATE messages SET is_self=1 "
             "WHERE sender_display_name='自己' AND is_self=0 AND source_file IS NULL"

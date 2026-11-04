@@ -34,8 +34,8 @@
 
 例外：在 `merge_tick` 首次入库时，`chat_name` 会被标准化为归一化后的 session key（`_normalize_chat_name`）。此修改仅发生在消息首次进入 GlobalStore 时，后续不得再次修改。
 
-### 规则 3: 新增 WeFlow 字段不影响现有代码
-`local_id`、`server_id`、`create_time`、`raw_type`、`sender_wxid` 为 WeFlow 扩展字段，必须为 `Optional` 且有默认值。
+### 规则 3: 历史记录元数据不影响现有代码
+`local_id`、`server_id`、`create_time`、`raw_type`、`sender_wxid` 为历史记录元数据字段，必须为 `Optional` 且有默认值。
 
 ## 6. 错误处理
 本模块不抛异常。数据校验由调用方负责。

@@ -107,18 +107,6 @@
 - **改什么**: 聚合视觉链路、错误处理、聊天切换预留接口
 - **不改什么**: 去重策略、回复生成
 
-### `src/perception/weflow_client.py`
-- **定位**: L3.5 WeFlow 客户端
-- **改什么**: 微信数据库连接配置
-- **不改什么**: 消息解析逻辑
-- **注意**: 实验性模块，默认关闭
-
-### `src/perception/weflow_pipeline.py`
-- **定位**: L3.5 WeFlow 感知管道
-- **改什么**: 数据库驱动消息同步逻辑
-- **不改什么**: 回复生成
-- **注意**: 实验性模块，默认关闭
-
 ### `src/session/global_store.py`
 - **定位**: L4 会话/去重/持久化
 - **改什么**: `merge_tick()` 去重算法（LCS 序列对齐）、`_match_single()` 匹配逻辑、`_is_fuzzy_duplicate()` 模糊兜底、持久化格式
