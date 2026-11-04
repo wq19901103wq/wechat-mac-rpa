@@ -27,13 +27,6 @@
 | 登录恢复 | `src/action/login_recovery.py` | ✅ | 自动点击登录按钮 |
 | 记忆引擎 | `src/memory/engine.py` | ✅ | LLM Wiki + Overrides |
 
-### P2 — 感知扩展
-
-| 模块 | 文件 | 状态 | 说明 |
-|------|------|------|------|
-| WeFlow 客户端 | `src/perception/weflow_client.py` | ✅ | 微信数据库读取（实验性） |
-| WeFlow 管道 | `src/perception/weflow_pipeline.py` | ✅ | 数据库驱动感知（实验性） |
-
 ### P3 — 工程化
 
 | 模块 | 文件 | 状态 | 说明 |
@@ -55,7 +48,6 @@
 | 优先级 | 项 | 说明 |
 |--------|---|------|
 | 🟡 P1 | `src/storage/chat_history.py` 分片优化 | 大文件加载慢 |
-| 🟡 P1 | WeFlow 管道生产化 | 当前为实验性，`WEFLOW_MODE=ocr` 默认关闭 |
 | 🟢 P2 | 多显示器场景支持 | 坐标计算需适配多屏 |
 
 ---

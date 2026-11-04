@@ -7,12 +7,10 @@
 
 - **FR-1**: `merge_tick(chat_name, messages)`：合并本轮感知到的消息，返回 `(ChatState, unreplied_messages)`。
 - **FR-2**: 去重策略：
-  - OCR 模式：LCS 序列对齐 + 模糊去重（`SequenceMatcher` + `Jaccard`）
-  - WeFlow 模式：`local_id` 精确去重
+  - LCS 序列对齐 + 模糊去重（`SequenceMatcher` + `Jaccard`）
 - **FR-3**: 消息 ID 生成：基于 `chat_name + 标准化 sender + 内容指纹`。
 - **FR-4**: 裁剪历史：每聊天最多保留 `max_messages` 条（默认 200），超限删除最旧消息。
 - **FR-5**: `mark_replied()`：标记消息已回复（支持对象引用匹配 + text+sender 兜底）。
-- **FR-6**: `inject_history()`：批量注入历史消息（WeFlow 初始化用），标记 `replied=True`，不去重不裁剪。
 - **FR-7**: 增量持久化：只保存有变化的聊天（`_dirty` 标记），分片格式（每聊天一个 JSON 文件）。
 
 ## 3. 非功能需求 (NFR)
@@ -30,7 +28,6 @@ GlobalStore(max_messages: int = 200, state_file: str = "data/global_state.json")
 merge_tick(
     chat_name: str,
     messages: List[ChatMessage],
-    mode: str = "ocr",       # "ocr" | "weflow" | "hybrid"
     is_group: bool = False,  # 由感知层传入，不自行推导
 ) -> Tuple[ChatState, List[ChatMessage]]
 ```
@@ -45,7 +42,7 @@ merge_tick(
 标准化 sender 仅用于生成 `_msg_id`，**不得写入 `msg.sender` 字段**。`msg.sender` 保持感知层原始值。
 
 ### 规则 2: `is_group` 由调用方传入
-`merge_tick` 和 `inject_history` 的 `is_group` 参数由 Bot 层从 `PerceptionResult` 传入。存储层不自行判断群聊状态。
+`merge_tick` 的 `is_group` 参数由 Bot 层从 `PerceptionResult` 传入。存储层不自行判断群聊状态。
 
 ### 规则 3: 模糊去重阈值按长度动态调整
 | 消息长度 | 阈值 |

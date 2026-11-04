@@ -273,18 +273,6 @@ class SmartPerceptionPipeline:
         self.skip_count = 0
         self.local_fallback_count = 0
 
-        # ===== WeFlow 集成：初始化 =====
-        self._weflow_mode = os.getenv("WEFLOW_MODE", "ocr")
-        self._weflow_pipeline = None
-        if self._weflow_mode in ("weflow", "hybrid"):
-            try:
-                from .weflow_pipeline import WeFlowPipeline
-                self._weflow_pipeline = WeFlowPipeline(profile)
-                _logger.info(f"[SmartPipeline] WeFlow 模式: {self._weflow_mode}")
-            except Exception as e:
-                _logger.warning(f"[SmartPipeline] WeFlow 初始化失败，降级为 OCR: {e}")
-                self._weflow_mode = "ocr"
-
     # -----------------------------------------------------------------------
     # 公共接口（与 VisionPipeline.perceive 签名一致）
     # -----------------------------------------------------------------------
@@ -297,24 +285,6 @@ class SmartPerceptionPipeline:
             None: 窗口捕获失败或尺寸异常
         """
         _logger.info("[SmartPipeline] perceive() 开始")
-
-        # ===== WeFlow 分流 =====
-        if self._weflow_mode in ("weflow", "hybrid") and self._weflow_pipeline:
-            try:
-                print("[SmartPipeline] calling weflow_pipeline.perceive()")
-                result = self._weflow_pipeline.perceive()
-                print(f"[SmartPipeline] weflow_pipeline.perceive() returned {result is not None}")
-                if result is not None:
-                    _logger.info(f"[SmartPipeline] WeFlow perceive 成功: {result.chat_name}, {len(result.messages)}条消息")
-                    return result
-                if self._weflow_mode == "weflow":
-                    _logger.warning("[SmartPipeline] WeFlow 返回 None，且模式为 weflow-only")
-                    return None
-                _logger.warning("[SmartPipeline] WeFlow 返回 None，fallback 到 OCR")
-            except Exception as e:
-                _logger.warning(f"[SmartPipeline] WeFlow perceive 异常: {e}")
-                if self._weflow_mode == "weflow":
-                    return None
 
         # 1. 截图
         t_capture_start = time.time()
@@ -407,6 +377,9 @@ class SmartPerceptionPipeline:
             f"skip_count={self.skip_count}"
         )
         result = self._run_with_api(image_path, window_rect, scale_factor)
+        if result:
+            for message in result.messages:
+                message.observed_at = t_capture_start
         _logger.info(f'[DEBUG] _run_with_api returned OK, msgs={len(result.messages) if result else 0}')
         return result
 
@@ -892,7 +865,7 @@ class SmartPerceptionPipeline:
             if not text and not is_media:
                 continue
 
-            # 从 API 返回提取时间戳（如果有），否则用当前时间
+            # 仅保留 API 返回的消息时间
             msg_ts = m.get("timestamp", "") or m.get("time", "") or ""
             create_time = None
             if msg_ts:
@@ -901,10 +874,6 @@ class SmartPerceptionPipeline:
                     create_time = int(datetime.strptime(msg_ts.replace('  ',' '), "%Y-%m-%d %H:%M:%S").timestamp())
                 except Exception as e:
                     _logger.warning("[SmartPipeline] 时间戳解析失败: %s (raw=%r)", e, msg_ts)
-            if not create_time:
-                import time
-                create_time = int(time.time())
-
             messages.append(
                 ChatMessage(
                     text=text,

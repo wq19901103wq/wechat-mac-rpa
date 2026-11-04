@@ -68,12 +68,13 @@ class ChatMessage:
     # === 多账号标记 ===
     account: str = ""                  # 消息来源账号标识（如 "work"、"personal"），空字符串=主账号
 
-    # === WeFlow 专属字段（可选，不影响现有代码）===
-    local_id: Optional[int] = None     # WeFlow 数据库 localId
-    server_id: Optional[str] = None    # WeFlow 数据库 serverId
+    # === 历史记录元数据（可选）===
+    local_id: Optional[int] = None     # 来源数据库 localId
+    server_id: Optional[str] = None    # 来源数据库 serverId
     create_time: Optional[int] = None  # 秒级时间戳
-    raw_type: Optional[int] = None     # WeFlow localType
+    raw_type: Optional[int] = None     # 来源消息类型
     sender_wxid: Optional[str] = None  # 原始 sender wxid
+    observed_at: Optional[float] = None  # 首次包含该消息的截图捕获时间
 
 
 @dataclass

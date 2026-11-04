@@ -97,10 +97,14 @@ src/tests/test_memory_search_regression.py
 
 # 内部提示词与纪律守则
 AGENTS.md
-prompts/
+prompts/*
 !prompts/persona.md.example
 !prompts/fact_check.md
 !prompts/fact_verify.md
+!prompts/reply_review.md
+!prompts/reply_review_context.md
+!prompts/reply_review_verify.md
+config/digital_human.json
 backups/
 .privacy-rewrite.git/
 bandit-report.json

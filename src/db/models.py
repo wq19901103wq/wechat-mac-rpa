@@ -64,6 +64,7 @@ class Message(Base):
     reply_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     reply_time: Mapped[float | None] = mapped_column(Float, nullable=True)
     create_time: Mapped[float] = mapped_column(Float, nullable=False)
+    observed_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     raw_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_file: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_hash: Mapped[str] = mapped_column(Text, nullable=False)
