@@ -26,6 +26,7 @@ from src.reply.digital_human import DigitalHumanReplyGenerator, load_digital_hum
 from src.reply.policy import ReplyPolicy
 from src.session.global_store import GlobalStore
 from src.tools import get_registry, register_builtin_tools
+from wechat_reader.capture_lease import exclusive_capture
 from src.utils.chat_utils import _is_group_chat_name, _normalize_chat_name
 from src.utils.debug_logger import DebugLogger
 
@@ -238,6 +239,7 @@ class WeChatBot:
             except Exception as e:
                 raise RuntimeError("生产回放安全初始化失败；已拒绝退回普通生产模式") from e
 
+    @exclusive_capture
     def tick(self) -> None:
         """执行一轮: 感知 -> 去重 -> 决策 -> 回复."""
         self._tick_id += 1

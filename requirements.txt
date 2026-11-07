@@ -1,3 +1,6 @@
+# Shared capture source is pinned with personal-context (docs/wechat-reader.md).
+wechat-reader[capture] @ git+https://github.com/wq19901103wq/wechat-reader.git@1fe7234493412fa6a0976739eb678169da5b2ab4
+
 # 核心运行依赖
 openai>=2.45.0
 defusedxml>=0.7.1

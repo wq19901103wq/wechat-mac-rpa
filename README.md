@@ -23,7 +23,7 @@
 
 - **源码依赖**：默认直接使用相邻的 `../digital-human` 主仓库。RPA 通过常驻子进程调用其草稿函数，优先使用 DH 自己的 `.venv`；更新源码后重启 Bot 加载。详见 [接入说明](docs/03-guides/DIGITAL_HUMAN_DRAFT.md#源码依赖)。
 - **环境**：macOS 12+，Python 3.10+，微信 Mac 版
-- **依赖**：`python3 -m venv .venv`，然后执行 `.venv/bin/python -m pip install -r requirements.txt`；运行时使用同一个项目虚拟环境，避免混用全局 Anaconda 依赖。
+- **依赖**：微信原始采集与读取由独立的私有 `wechat-reader` 库提供，安装前需取得读取权限，并用 `gh auth login`、`gh auth setup-git` 配置 HTTPS 认证。执行 `python3 -m venv .venv`，然后 `.venv/bin/python -m pip install -r requirements.txt`，安装与个人助理相同的固定提交；运行时使用同一个项目虚拟环境，避免混用全局 Anaconda 依赖。离线开发与 CI 访问见 [共用微信读取](docs/wechat-reader.md)。
 - **配置**：复制 `.env.example` 为 `.env`，填入所需 API Key；复制 `config/digital_human.json.example` 为 `config/digital_human.json`，配置 DH 的 `repository`、`instance`、私有材料 `instances_root`、`env_file`，可显式指定 `settings_file`。准备实例的 production 材料，详见 [digital-human 接入](docs/03-guides/DIGITAL_HUMAN_DRAFT.md)
 - **隐私**：`.env` 与 `data/` 默认不进入 Git；不要把 API Key、聊天记录或真实人设提交到仓库
 - **权限**：Bot 依赖 macOS 辅助功能/屏幕录制权限，详见下文[权限说明](#权限说明)

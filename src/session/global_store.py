@@ -1,426 +1,53 @@
-#!/usr/bin/env python3
-"""全局消息存储 - 管理所有聊天的消息历史和回复状态."""
+"""RPA reply state over the shared raw WeChat store."""
 
-import difflib
-import hashlib
-import logging
-import os
-import threading
 import time
-import traceback
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 
-from src.db import ChatHistoryRepository, init_db
-from src.models.base import MEDIA_MESSAGE_TYPES, ChatMessage, SenderType
-from src.utils.chat_utils import _is_group_chat_name
-from src.utils.screenshot_store import ScreenshotStore
+from wechat_reader.models.base import ChatMessage, SenderType
+from wechat_reader.store import RawChatState, RawMessageStore
+from wechat_reader.store import (
+    _normalize_text, _jaccard_2gram, _normalize_sender, _msg_id, _media_matches,
+    _is_fuzzy_duplicate, _match_single, _lcs_match,
+)
+from wechat_reader.utils.chat_utils import _is_group_chat_name
 
-_logger = logging.getLogger("src.global_store")
 
 @dataclass
-class ChatState:
-    """单个聊天的完整状态（消息历史 + 会话状态）"""
-    chat_id: str
-    chat_name: str
-    is_group: bool = False
-    messages: List[ChatMessage] = field(default_factory=list)
-    _msg_ids: set = field(default_factory=set)  # 去重集合（不序列化）
-    pending_self_messages: List[ChatMessage] = field(default_factory=list)  # Bot 发送成功但尚未被感知层确认的消息（诊断用，不序列化）
+class ChatState(RawChatState):
+    pending_self_messages: List[ChatMessage] = field(default_factory=list)
 
 
-def _normalize_text(text: str) -> str:
-    """文本归一化：压缩连续空白为单个空格，去除首尾空白。"""
-    return " ".join(text.split())
+class GlobalStore(RawMessageStore):
+    state_type = ChatState
 
-
-def _jaccard_2gram(a: str, b: str) -> float:
-    """计算两个字符串的 2-gram Jaccard 相似度。"""
-    if not a or not b:
-        return 0.0
-    ga = set(a[i:i + 2] for i in range(len(a) - 1))
-    gb = set(b[i:i + 2] for i in range(len(b) - 1))
-    inter = len(ga & gb)
-    union = len(ga | gb)
-    return inter / union if union else 0.0
-
-
-def _normalize_sender(chat_name: str, msg: ChatMessage, is_group: bool = False) -> str:
-    """标准化 sender 用于去重匹配。
-
-    规则：
-    - 自己发的消息 → "自己"
-    - 私聊对方：sender 是"对方"/空/"[未知]" → 用 chat_name（对方昵称）替代
-    - 群聊对方：保留原始 sender（具体昵称或"对方"）
-    """
-    if msg.sender_type == SenderType.SELF:
-        return "自己"
-    if not is_group and not _is_group_chat_name(chat_name):
-        # 私聊：对方 sender 统一为 chat_name，避免 API 昵称识别不稳定导致去重失效
-        return chat_name
-    # 群聊：保留原始 sender（具体昵称或"对方"）
-    return msg.sender
-
-
-def _msg_id(chat_name: str, msg: ChatMessage, is_group: bool = False) -> str:
-    """消息唯一ID：用 chat_name + 标准化 sender + 内容指纹。
-
-    文字消息：基于 text。
-    图片/表情/混合消息：基于 message_type + image_description，避免不同图片
-    因 text 都为空而被误判为相同。
-    """
-    if msg.message_type in MEDIA_MESSAGE_TYPES:
-        content = f"[{msg.message_type}]{msg.image_description}"
-    else:
-        content = msg.text
-    normalized = _normalize_text(content)
-    text_hash = hashlib.md5(normalized.encode(), usedforsecurity=False).hexdigest()[:16]
-    normalized_sender = _normalize_sender(chat_name, msg, is_group)
-    return f"{chat_name}|{normalized_sender}|{text_hash}"
-
-
-def _media_matches(a: ChatMessage, b: ChatMessage, threshold: float) -> bool:
-    if a.message_type != b.message_type:
-        return False
-    if a.message_type == "sticker":
-        texts_a = {_normalize_text(value) for value in (a.text, a.image_text) if value}
-        texts_b = {_normalize_text(value) for value in (b.text, b.image_text) if value}
-        if (texts_a & texts_b) - {""}:
-            return True
-    combined_a = f"{a.image_description or ''} {a.image_text or ''}".strip()
-    combined_b = f"{b.image_description or ''} {b.image_text or ''}".strip()
-    return _jaccard_2gram(combined_a, combined_b) >= threshold
-
-
-def _is_fuzzy_duplicate(state, msg: ChatMessage, lookback: int = 10) -> bool:
-    """模糊去重：对最近 lookback 条消息做文本相似度比较。
-
-    OCR 偶尔错几个字，精确 hash 会失效。用 difflib.SequenceMatcher
-    计算相似度，>= threshold 视为同一条消息。
-
-    媒体消息复用对齐匹配，表情包文字可在 text / image_text 间迁移。
-
-    阈值按消息长度动态调整：越短的消息要求越严格（避免不同短句误判）。
-    只对 lookback 条消息比较，避免遍历全部历史影响性能。
-    """
-    if msg.message_type in MEDIA_MESSAGE_TYPES:
-        for hist_msg in state.messages[-lookback:]:
-            if hist_msg.sender_type != msg.sender_type:
-                continue
-            if _normalize_sender(state.chat_name, hist_msg, state.is_group) != _normalize_sender(
-                    state.chat_name, msg, state.is_group):
-                continue
-            if _media_matches(hist_msg, msg, 0.08):
-                return True
-        return False
-
-    text = msg.text
-    if not text:
-        return False
-
-    # 按长度动态调整阈值（OCR 对中文短句容易错 1-2 个字，适当放宽）
-    text_len = len(text)
-    if text_len <= 3:
-        threshold = 0.90
-    elif text_len <= 8:
-        threshold = 0.85
-    elif text_len <= 20:
-        threshold = 0.82
-    else:
-        threshold = 0.80
-
-    normalized = _normalize_text(text)
-    for hist_msg in state.messages[-lookback:]:
-        if hist_msg.sender_type != msg.sender_type:
-            continue
-        if _normalize_sender(state.chat_name, hist_msg, state.is_group) != _normalize_sender(
-                state.chat_name, msg, state.is_group):
-            continue
-        # 跳过媒体类消息（不参与文字模糊去重）
-        if hist_msg.message_type in MEDIA_MESSAGE_TYPES:
-            continue
-        other = _normalize_text(hist_msg.text)
-        if not other:
-            continue
-        similarity = difflib.SequenceMatcher(None, normalized, other).ratio()
-        if similarity >= threshold:
-            return True
-    return False
-
-
-def _match_single(a: ChatMessage, b: ChatMessage, chat_name: str, is_group: bool = False) -> bool:
-    """直接比较两条消息是否匹配（用于对齐）。
-
-    文字：SequenceMatcher >= 0.80
-    媒体：表情包识别文字相同，或 2-gram Jaccard >= 0.20。
-    """
-    # sender_type 不同直接不匹配（避免自己消息和对方消息误匹配）
-    if a.sender_type != b.sender_type:
-        return False
-    if _normalize_sender(chat_name, a, is_group) != _normalize_sender(chat_name, b, is_group):
-        return False
-    # 类型不同直接不匹配
-    if a.message_type != b.message_type:
-        return False
-    if _msg_id(chat_name, a, is_group) == _msg_id(chat_name, b, is_group):
-        return True
-    # 文字消息
-    if a.message_type == "text":
-        text_a = _normalize_text(a.text)
-        text_b = _normalize_text(b.text)
-        if not text_a or not text_b:
-            return False
-        return difflib.SequenceMatcher(None, text_a, text_b).ratio() >= 0.80
-    return _media_matches(a, b, 0.20)
-
-
-def _lcs_match(history: List[ChatMessage], tick: List[ChatMessage], chat_name: str, is_group: bool = False) -> set:
-    """LCS 序列对齐：返回 tick 中匹配 history 的索引集合。
-
-    使用二值 match_score：_match_single 返回 True → 得 1 分，否则 0 分。
-    回溯得到 matched_tick_indices，用于判断 tick 中哪些消息是旧的。
-    """
-    m, n = len(history), len(tick)
-    if m == 0 or n == 0:
-        return set()
-
-    # 性能保护：限制参与比对的 history 范围，避免大群 O(m*n) 爆炸
-    _MAX_HISTORY_FOR_LCS = 80
-    if m > _MAX_HISTORY_FOR_LCS:
-        _logger.info(f"[LCS] history={m} 超过上限 {_MAX_HISTORY_FOR_LCS}，截取最近部分")
-        history = history[-_MAX_HISTORY_FOR_LCS:]
-        m = _MAX_HISTORY_FOR_LCS
-
-    # dp[i][j] = history[0:i] 和 tick[0:j] 的 LCS 长度
-    dp = [[0] * (n + 1) for _ in range(m + 1)]
-    for i in range(1, m + 1):
-        for j in range(1, n + 1):
-            if _match_single(history[i - 1], tick[j - 1], chat_name, is_group):
-                dp[i][j] = dp[i - 1][j - 1] + 1
-            else:
-                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
-
-    # 回溯找匹配的 tick 索引
-    matched = set()
-    i, j = m, n
-    while i > 0 and j > 0:
-        if _match_single(history[i - 1], tick[j - 1], chat_name, is_group):
-            # match 时 dp[i][j] 一定等于 dp[i-1][j-1]+1（单调性保证）
-            matched.add(j - 1)
-            i -= 1
-            j -= 1
-        elif dp[i][j] == dp[i - 1][j]:
-            i -= 1
-        else:
-            j -= 1
-
-    return matched
-
-
-class GlobalStore:
-    """全局存储：管理所有聊天的状态，统一去重、持久化."""
-
-    _chat_repo: Optional[ChatHistoryRepository]
-
-    def __init__(self, max_messages: Optional[int] = None, state_file: Optional[str] = None):
+    def __init__(self, max_messages=None, state_file=None):
         if state_file is None:
-            state_file = str(Path(__file__).parent.parent.parent / "data" / "global_state.json")
-        self.chats: Dict[str, ChatState] = {}
-        if max_messages is None:
-            try:
-                max_messages = int(os.environ.get("MAX_RUNTIME_MESSAGES", "1000"))
-            except ValueError:
-                max_messages = 1000
-        self.max_messages = max_messages
+            state_file = Path(__file__).parent.parent.parent / "data/global_state.json"
         self._state_file = Path(state_file)
-        self._state_file.parent.mkdir(parents=True, exist_ok=True)
-        self._screenshot_store = ScreenshotStore(self._state_file.parent / "screenshots")
-        self._lock = threading.Lock()
-        self._dirty: set = set()  # 有变化的聊天名，增量保存用
-        # 初始化聊天记录数据库
-        try:
-            db_path = self._state_file.parent / "db" / "chat_history.db"
-            init_db(db_path)
-            self._chat_repo = ChatHistoryRepository(db_path=db_path)
-        except Exception as e:
-            _logger.error("[GlobalStore] 初始化聊天记录数据库失败: %s", e)
-            self._chat_repo = None
-        self._load()
+        super().__init__(self._state_file.parent / "db/chat_history.db",
+                         data_dir=self._state_file.parent,
+                         max_messages=max_messages, strict=False)
 
-    def _merge_tick_legacy(self, chat_name: str, messages: List[ChatMessage], is_group: bool = False) -> List[ChatMessage]:
-        """旧算法：滑动前缀匹配（保留用于 A/B 对比测试）。"""
-        state = self.chats[chat_name]
-
-        def _in_history(msg: ChatMessage) -> bool:
-            return _msg_id(chat_name, msg, is_group) in state._msg_ids or _is_fuzzy_duplicate(
-                state, msg, lookback=len(state.messages)
-            )
-
-        # tick 内去重
-        seen_ids = set()
-        unique_messages = []
-        for msg in messages:
-            mid = _msg_id(chat_name, msg, is_group)
-            if mid not in seen_ids:
-                seen_ids.add(mid)
-                unique_messages.append(msg)
-        messages = unique_messages
-
-        if not messages or not state.messages:
-            return messages if not state.messages else []
-
-        search_window = min(len(state.messages), max(50, len(messages) * 3))
-        history_window = state.messages[-search_window:]
-
-        best_match_len = 0
-        best_match_start = -1
-        for i in range(len(history_window)):
-            match_len = 0
-            for j in range(len(messages)):
-                if i + j >= len(history_window):
-                    break
-                if _match_single(history_window[i + j], messages[j], chat_name, is_group):
-                    match_len += 1
-                else:
-                    break
-            if match_len > best_match_len:
-                best_match_len = match_len
-                best_match_start = i
-
-        if best_match_len == len(messages):
-            return []
-        elif best_match_len >= 1:
-            match_end_in_history = best_match_start + best_match_len
-            if match_end_in_history >= len(history_window) - 2:
-                return messages[best_match_len:]
-            else:
-                return [msg for msg in messages if not _in_history(msg)]
-        else:
-            return [msg for msg in messages if not _in_history(msg)]
-
-    def _merge_tick_lcs(self, chat_name: str, messages: List[ChatMessage], is_group: bool = False) -> List[ChatMessage]:
-        """新算法：LCS 序列对齐（独立出来用于 A/B 对比测试）。"""
-        state = self.chats[chat_name]
-
-        # tick 内去重
-        seen_ids = set()
-        unique_messages = []
-        for msg in messages:
-            mid = _msg_id(chat_name, msg, is_group)
-            if mid not in seen_ids:
-                seen_ids.add(mid)
-                unique_messages.append(msg)
-        messages = unique_messages
-
-        if not messages or not state.messages:
-            if not state.messages:
-                _logger.debug("[LCS] %s history 为空，全部 %d 条视为新消息", chat_name, len(messages))
-            return messages if not state.messages else []
-
-        search_window = min(len(state.messages), 50)
-        history_window = state.messages[-search_window:]
-        matched = _lcs_match(history_window, messages, chat_name, is_group)
-
-        # --- 诊断日志：LCS 匹配全过程 ---
-        _logger.debug("[LCS] %s tick=%d条 history_window=%d条 matched=%s",
-                      chat_name, len(messages), len(history_window), matched)
-        for i, msg in enumerate(history_window[-10:]):
-            _logger.debug("[LCS] history[-%d] %s(%s): %.40s",
-                          len(history_window) - i, msg.sender, msg.sender_type.value, msg.text or "")
-        for i, msg in enumerate(messages):
-            match_flag = "✓" if i in matched else "✗"
-            _logger.debug("[LCS] tick[%d] %s %s(%s): %.40s",
-                          i, match_flag, msg.sender, msg.sender_type.value, msg.text or "")
-
-        if not matched:
-            recent_ids = {_msg_id(chat_name, msg, is_group) for msg in history_window}
-            new_messages = [msg for msg in messages
-                            if _msg_id(chat_name, msg, is_group) not in recent_ids
-                            and not _is_fuzzy_duplicate(state, msg, lookback=search_window)]
-            _logger.debug("[LCS] %s 无 LCS 匹配，_in_history 过滤后新消息=%d条", chat_name, len(new_messages))
-            return new_messages
-
-        max_matched = max(matched)
-
-        # 分类统计
-        discarded = []
-        new_messages = []
-        for i in range(len(messages)):
-            if i not in matched:
-                if i > max_matched:
-                    new_messages.append(messages[i])
-                else:
-                    discarded.append(messages[i])
-
-        # 告警：被丢弃的消息
-        for msg in discarded:
-            _logger.debug("[LCS] %s DISCARDED %s(%s): %.60s",
-                          chat_name, msg.sender, msg.sender_type.value, msg.text or "")
-            if msg.sender_type == SenderType.SELF:
-                _logger.warning("[LCS] %s 未匹配的 self 消息（发送疑似失败或 OCR 误识别）: %.60s",
-                                chat_name, msg.text or "")
-            else:
-                _logger.warning("[LCS] %s 被 i>max_matched 规则丢弃的真实消息: %.60s",
-                                chat_name, msg.text or "")
-
-        _logger.debug("[LCS] %s max_matched=%d discarded=%d new=%d",
-                      chat_name, max_matched, len(discarded), len(new_messages))
-        # --- 诊断日志结束 ---
-
-        return new_messages
-
-    def merge_tick(
-        self,
-        chat_name: str,
-        messages: List[ChatMessage],
-        is_group: bool = False,
-    ) -> Tuple[ChatState, List[ChatMessage]]:
-        """
-        合并 tick 检测到的消息，返回 (state, 未回复的消息列表).
-        """
-        if chat_name not in self.chats:
-            self.chats[chat_name] = ChatState(
-                chat_id=f"chat_{len(self.chats)}",
-                chat_name=chat_name,
-                is_group=is_group,
-            )
-
-        state = self.chats[chat_name]
-        # 如果传入的 is_group 与当前状态不同，更新状态
-        if state.is_group != is_group:
-            state.is_group = is_group
-            self._dirty.add(chat_name)
-
-        new_messages = self._merge_tick_lcs(chat_name, messages, is_group)
-
-        # 添加新消息到历史
-        if new_messages:
-            self._dirty.add(chat_name)
-        for msg in new_messages:
-            new_msg = replace(msg, chat_name=chat_name)
-            state.messages.append(new_msg)
-            state._msg_ids.add(_msg_id(chat_name, new_msg, is_group))
-
-        # 裁剪历史消息，避免无限增长
-        if len(state.messages) > self.max_messages:
-            state.messages = state.messages[-self.max_messages:]
-            state._msg_ids = {
-                _msg_id(chat_name, m, state.is_group)
-                for m in state.messages
-            }
-            self._dirty.add(chat_name)
-
-        # 收集所有未回复的消息（按时间顺序）
-        # 防御：历史数据导入时可能把 self 消息标成 other，用 sender 兜底排除
-        unreplied = [
-            msg for msg in state.messages
-            if not msg.replied
-            and msg.sender_type != SenderType.SELF
-            and msg.sender != "自己"
-        ]
-
+    def merge_tick(self, chat_name, messages, is_group=False):
+        state, _ = super().merge_tick(chat_name, messages, is_group)
+        unreplied = [m for m in state.messages if not m.replied
+                     and m.sender_type != SenderType.SELF and m.sender != "自己"]
         return state, unreplied
+
+    @staticmethod
+    def _db_msg_to_chat_message(db_msg, chat_name):
+        msg = RawMessageStore._db_msg_to_chat_message(db_msg, chat_name)
+        msg.replied = bool(db_msg.replied)
+        msg.reply_text = db_msg.reply_text or ""
+        msg.reply_time = db_msg.reply_time
+        return msg
+
+    @staticmethod
+    def _msg_to_dict(msg):
+        return dict(RawMessageStore._msg_to_dict(msg), replied=msg.replied,
+                    reply_text=msg.reply_text, reply_time=msg.reply_time)
 
     def mark_replied(self, chat_name: str, target_msg: ChatMessage, reply_text: str):
         """标记单条消息已回复。"""
@@ -442,6 +69,7 @@ class GlobalStore:
         if marked:
             self._dirty.add(chat_name)
 
+
     def get_unreplied(self, chat_name: str) -> List[ChatMessage]:
         """获取某聊天中所有未回复的消息（按时间顺序）"""
         state = self.chats.get(chat_name)
@@ -451,6 +79,7 @@ class GlobalStore:
             m for m in state.messages
             if not m.replied and m.sender_type != SenderType.SELF
         ]
+
 
     def last_reply_time(self, chat_name: str) -> Optional[float]:
         """最后回复时间（从消息中推导）"""
@@ -463,161 +92,10 @@ class GlobalStore:
         ]
         return max(replied_times) if replied_times else None
 
+
     def reply_count(self, chat_name: str) -> int:
         """回复次数（从消息中推导）"""
         state = self.chats.get(chat_name)
         if not state:
             return 0
         return sum(1 for m in state.messages if m.replied)
-
-    def _load(self):
-        """从 SQLite DB 加载状态（DB 作为唯一权威源，JSON 分片已下线）。"""
-        self._load_from_db()
-
-    @staticmethod
-    def _db_msg_to_chat_message(db_msg, chat_name: str) -> ChatMessage:
-        """把 DB Message 模型转成 ChatMessage。"""
-        sender_type = SenderType.SELF if db_msg.is_self else SenderType.OTHER
-        if db_msg.raw_type == 10000:
-            sender_type = SenderType.SYSTEM
-        return ChatMessage(
-            text=db_msg.content or "",
-            sender=db_msg.sender_display_name or db_msg.wxid or "",
-            sender_type=sender_type,
-            chat_name=chat_name,
-            chatroom_id=None,  # 从 DB 加载时由外层统一设置
-            is_at_me=bool(db_msg.is_at_me),
-            replied=bool(db_msg.replied),
-            reply_text=db_msg.reply_text or "",
-            reply_time=db_msg.reply_time,
-            message_type=db_msg.message_type or "text",
-            image_description=db_msg.image_description or "",
-            local_id=db_msg.local_id,
-            server_id=db_msg.server_id,
-            create_time=db_msg.create_time if db_msg.observed_at is None else None,
-            observed_at=db_msg.observed_at,
-            raw_type=db_msg.raw_type,
-            sender_wxid=db_msg.wxid,
-        )
-
-    def _load_from_db(self):
-        """从 SQLite 加载所有聊天（DB 作为唯一权威源）。
-
-        同名群选择、chatroom_id 解析等逻辑已下沉到 ChatHistoryRepository。
-        """
-        if self._chat_repo is None:
-            return
-        try:
-            start = time.time()
-            active = self._chat_repo.load_active_chatrooms(self.max_messages)
-            loaded = 0
-            for chat_name, (chatroom_id, chat_type, db_messages) in active.items():
-                state = ChatState(
-                    chat_id=chatroom_id,
-                    chat_name=chat_name,
-                    is_group=(chat_type == "group"),
-                )
-                for db_msg in db_messages:
-                    msg = self._db_msg_to_chat_message(db_msg, chat_name)
-                    msg.chatroom_id = chatroom_id
-                    state.messages.append(msg)
-                    state._msg_ids.add(_msg_id(chat_name, msg, state.is_group))
-                self.chats[chat_name] = state
-                loaded += 1
-            _logger.info(
-                "[GlobalStore] 从 DB 加载 %d 个聊天，耗时 %.2fs",
-                loaded, time.time() - start
-            )
-        except Exception as e:
-            _logger.error("[GlobalStore] 从 DB 加载失败: %s", e)
-
-    @staticmethod
-    def _msg_to_dict(m: ChatMessage) -> dict:
-        """把 ChatMessage 序列化为字典。"""
-        return {
-            "text": m.text,
-            "sender": m.sender,
-            "sender_type": m.sender_type.value,
-            "is_self": m.sender_type == SenderType.SELF,
-            "chat_name": m.chat_name,
-            "is_at_me": m.is_at_me,
-            "replied": m.replied,
-            "reply_text": m.reply_text,
-            "reply_time": m.reply_time,
-            "message_type": m.message_type,
-            "image_description": m.image_description,
-            "image_text": m.image_text,
-            "is_image_duplicate": m.is_image_duplicate,
-            "account": m.account,
-            "local_id": m.local_id,
-            "server_id": m.server_id,
-            "create_time": m.create_time,
-            "observed_at": m.observed_at,
-            "raw_type": m.raw_type,
-            "sender_wxid": m.sender_wxid,
-            "chatroom_id": m.chatroom_id,
-        }
-
-    def save(self):
-        """保存状态到 SQLite DB（DB 作为唯一权威源，JSON 分片已下线）。"""
-        self._screenshot_store.cleanup_old_screenshots()
-        with self._lock:
-            try:
-                dirty = list(self._dirty)
-                if not dirty:
-                    return
-
-                # 同步到 SQLite 数据库
-                synced: set[str] = set()
-                if self._chat_repo is not None:
-                    try:
-                        synced = self._sync_dirty_to_db(dirty)
-                    except Exception as e:
-                        _logger.error("[GlobalStore] 同步到聊天记录数据库失败: %s", e)
-
-                self._dirty.difference_update(synced)
-                _logger.debug(
-                    "💾 增量保存 %d 个聊天状态到 DB，待重试 %d 个",
-                    len(synced),
-                    len(self._dirty),
-                )
-
-            except Exception as e:
-                _logger.error(f"GlobalStore save failed unexpectedly: {type(e).__name__}: {e}\n{traceback.format_exc()}")
-
-    def _sync_dirty_to_db(self, dirty: List[str]) -> set[str]:
-        """把脏聊天同步到 SQLite 数据库（使用 bulk 插入，避免逐条 SELECT）。"""
-        synced: set[str] = set()
-        if not dirty or self._chat_repo is None:
-            return synced
-        for chat_name in dirty:
-            state = self.chats.get(chat_name)
-            if state is None or not state.messages:
-                synced.add(chat_name)
-                continue
-            msg_dicts = [self._msg_to_dict(m) for m in state.messages]
-            chatroom_id = self._chat_repo.resolve_chatroom_id(chat_name, msg_dicts)
-            if not chatroom_id:
-                _logger.warning("[GlobalStore] %s 无法解析 chatroom_id，跳过 DB 同步", chat_name)
-                continue
-            chat_type = "group" if state.is_group else "single"
-            # OCR 模式可能没有 sender_wxid，用 sender 显示名做占位 wxid
-            for d in msg_dicts:
-                if not d.get("wxid") and d.get("sender"):
-                    d["wxid"] = f"_sender_{d['sender']}"
-            try:
-                stats = self._chat_repo.bulk_sync_chat(
-                    chatroom_id=chatroom_id,
-                    display_name=state.chat_name,
-                    chat_type=chat_type,
-                    messages=msg_dicts,
-                )
-                _logger.debug("[GlobalStore] DB 同步 %s: %s", chat_name, stats)
-                synced.add(chat_name)
-            except Exception as e:
-                _logger.warning("[GlobalStore] DB 同步 %s 失败: %s", chat_name, e)
-        return synced
-
-    def save_screenshot(self, image_path: str, session_id: Optional[str] = None) -> str:
-        """保存截图到 data/screenshots/ 目录（委托给 ScreenshotStore）。"""
-        return self._screenshot_store.save(image_path, session_id)
