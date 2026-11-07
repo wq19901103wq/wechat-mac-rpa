@@ -689,7 +689,7 @@ Layer 3: 返回 None → tick 跳过，等待下一个 tick
 ## 附录 A: 群聊消息格式待验证项
 
 ```
-测试群聊: 34933558648@chatroom / 20886562146@chatroom / 6738243824@chatroom
+测试群聊: example_a@chatroom / example_b@chatroom / example_c@chatroom
 
 待确认:
 1. 群聊消息的 senderUsername 是 wxid 还是昵称？

@@ -52,7 +52,7 @@ def test_sync_chat_creates_records(repo: ChatHistoryRepository):
         },
     ]
     stats = repo.sync_chat(
-        chatroom_id="20934380170@chatroom",
+        chatroom_id="example@chatroom",
         display_name="示例交流群",
         chat_type="group",
         messages=messages,
@@ -73,13 +73,13 @@ def test_duplicate_messages_are_skipped(repo: ChatHistoryRepository):
         },
     ]
     repo.sync_chat(
-        chatroom_id="20934380170@chatroom",
+        chatroom_id="example@chatroom",
         display_name="示例交流群",
         chat_type="group",
         messages=messages,
     )
     stats = repo.sync_chat(
-        chatroom_id="20934380170@chatroom",
+        chatroom_id="example@chatroom",
         display_name="示例交流群",
         chat_type="group",
         messages=messages,

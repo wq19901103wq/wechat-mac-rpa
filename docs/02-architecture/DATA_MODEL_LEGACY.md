@@ -39,7 +39,7 @@
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | id | INTEGER PK | 自增 |
-| chatroom_id | TEXT UNIQUE | 微信 chatroom_id（如 `20934380170@chatroom`）或私聊 wxid |
+| chatroom_id | TEXT UNIQUE | 微信 chatroom_id（如 `example@chatroom`）或私聊 wxid |
 | chat_name | TEXT | 当前显示名，允许同名 |
 | chat_type | TEXT | `group` / `single` |
 | avatar_url | TEXT | 可选 |
