@@ -24,14 +24,7 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        env:
-          GH_TOKEN: ${{ secrets.WECHAT_READER_TOKEN }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::Set WECHAT_READER_TOKEN with read access to the private wechat-reader repository (docs/wechat-reader.md)."
-            exit 1
-          fi
-          gh auth setup-git
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 

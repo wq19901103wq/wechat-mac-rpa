@@ -4,11 +4,9 @@
 
 ## 安装与升级
 
-组件尚未发布到 PyPI，新库先保持私有。取得微信读取库的读取权限后，配置 GitHub HTTPS 认证，再安装本仓库依赖：
+组件尚未发布到 PyPI，依赖通过公开 GitHub HTTPS 地址匿名安装，无需 GitHub token：
 
 ```sh
-gh auth login
-gh auth setup-git
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
@@ -29,10 +27,8 @@ RPA 原有默认数据库和截图路径保持不变，不需要迁移或清理�
 
 独立采集循环与新版 RPA tick 共用同一用户的 UI 文件锁，避免不同数据库的采集者争抢窗口。一次只启一个采集所有者；旧的运行中 Bot 不会自动加载新锁，切换时先停止旧采集，再启动更新后的入口。只读消费者可同时读取同一原始库。仓库整理不启动回复 Bot，也不改变已有服务与聊天库。
 
-## GitHub Actions 的私有依赖权限
+## GitHub Actions 安装公开依赖
 
-CI 与 Quality 的 coverage job 在安装依赖时使用 `WECHAT_READER_TOKEN` 仓库 secret。配置一个仅能读取 `wechat-reader` 内容的 fine-grained GitHub token：Repository access 只选读取库，Repository permissions 的 Contents 设为 Read-only，将 token 保存到 RPA 的 Actions secret。普通 `GITHUB_TOKEN` 无法读取另一个私有库。
-
-缺少 secret 时依赖安装会明确失败。外部 fork 的 pull request 不会取得该 secret，因此目前不能独立运行依赖私有库的测试；若未来决定公开读取库，再相应取消认证要求。不要把 token 写入 requirements、Git URL、代码或日志。
+CI 与 Quality 的 coverage job 直接通过 `requirements-dev.txt` 安装固定提交的公开读取库，无需额外的仓库 secret。外部 fork 的 pull request 使用相同的匿名安装方式。不要把运行时 API Key、登录态或其他凭据写入 requirements、Git URL、代码或日志。
 
 数据库、截图、密钥、登录态与日志继续保存在本地被 Git 忽略的位置，不随包分发。
