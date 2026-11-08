@@ -193,6 +193,20 @@ Prompt = 工作记忆（最近对话原文） + 会话记忆（人物 / 关系 /
 - **历史导出**：`data/exports/b/` 下的 JSON 消息导出文件。
 - **运行时对话**：Bot 收到的新消息，可通过 `history_search.add_message()` 实时加入检索。
 
+如需向 DH 导出 RPA 数据库中的历史，可显式指定聊天 ID 映射（不按同名群或显示名推断）：
+
+```bash
+python3 scripts/export_dh_history.py \
+  --database data/chat_history.db \
+  --source-chat-ids '{"local-room":"source-room"}' \
+  --self-account owner \
+  --output data/dh-history.jsonl \
+  --sent-replies-db data/reply_cases.db \
+  --sent-output data/dh-sent-replies.json
+```
+
+路径和账号须替换为本地实际值。两个发送记录参数须同时提供，也可同时省略。读取源数据库时使用只读连接，输出文件必须尚不存在。历史仅保留最后一个未知时间缺口之后的连续记录；图片等非文本内容只保留类型占位，不把 OCR 当作可靠原文。发送记录包括已确认发送和部分成功发送的文本，按聊天来源区分；原始聊天 ID 缺失时，仅用历史库中完全一致的消息定位。两个输出均包含私人数据，应留在被忽略的 `data/` 下。
+
 **索引构建**
 
 ```bash
