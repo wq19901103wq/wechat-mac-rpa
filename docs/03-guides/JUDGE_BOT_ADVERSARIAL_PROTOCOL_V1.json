@@ -1,0 +1,209 @@
+{
+  "schema_version": 1,
+  "authority_notice": {
+    "status": "historical_only",
+    "canonical_workflow": "docs/03-guides/JUDGE_C0_CANONICAL_WORKFLOW.md",
+    "meaning": "The development/validation/Test A/Test B layout below is superseded and must not be executed."
+  },
+  "protocol_id": "judge-bot-adversarial-v1",
+  "status": "approved_not_executed",
+  "frozen_at": "2026-08-18T00:00:00+08:00",
+  "scope": {
+    "mode": "offline_only",
+    "train_new_neural_network": false,
+    "modify_c0": false,
+    "start_bot": false,
+    "purpose": "alternate improvements to an LLM Judge and an LLM Bot without treating Judge deception as the quality target"
+  },
+  "baselines": {
+    "bot": {
+      "label": "protected C0",
+      "generator_sha256": "625b47803fff55a2e18914c5e734fcb2f01ae7c16e5180fdebdc817badd2656b",
+      "replacement_allowed": false
+    },
+    "judge": {
+      "label": "Codex V2 diagnostic baseline",
+      "role": "diagnostic_only",
+      "may_decide_ab_alone": false,
+      "formal_hidden_test": false
+    }
+  },
+  "identity_policy": {
+    "verified_human": "eligible as human reference",
+    "verified_bot_send": "eligible only with send_success=1 evidence chain",
+    "unknown": "diagnostic only; never scored as human ground truth",
+    "human_before": "2026-04-01T00:00:00+08:00"
+  },
+  "data_splits": {
+    "unit": "whole conversation thread plus adjacent time/event cluster",
+    "semantic_near_duplicates_cross_split": false,
+    "frozen_ledger": "data/reports/private/judge_dataset_splits_v1/private_ledger.json",
+    "public_summary": "data/reports/private/judge_dataset_splits_v1/public_summary.json",
+    "source_manifest": "data/reports/private/adversarial_stage2_holdout_v1/manifest.json",
+    "source_manifest_sha256": "6541a50b4dda3cbcce02424c2c5365ab376f57024cd02d611669fdd4d087d918",
+    "development": {
+      "count": 180,
+      "status": "exposed_development_only",
+      "allowed_uses": [
+        "error-pattern analysis",
+        "rule and prompt development",
+        "scenario-specific few-shot selection",
+        "case-level regression diagnosis"
+      ],
+      "may_prove_improvement": false
+    },
+    "validation": {
+      "count": 40,
+      "status": "rejected_as_previously_exposed",
+      "purpose": "compare frozen Judge candidates and select a version",
+      "case_level_feedback_for_tuning": false,
+      "may_prove_final_freeze": false
+    },
+    "test_a": {
+      "count": 100,
+      "status": "rejected_as_previously_exposed",
+      "open_when": "a candidate has aggregate net improvement on validation and is ready for freeze acceptance",
+      "case_level_feedback_for_tuning": false
+    },
+    "test_b": {
+      "count": 100,
+      "status": "rejected_as_previously_exposed",
+      "open_when": "the same frozen candidate passes test_a",
+      "case_level_feedback_for_tuning": false
+    },
+    "cross_split_case_overlap": false,
+    "cross_split_event_cluster_overlap": false,
+    "exposure_audit": {
+      "path": "data/reports/private/judge_dataset_splits_v1/exposure_audit.json",
+      "status": "contaminated",
+      "validation_previously_exposed": 40,
+      "test_a_previously_exposed": 100,
+      "test_b_previously_exposed": 100,
+      "effect": "all 240 cases are development/regression evidence only and cannot prove a Judge freeze"
+    },
+    "legacy_120_screening_set_status": "development_only_if_previously_viewed_or_scored",
+    "group_priority": {
+      "minimum_share_in_hidden": 0.6,
+      "complex_large_group_required": true,
+      "complex_large_group_signals": [
+        "multiple participants speaking in a short window",
+        "reply target is ambiguous or changes across messages",
+        "cross-message continuation",
+        "rapid topic switching and overlapping sub-conversations"
+      ],
+      "report_as_separate_stratum": true,
+      "primary_sources": [
+        "共同富裕群（包含鲁西西/招财鲁/西西的正确目标群）",
+        "柚子群"
+      ],
+      "excluded_source": "另一个同名共同富裕群"
+    }
+  },
+  "judge_protocol": {
+    "task": "anonymous human-versus-bot authorship discrimination from complete chat context",
+    "one_case_per_fresh_api_call": true,
+    "tools": "none for authorship Judge; fact and boundary verification is a separate evaluator",
+    "option_order": "balanced canonical and swapped calls",
+    "forbidden_inputs": [
+      "answer key",
+      "candidate identity or model name",
+      "generation trace",
+      "other cases",
+      "Codex thread history",
+      "filesystem access"
+    ],
+    "audit": [
+      "raw prompt",
+      "complete supplied context",
+      "raw candidate replies",
+      "raw output",
+      "model and parameters",
+      "tool-call count"
+    ],
+    "engineering_gate": {
+      "required_test_sets": 2,
+      "cases_per_test_set_min": 100,
+      "overall_accuracy_min_each": 0.85,
+      "complex_group_accuracy_min_each": 0.80,
+      "ordinary_group_accuracy_min_each": 0.80,
+      "high_confidence_error_rate_max_each": 0.03,
+      "position_consistency_min": 0.90,
+      "surface_cue_dependency_rejects_candidate": true,
+      "obvious_length_position_or_topic_attribution_bias_rejects_candidate": true
+    }
+  },
+  "bot_protocol": {
+    "candidate_origin": "independent candidate from protected C0",
+    "one_variable_per_round": true,
+    "first_hypotheses": [
+      "same-chat human style example selection",
+      "stable style and humor abstraction without copying facts or consumed jokes",
+      "RAG as an isolated comparison arm",
+      "model change as an isolated comparison arm with latency and reliability gates"
+    ],
+    "promotion_requires": {
+      "human_full_context_ab": {
+        "two_sided_sign_test_p_max": 0.05,
+        "net_win_rate_improvement_min_points": 10,
+        "wins_must_exceed_losses": true
+      },
+      "complex_large_group": {
+        "must_not_regress": true,
+        "net_wins_must_be_positive": true
+      },
+      "private_chat_regression": "no_material_regression",
+      "new_factual_hallucinations_max": 0,
+      "new_real_world_action_commitments_max": 0,
+      "must_not_worsen": [
+        "stale jokes",
+        "cross-turn repetition",
+        "generation failures",
+        "P95 latency"
+      ],
+      "forbidden_shortcuts": [
+        "longer replies",
+        "more frequent interjections"
+      ],
+      "final_unused_hidden_cases_min": 100
+    },
+    "judge_confusion_alone_is_quality_evidence": false
+  },
+  "alternation": [
+    "freeze C0; use development only to improve Judge candidates",
+    "use fixed validation aggregate metrics to select one Judge candidate",
+    "open sealed test_a and test_b only for Judge freeze acceptance",
+    "freeze accepted Judge; test one C0 improvement hypothesis",
+    "after the Bot round, add reviewed hard cases only to the next development pool, never retroactively to sealed tests"
+  ],
+  "anti_gaming": {
+    "hidden_in_prompt_rag_wiki_or_fewshot": false,
+    "hidden_case_level_feedback": false,
+    "judge_and_bot_changed_in_same_round": false,
+    "keep_frozen_old_judge_for_regression": true,
+    "human_case_review_is_final_authority": true,
+    "stop_after_two_failed_candidates_for_same_hypothesis": true
+  },
+  "production_alignment": {
+    "required": true,
+    "differences_require_user_confirmation_before_run": true,
+    "checklist": [
+      "GlobalStore and unread-message state",
+      "current Wiki and historical-time leakage",
+      "context window and timestamps",
+      "model and sampling parameters",
+      "tools and their returned evidence",
+      "few-shot and RAG inputs",
+      "self-refine, fact-check, reply decision and message splitting"
+    ]
+  },
+  "reporting": {
+    "format": "mobile-friendly HTML",
+    "case_fields": [
+      "complete chat context",
+      "verified human original when available",
+      "C0 and candidate raw replies",
+      "anonymous Judge choice and reason",
+      "raw Judge prompt and call audit"
+    ]
+  }
+}

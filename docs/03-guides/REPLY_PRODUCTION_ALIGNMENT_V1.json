@@ -1,0 +1,147 @@
+{
+  "schema_version": 2,
+  "authority_notice": {
+    "status": "historical_only",
+    "canonical_workflow": "docs/03-guides/JUDGE_C0_CANONICAL_WORKFLOW.md",
+    "meaning": "This file preserves an older production-alignment audit and no longer controls current dataset splits or acceptance gates."
+  },
+  "audit_id": "reply-production-alignment-v1",
+  "status": "strict_rebuild_confirmed_pending_production_comparable_samples",
+  "audited_at": "2026-08-18T00:00:00+08:00",
+  "baseline": {
+    "tag": "reply-quality-c0-baseline",
+    "commit": "9ae1adc2929d0e32631a16b6f7f1900e1f036883",
+    "generator_sha256": "625b47803fff55a2e18914c5e734fcb2f01ae7c16e5180fdebdc817badd2656b"
+  },
+  "stage_2_dataset": {
+    "designation": "validation_and_process_diagnostic_only",
+    "cases": 240,
+    "context_messages": 7919,
+    "available_context_fields": [
+      "speaker",
+      "content"
+    ],
+    "missing_production_fields": [
+      "timestamp",
+      "is_at_me",
+      "quoted_text",
+      "message_type",
+      "image_description",
+      "image_text",
+      "replied",
+      "reply_time",
+      "local_id",
+      "server_id",
+      "create_time",
+      "raw_type",
+      "sender_wxid"
+    ],
+    "fully_production_comparable_cases": 0,
+    "contamination": {
+      "status": "already_read_by_iteration_task",
+      "evidence": "the strata curator received both context and human_reply for every case",
+      "curator_model": "deepseek-v4-flash",
+      "cross_case_shared_session": false,
+      "tool_access": false,
+      "consequence": "may be used for validation and process diagnosis, but not as a fresh hidden final set"
+    }
+  },
+  "required_production_path": [
+    "ReplyPolicy",
+    "GlobalStore",
+    "ReplyGenerator"
+  ],
+  "production_alignment_requirements": [
+    "anchor the historical window to the event timestamp",
+    "preserve current same-chat weighted few-shot behavior",
+    "reconstruct unread, merged, replied and reply-time state",
+    "preserve quote, mention, image and OCR semantics",
+    "block action tools and real-time lookup tools",
+    "use an isolated C0 copy with fixed model parameters, concurrency, timeout, retry and cache policy"
+  ],
+  "known_legacy_replay_differences": [
+    "bypasses ReplyPolicy",
+    "bypasses GlobalStore merge, unread and replied lifecycle",
+    "constructs ReplyGenerator without memory_engine",
+    "changes memory, Wiki and search_memory behavior",
+    "does not reproduce WeFlow and OCR merge or deduplication",
+    "does not preserve quote, mention, image and OCR semantics",
+    "can introduce historical leakage through current-time tools or current Wiki"
+  ],
+  "execution": {
+    "model_calls": 0,
+    "bot_started": false,
+    "c0_modified": false,
+    "formal_ab_allowed": false
+  },
+  "single_step_replay_review": {
+    "schema": "production-single-step-v2",
+    "status": "archive_foundation_verified_no_real_sample_collected",
+    "activation": "WECHAT_PRODUCTION_REPLAY_ARCHIVE_DIR must be set explicitly",
+    "cutoff": "before sending, tool execution, replied-state updates, pending-memory updates or chat switching",
+    "eligible_subset": "entered ReplyGenerator, exact model call captured, and executed no tools",
+    "captured_evidence": [
+      "session-start and per-tick GlobalStore state",
+      "perception result and screenshot hash",
+      "runtime flags, model endpoint identity without credentials, and tool schemas",
+      "complete model arguments, prompts, responses and tool-call parameters",
+      "few-shot content, loaded skills and SessionMemory before and after generation",
+      "dependency snapshots and SHA256 hashes",
+      "pre-action reply decision and eligibility reason"
+    ],
+    "synthetic_preview": {
+      "label": "synthetic test only; not a production result",
+      "context": [
+        "甲：明天七点集合？",
+        "乙：我先看看闹钟同不同意"
+      ],
+      "reply": "我先和闹钟谈判",
+      "model_calls": 1,
+      "tool_execution_count": 0,
+      "eligible_for_formal_replay": true,
+      "stopped_before": "send_text"
+    },
+    "remaining_differences": [
+      "archive mode is opt-in instrumentation and still adds small capture overhead",
+      "single-step replay intentionally stops before production side effects and cannot evaluate later conversational state",
+      "tool-use and participation decisions are excluded from this first safe subset and require separate evaluation sets",
+      "no fresh production archive exists yet, so repeatability and evaluation reliability remain unproven"
+    ],
+    "verification": {
+      "tests": 20,
+      "result": "passed",
+      "real_model_calls": 0,
+      "bot_started": false,
+      "fresh_qualified_samples": 0
+    }
+  },
+  "owner_decision": {
+    "decision": "strict_rebuild",
+    "confirmed_at": "2026-08-18T22:55:08+08:00",
+    "stage_2_remains_diagnostic_only": true,
+    "formal_ab_remains_blocked": true
+  },
+  "first_small_step_proposal": {
+    "status": "proposal_only_not_approved_for_execution",
+    "direction": "context-triggered expression and humor actions",
+    "allowed_transfer": [
+      "carry forward prior context",
+      "light reversal",
+      "brief self-deprecation",
+      "relationship-appropriate teasing intensity"
+    ],
+    "forbidden_transfer": [
+      "specific old jokes",
+      "facts",
+      "numbers",
+      "person relationships",
+      "real-world commitments"
+    ],
+    "hard_rejects": [
+      "new factual hallucination",
+      "new real-world commitment",
+      "wrong reply target",
+      "old-joke reuse"
+    ]
+  }
+}

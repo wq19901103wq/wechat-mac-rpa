@@ -1,0 +1,258 @@
+{
+  "schema_version": 1,
+  "authority_notice": {
+    "status": "historical_only",
+    "canonical_workflow": "docs/03-guides/JUDGE_C0_CANONICAL_WORKFLOW.md",
+    "meaning": "This file preserves the superseded staged holdout plan. Its 120/240 splits and old acceptance gates must not control current execution."
+  },
+  "plan_id": "judge-bot-adversarial-samples-v1",
+  "status": "stage_2_validation_only_blocked_for_formal_ab",
+  "created_at": "2026-08-18T00:00:00+08:00",
+  "selection_summary": {
+    "selected_total": 440,
+    "verified_human_reply_cases": 40,
+    "unscored_pressure_cases": 40,
+    "sealed_hidden_cases": 120,
+    "stage_1_screening_hidden": 120,
+    "stage_2_validation_target": 240,
+    "stage_2_validation_selected": 240
+  },
+  "staged_holdout_plan": {
+    "stage_1_screening": {
+      "purpose": "screen out clearly ineffective Judge or Bot directions; not a final quality conclusion",
+      "status": "sealed_approved_for_screening",
+      "total": 120,
+      "group_chat": 80,
+      "private_chat": 40,
+      "complex_large_group": 50,
+      "use_limit": "after aggregate results are used for iteration, this set becomes regression data and can never be called final hidden again"
+    },
+    "stage_2_final_validation": {
+      "purpose": "validation and process diagnosis only; not a fresh hidden final set and not production-comparable Bot A/B evidence",
+      "status": "validation_only_already_read_by_strata_curator",
+      "total_target": 240,
+      "group_chat_target": 160,
+      "private_chat_target": 80,
+      "complex_large_group_target": 100,
+      "distinct_chat_min": 80,
+      "max_cases_per_chat": 3,
+      "max_cases_per_chat_scope": "ordinary chats only; the two user-specified groups are exceptions and are counted by independent event cluster",
+      "correct_common_prosperity_with_luxixi_min": 20,
+      "youzi_group_min": 20,
+      "specified_group_quota_rule": "each specified group must contribute at least 20 independent event clusters; a case counts only after human identity, target-group identity, the source-specific cutoff, complete context, non-exposure and semantic-near-duplicate checks are all verified; otherwise final validation remains blocked",
+      "date_cutoff_policy": {
+        "default": "before 2026-04-01T00:00:00+08:00",
+        "youzi_group_2_user_approved_exception": "through 2026-07-31T23:59:59+08:00",
+        "exception_scope": "date only; identity, target-group, full-context, non-exposure, event-isolation and semantic-near-duplicate rules are unchanged"
+      },
+      "reuse_rule": "no Stage 1 case, event cluster, thread or semantic near-duplicate may enter Stage 2",
+      "private_manifest": "data/reports/private/adversarial_stage2_holdout_v1/manifest.json",
+      "public_summary": "data/reports/private/adversarial_stage2_holdout_v1/public_summary.json",
+      "manifest_sha256": "86fed5f07017e9d336fd6c12bb98cf24a8eb6b9dd9e7f3d6cf861ba465fe49c9",
+      "actual_coverage": {
+        "total": 240,
+        "group_chat": 160,
+        "private_chat": 80,
+        "complex_large_group": 102,
+        "distinct_chats": 178,
+        "distinct_event_clusters": 240,
+        "correct_common_prosperity_with_luxixi": 20,
+        "youzi_group": 20
+      }
+    }
+  },
+  "stage_2_required_strata": {
+    "multi_speaker_target_resolution_min": 50,
+    "topic_switch_or_parallel_threads_min": 40,
+    "cross_message_reference_min": 30,
+    "fact_grounding_min": 30,
+    "humor_or_emotional_response_min": 30,
+    "real_world_commitment_boundary_min": 20,
+    "counting_rule": "strata may overlap; labels are assigned before sealing by an independent curator and only aggregate counts are released"
+  },
+  "stage_2_capacity_audit": {
+    "status": "validation_only_blocked_for_formal_ab",
+    "ready": false,
+    "counting_scope": "selected Stage 2 holdout after excluding Stage 1 events and deterministic conservative answer-near-duplicates; ordinary chats are capped at 3 cases, while the two specified groups use independently isolated event clusters",
+    "available": {
+      "total": 240,
+      "distinct_chats": 178,
+      "group_chat": 160,
+      "private_chat": 80,
+      "complex_large_group": 102,
+      "correct_common_prosperity_with_luxixi": 20,
+      "youzi_group": 20
+    },
+    "gaps": {
+      "total": 0,
+      "distinct_chats": 0,
+      "group_chat": 0,
+      "private_chat": 0,
+      "complex_large_group": 0,
+      "correct_common_prosperity_with_luxixi": 0,
+      "youzi_group": 0
+    },
+    "blocking_reason": "all 240 cases were read by the strata-curation step, and their contexts contain only speaker/content; 0/240 are strictly production-comparable",
+    "required_next_input": "report and obtain user approval for every production difference before any replay; do not start formal A/B with this set",
+    "capacity_note": "all figures describe validation/process-diagnostic coverage only; case text, chat IDs, event IDs and answers remain private",
+    "non_negotiable_rule": "do not fill any gap with the wrong same-name group, data outside the source-specific cutoff, exposed cases, unknown identity, incomplete context, split threads, direct repeats or semantic near-duplicates"
+  },
+  "final_improvement_standard": {
+    "judge": [
+      "candidate beats frozen Judge baseline by at least 5 percentage points on Stage 2",
+      "overall human-vs-Bot identification accuracy is at least 75% and every major stratum is at least 65%",
+      "paired position-swap checks show no material A/B position bias",
+      "Judge remains diagnostic and cannot decide Bot promotion alone"
+    ],
+    "bot": [
+      "blind human paired comparison against frozen C0 has more wins than losses, two-sided sign-test p < 0.05, and net win rate improves by at least 10 percentage points",
+      "complex-large-group net win is positive, both specified groups do not regress, and private chat has no material regression",
+      "new factual hallucinations and new real-world action commitments are both zero",
+      "old-joke reuse, cross-round repetition and generation failures do not worsen",
+      "P95 latency stays within the frozen production SLO and does not increase by more than 10% versus C0 under the same replay conditions"
+    ]
+  },
+  "sources": {
+    "correct_common_prosperity": {
+      "label": "共同富裕群（含鲁西西/招财鲁的正确目标群）",
+      "source_manifest": "data/reports/private/group_chat_judge_review/manifest.json",
+      "source_chat_id": "chat_26",
+      "identity_status": "verified_human_current",
+      "exposure_status": "previously_displayed_and_debugged",
+      "split": "D-Jtrain",
+      "score_eligibility": "judge_diagnostic_only",
+      "bot_style_eligibility": "ineligible_after_2026-04-01_cutoff",
+      "split_reason": "10 cases are already exposed and come from the same target group; keep them out of hidden and Bot style learning",
+      "case_ids": [
+        "5e236406db771064",
+        "7e00c46b3959c805",
+        "e0665aeb73fd5933",
+        "c5e8aaf682e42d58",
+        "36bcc9f2851f7df0",
+        "22cf6ceb24b35578",
+        "28a60f3bd4646074",
+        "ef41877aa6a0c861",
+        "a9195d1fce2457fb",
+        "a728621a3016c0c3"
+      ]
+    },
+    "correct_common_prosperity_pre_cutoff_capacity": {
+      "label": "共同富裕群（含鲁西西/招财鲁的正确目标群）截止日前新导出",
+      "identity_status": "verified_self_authored_pre_cutoff",
+      "exposure_status": "known exact-answer exposure excluded; deterministic conservative answer-near-duplicate screen applied",
+      "split": "sealed_stage_2_final_holdout",
+      "score_eligibility": "reserved_for_one_time_stage_2_validation_after_user_confirmation",
+      "capacity": {
+        "history_messages": 10000,
+        "other_participants": 43,
+        "self_text_messages": 662,
+        "safe_context_candidates": 628,
+        "exact_unexposed_candidates": 244,
+        "independent_event_clusters": 39
+      },
+      "split_reason": "20 verified independent events are selected in the private Stage 2 manifest; hidden IDs, contexts and answers are not published"
+    },
+    "youzi_group_2": {
+      "label": "柚子群2",
+      "source_manifest": "data/reports/private/adversarial_stage2_youzi_quota_v1/manifest.json",
+      "identity_status": "verified_self_authored_through_user_approved_youzi_cutoff",
+      "date_cutoff": "2026-07-31T23:59:59+08:00",
+      "exposure_status": "known exact-answer exposure excluded; deterministic conservative answer-near-duplicate screen applied; no human-review claim",
+      "split": "sealed_stage_2_specified_group_quota",
+      "score_eligibility": "reserved_for_stage_2_after_overall_set_is_built_and_frozen",
+      "capacity": {
+        "deduplicated_export_messages": 20011,
+        "verified_self_messages": 616,
+        "verified_self_text_messages": 471,
+        "message_date_range": "through 2026-07-08",
+        "independent_event_clusters": 20,
+        "quota_gap": 0
+      },
+      "split_reason": "20 verified events were sealed with one case per event; the source snapshot ends on 2026-07-08, so no 2026-07-10 through 2026-07-31 export was needed; hidden IDs are not published"
+    },
+    "exposed_judge_dev": {
+      "label": "旧 Judge 30题完整回放",
+      "source_manifest": "data/reports/private/human_ai_judge_benchmark_v2/dev_replay.json",
+      "identity_status": "verified_human_before_automation_cutoff",
+      "exposure_status": "previously_used_in_judge_iteration",
+      "split": "D-dev",
+      "score_eligibility": "reusable_regression_only",
+      "split_reason": "full human and C0 replies exist, but all 30 were already used and cannot be hidden",
+      "case_ids": [
+        "9bd5f332b8629206",
+        "8af80b7dac35e7e1",
+        "0d7c4dfd8888f928",
+        "b021d124fabcd41c",
+        "189f00603568d3ad",
+        "b770c40a8e724766",
+        "fee24e0c87e5a3a9",
+        "d90d29c5e37f5e8f",
+        "9f4711c3674868ae",
+        "b84033210274ff74",
+        "4a5adf34820b12c7",
+        "6b88200a2fff7472",
+        "2b7c1118fc1728ca",
+        "95d8e392e7e8dbf7",
+        "fa81e3a3589a7c4b",
+        "e641d495c4e04bf1",
+        "b3fa4050e1112ba8",
+        "bbd4e4f18c2469ec",
+        "be85ebfe64919665",
+        "e835199801f02c73",
+        "ae8a946871284264",
+        "6ad960b9299ca0ce",
+        "acaa3ff57043787a",
+        "e77ad42ad02e4d38",
+        "257a36cf3ecdf3a0",
+        "661a74fac1e28321",
+        "33612aa01e61a455",
+        "dcf8e1b71bcf0c25",
+        "b496a2808a875459",
+        "e52ceb676cf9c331"
+      ]
+    }
+  },
+  "hidden_candidate": {
+    "split": "D-hidden-stage-1-screening",
+    "selected_count": 120,
+    "target_min": 120,
+    "status": "sealed_approved_for_screening",
+    "private_manifest": "data/reports/private/adversarial_hidden_holdout_v1/manifest.json",
+    "public_summary": "data/reports/private/adversarial_hidden_holdout_v1/public_summary.json",
+    "coverage": {
+      "group_chat": 80,
+      "private_chat": 40,
+      "complex_large_group": 50,
+      "other_group_chat": 30,
+      "distinct_chats": 61,
+      "distinct_event_clusters": 120,
+      "correct_common_prosperity_with_luxixi": 0,
+      "youzi_group": 0
+    },
+    "requirements": [
+      "at least 60 group-chat cases",
+      "complex large-group stratum reported separately",
+      "whole event clusters assigned to one split",
+      "no thread, event, or semantic near-duplicate overlap with exposed data",
+      "verified human identity and complete context",
+      "never used in prompts, RAG, Wiki, few-shot, tuning, or case-level discussion"
+    ]
+  },
+  "excluded": [
+    {
+      "source": "另一个同名共同富裕群",
+      "reason": "wrong target group; withdrawn samples and conclusions remain excluded"
+    },
+    {
+      "source": "柚子群2 messages failing event-isolation or originality checks",
+      "reason": "direct repeats, copied Bot/group-member lines and multiple messages from one continuous thread cannot be counted as separate human-answer cases"
+    }
+  ],
+  "weflow_readonly_export_audit": {
+    "status": "completed_and_original_account_restored",
+    "correct_common_prosperity_result": "pre-cutoff capacity found in the correct group containing Luxixi/Zhaocailu",
+    "youzi_result": "the expanded verified export ends on 2026-07-08 and supplies 20 sealed independent events, so no 2026-07-10 through 2026-07-31 data was needed",
+    "account_restore_check": "current config SHA256 matches the pre-export recovery copy and WeFlow health is ok",
+    "bot_started": false
+  }
+}
