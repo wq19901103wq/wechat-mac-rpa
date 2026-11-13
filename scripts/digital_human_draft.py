@@ -35,9 +35,17 @@ def main():
     parser.add_argument("--repository", type=Path)
     parser.add_argument("--instance")
     parser.add_argument("--timeout", type=float)
-    for key in ("instances_root", "settings_file", "env_file"):
+    parser.add_argument("--generator", dest="generator_ref")
+    parser.add_argument("--data", dest="data_ref")
+    parser.add_argument("--source-chat-ids", type=json.loads)
+    for key in ("instances_root", "settings_file", "env_file", "sent_replies_db", "sent_replies_history_db"):
         parser.add_argument("--" + key.replace("_", "-"), type=Path)
+    parser.add_argument("--history-db", type=Path, help="共用 RPA SQLite；默认 WECHAT_HISTORY_DB 或本机 RPA 数据库")
+    parser.add_argument("--history-account", default="unspecified", help="数据库所属账号标识")
+    parser.add_argument("--history-source", help="来源标识，默认数据库 URI")
+    parser.add_argument("--history-limit", type=int, default=50, help="最近上下文条数，DH 接受 1 至 200 条")
     inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--history-chat", help="从共用 RPA SQLite 读取此会话的最近记录")
     inputs.add_argument("--text", help="人工新写文本，DH 按接收时间标记；不是历史消息")
     inputs.add_argument("--input-file", type=Path, help="结构化原始消息或截图观察输入 JSON")
     inputs.add_argument("--screenshot", action="store_true", help="识别当前微信截图并生成草稿，不进入 Bot 循环")
@@ -53,7 +61,8 @@ def main():
         args.repository = args.repository or config.get('repository', ROOT.parent / 'digital-human')
         args.instance = args.instance or config.get('instance')
         args.timeout = args.timeout if args.timeout is not None else config.get('timeout', 900)
-        for key in ('instances_root', 'settings_file', 'env_file'):
+        for key in ('instances_root', 'settings_file', 'env_file', 'generator_ref', 'data_ref',
+                    'sent_replies_db', 'source_chat_ids', 'sent_replies_history_db'):
             if getattr(args, key) is None:
                 setattr(args, key, config.get(key))
         if not args.instance:
@@ -65,6 +74,9 @@ def main():
                             "source_chat_id": args.source_chat_id, "text": args.text, "sender": args.sender}
         elif args.input_file is not None:
             online_input = json.loads(args.input_file.read_text(encoding="utf-8"))
+        elif args.history_chat is not None:
+            from personal_context.digital_human import draft_input_from_args
+            online_input = draft_input_from_args(args)
         elif args.screenshot:
             with redirect_stdout(sys.stderr):
                 online_input = screenshot_input()
@@ -73,7 +85,9 @@ def main():
                 parser.error('--save-input 仅支持单次输入')
             args.save_input.write_text(json.dumps(online_input, ensure_ascii=False, indent=2), encoding='utf-8')
         with DigitalHumanDraftClient(args.repository, args.instance, timeout=args.timeout,
-                instances_root=args.instances_root, settings_file=args.settings_file, env_file=args.env_file) as client:
+                instances_root=args.instances_root, settings_file=args.settings_file, env_file=args.env_file,
+                generator_ref=args.generator_ref, data_ref=args.data_ref, sent_replies_db=args.sent_replies_db,
+                source_chat_ids=args.source_chat_ids, sent_replies_history_db=args.sent_replies_history_db) as client:
             print(f"DH 已就绪；初始化 {client.startup_ms / 1000:.2f} 秒", file=sys.stderr, flush=True)
             if args.stream:
                 for line in sys.stdin:

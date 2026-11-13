@@ -68,7 +68,71 @@ def test_extracts_and_anonymizes_conversation(tmp_path):
     assert len(rows) == 1
     assert rows[0].context == ["[联系人]你晚上来吗"]
     assert rows[0].replies == ["来呀，晚点到"]
+    assert rows[0].context_messages == [{"sender": "张三", "text": "[联系人]你晚上来吗"}]
+    assert rows[0].reply_messages == [{"sender": "我", "text": "来呀，晚点到"}]
     assert "张三" not in rows[0].chat_id
+
+
+def test_extracts_continuous_named_multi_speaker_group_context(tmp_path):
+    export_dir = tmp_path / "exports"
+    wiki_dir = tmp_path / "wiki"
+    export_dir.mkdir()
+    wiki_dir.mkdir()
+    payload = {
+        "session": {"displayName": "测试群"},
+        "messages": [
+            _message("前面聊到哪了", False, 1, "小周"),
+            _message("聊晚饭", True, 2, "本人", authorship="human"),
+            _message("火锅吧", False, 3, "小李"),
+            _message("我也想吃", False, 4, "小周"),
+            _message("走起", True, 5, "本人", authorship="human"),
+        ],
+    }
+    (export_dir / "群聊_测试群.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+
+    rows = extract_candidates(export_dir, wiki_dir, human_before=10)
+
+    assert len(rows) == 2
+    assert rows[-1].context_messages == [
+        {"sender": "小周", "text": "前面聊到哪了"},
+        {"sender": "我", "text": "聊晚饭"},
+        {"sender": "小李", "text": "火锅吧"},
+        {"sender": "小周", "text": "我也想吃"},
+    ]
+
+
+def test_continuous_named_context_limit_is_configurable_and_defaults_to_five(tmp_path):
+    export_dir = tmp_path / "exports"
+    wiki_dir = tmp_path / "wiki"
+    export_dir.mkdir()
+    wiki_dir.mkdir()
+    payload = {
+        "session": {"displayName": "测试群"},
+        "messages": [
+            _message("第一句", False, 1, "小周"),
+            _message("第二句", True, 2, "本人", authorship="human"),
+            _message("第三句", False, 3, "小李"),
+            _message("第四句", False, 4, "小周"),
+            _message("第五句", False, 5, "小王"),
+            _message("第六句", False, 6, "小李"),
+            _message("第七句", False, 7, "小周"),
+            _message("第八句", True, 8, "本人", authorship="human"),
+        ],
+    }
+    (export_dir / "群聊_测试群.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+
+    default_rows = extract_candidates(export_dir, wiki_dir, human_before=10)
+    long_rows = extract_candidates(
+        export_dir, wiki_dir, human_before=10, context_message_limit=10
+    )
+
+    assert len(default_rows[-1].context_messages or []) == 5
+    assert len(long_rows[-1].context_messages or []) == 7
+    assert (long_rows[-1].context_messages or [])[0] == {"sender": "小周", "text": "第一句"}
 
 
 def test_rejects_sensitive_conversation(tmp_path):

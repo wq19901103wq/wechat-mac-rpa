@@ -47,6 +47,8 @@ class Candidate:
     priority: bool = False
     source_provenance: str = "unverified"
     semantic_profile: dict[str, str] | None = None
+    context_messages: list[dict[str, str]] | None = None
+    reply_messages: list[dict[str, str]] | None = None
 
 
 def _stable_id(value: str, prefix: str = "chat") -> str:
@@ -148,6 +150,45 @@ def _sanitize(text: str, names: Iterable[str]) -> str:
     return re.sub(r"\s+", " ", result).strip()
 
 
+def _speaker_name(message: dict[str, Any], session_name: str = "") -> str:
+    if message.get("isSend"):
+        return "我"
+    return str(
+        message.get("senderDisplayName")
+        or message.get("senderUsername")
+        or session_name
+        or "对方"
+    ).strip()
+
+
+def _continuous_context_messages(
+    messages: list[dict[str, Any]],
+    reply_index: int,
+    names: Iterable[str],
+    session_name: str,
+    limit: int = 5,
+) -> list[dict[str, str]]:
+    reply_time = _timestamp_seconds(messages[reply_index].get("createTime"))
+    selected: list[dict[str, str]] = []
+    cursor = reply_index - 1
+    while cursor >= 0 and len(selected) < limit:
+        message = messages[cursor]
+        cursor -= 1
+        if not _is_text(message):
+            continue
+        timestamp = _timestamp_seconds(message.get("createTime"))
+        if reply_time and timestamp and reply_time - timestamp > MAX_TURN_GAP_SECONDS * 3:
+            break
+        text = str(message.get("content") or "")
+        if not _safe_text(text):
+            continue
+        selected.append({
+            "sender": _speaker_name(message, session_name),
+            "text": _sanitize(text, names),
+        })
+    return list(reversed(selected))
+
+
 def _wiki_relation(export_path: Path, wiki_dir: Path) -> str:
     stem = export_path.stem
     if stem.startswith("群聊_"):
@@ -168,6 +209,7 @@ def extract_candidates(
     export_dir: Path,
     wiki_dir: Path,
     human_before: float | None = None,
+    context_message_limit: int = 5,
 ) -> list[Candidate]:
     candidates: list[Candidate] = []
     seen: set[str] = set()
@@ -205,10 +247,6 @@ def extract_candidates(
                 continue
             if not _is_coherent_turn(incoming, outgoing):
                 continue
-            if relation == "group":
-                senders = {m.get("senderUsername") or m.get("senderDisplayName") for m in incoming}
-                if len(senders) != 1:
-                    continue
             raw_context = [str(m.get("content") or "") for m in incoming]
             raw_replies = [str(m.get("content") or "") for m in outgoing]
             if not all(_safe_text(t) for t in raw_context + raw_replies):
@@ -240,6 +278,17 @@ def extract_candidates(
                 humor_type=humor_type,
                 response_mode=_response_mode(context, replies),
                 source_provenance=source_provenance,
+                context_messages=_continuous_context_messages(
+                    messages,
+                    i - len(outgoing),
+                    all_names,
+                    session_name,
+                    limit=context_message_limit,
+                ),
+                reply_messages=[
+                    {"sender": "我", "text": _sanitize(str(message.get("content") or ""), all_names)}
+                    for message in outgoing
+                ],
             ))
     return candidates
 

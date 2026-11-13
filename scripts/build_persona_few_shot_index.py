@@ -20,6 +20,9 @@ def embedding_text(row: dict) -> str:
         f"{key}={value}" for key, value in sorted(profile.items()) if value
     )
     parts = ["对话输入：" + "\n".join(row["context"])]
+    situation = row.get("situation_profile") or {}
+    if situation:
+        parts.append("聊天处境：" + "；".join(f"{key}={value}" for key, value in sorted(situation.items())))
     if profile_text:
         parts.append("互动语义：" + profile_text)
     return "\n".join(parts)
