@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "status": "adopted",
+  "adopted_at": "2026-08-26T00:00:00+08:00",
+  "provider": "volcengine_anthropic",
+  "private": {
+    "model": "deepseek-v4-flash",
+    "timeout_seconds": 20
+  },
+  "group": {
+    "model": "doubao-seed-2.1-turbo",
+    "timeout_seconds": 360
+  },
+  "execution": {
+    "enable_react_tools": false,
+    "enable_self_refine": false
+  },
+  "few_shot": {
+    "enabled": true,
+    "path": "data/reports/private/situation_few_shot_library_v1/persona_examples.jsonl",
+    "rows": 80530,
+    "count": 3,
+    "max_chars": 2500,
+    "sha256": "279a178f00bff170ea81a510893f6a1000aa83d0e4b6064851864eec494bc8da",
+    "report_path": "data/reports/private/situation_few_shot_library_v1/report.json",
+    "report_sha256": "ca841a22c302c9f6737d8981dda874ce5b4d2f1283ff405e2faf20e8307eaaf7",
+    "required_review_status": "approved"
+  },
+  "features": {
+    "prefer_latest_turn_form": true,
+    "group_prefer_latest_turn_form": false,
+    "enable_precise_situation_matching": true,
+    "enable_information_gap_response_move": true,
+    "enable_response_action_grounding": true
+  },
+  "skills": {
+    "disabled": ["handling_praise"]
+  },
+  "adoption_evidence": {
+    "path": "data/reports/private/c0_skill_ablation/handling_praise/adoption_evidence.json",
+    "sha256": "91fb0445441c5b126a0d4240b1702d3979f4bfc49e5ec88a74692e765c201b04"
+  }
+}

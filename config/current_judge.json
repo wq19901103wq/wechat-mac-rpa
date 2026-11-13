@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "status": "adopted",
+  "adopted_at": "2026-09-03",
+  "name": "judge_single_rule_full_timeline_v1",
+  "prediction_type": "llm_boolean_features_with_logistic_correction",
+  "official_judge_baseline": true,
+  "experiment_type": null,
+  "profile": {
+    "path": "data/reports/private/human_ai_judge_benchmark_v3_balanced160/judge_profile_single_rule_full_timeline_v1.json",
+    "name": "judge_single_rule_full_timeline_v1",
+    "sha256": "b84e04ce1a1ca5cdfd104b57ffebb6d9837eaebd9ccd6db4a4dc4d4ca310a80e"
+  },
+  "dataset": {
+    "path": "data/reports/private/judge_feature_classifier_v1/group_pattern_holdout_effective_v3_direct_llm_base_blind.json",
+    "sha256": "03ac19471492f902404de0dd156fb53cce870495c00c1f6e0a3744e899bdbfef",
+    "total_cases": 240,
+    "private_cases": 80,
+    "group_cases": 160
+  },
+  "reference": {
+    "path": "data/reports/private/human_ai_judge_benchmark_v3_current_c0_f977633e9391c0f4/judge_reference.json",
+    "sha256": "d1c037cff459dfcafa149c515bec4f71aa78672af95a192e6086842ef453735f"
+  },
+  "metadata_sidecars": {
+    "answers": {
+      "path": "data/reports/private/judge_feature_classifier_v1/group_pattern_holdout_effective_v3_direct_llm_base_answers.json",
+      "sha256": "e2e40b7f3b00b1792b6cbd80b3ee3047b7dc2913175cf550ae2cd34eb75f446c"
+    },
+    "replay": {
+      "path": "data/reports/private/judge_feature_classifier_v1/group_pattern_holdout_effective_v3_replay.json",
+      "sha256": "3fd766957b3975917b4f0dfe326405c324ec50286f57cc99869e6a6a4d832c80"
+    }
+  },
+  "execution": {
+    "provider": "codex_cli",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "low",
+    "timeout_seconds": 360,
+    "codex_cli_version": "0.144.1"
+  },
+  "correction": {
+    "artifact": {
+      "path": "data/reports/private/judge_feature_classifier_v1/reworked_boolean_correction_development_result.json",
+      "sha256": "f86f5d14023312483d8b87dec66a08de06f15f9a733bff4961e43666447aa57a"
+    },
+    "selected_model_name": "symmetric_logistic_refined_boolean_crosses",
+    "model": "LogisticRegression",
+    "input_feature_count": 524,
+    "fit_intercept": false,
+    "regularization": "L2",
+    "C": 1.0,
+    "flip_confidence_threshold": 0.7
+  },
+  "required_current_c0_baseline_id": "c0-a67799c5ac488f5d",
+  "runnable_as_official": true,
+  "missing_official_baseline_fields": [],
+  "historical_development_reference": {
+    "status": "history_only_not_official",
+    "name": "judge_single_rule_full_timeline_v1",
+    "profile": {
+      "path": "data/reports/private/human_ai_judge_benchmark_v3_balanced160/judge_profile_single_rule_full_timeline_v1.json",
+      "sha256": "b84e04ce1a1ca5cdfd104b57ffebb6d9837eaebd9ccd6db4a4dc4d4ca310a80e"
+    },
+    "total": {"correct": 137, "cases": 160, "accuracy": 0.85625},
+    "private": {"correct": 72, "cases": 80, "accuracy": 0.9},
+    "group": {"correct": 65, "cases": 80, "accuracy": 0.8125}
+  }
+}
