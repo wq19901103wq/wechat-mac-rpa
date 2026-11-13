@@ -1,0 +1,3 @@
+[submodule "third_party/digital-human"]
+	path = third_party/digital-human
+	url = git@github.com:wq19901103wq/digital-human.git
