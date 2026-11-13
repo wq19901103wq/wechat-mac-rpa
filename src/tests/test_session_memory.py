@@ -148,3 +148,11 @@ class TestExtractQueryKey:
 
     def test_unknown_tool(self):
         assert _extract_query_key("custom_tool", '{"a": "1", "b": "2"}') == "1 2"
+
+    def test_same_name_type_mismatch_keeps_original_type(self):
+        """同名私聊/群聊请求不同类型时保留原会话类型，不静默改写。"""
+        memory = SessionMemory()
+        private = memory.get_or_create("同名", is_group=False)
+        again = memory.get_or_create("同名", is_group=True)
+        assert again is private
+        assert again.is_group is False

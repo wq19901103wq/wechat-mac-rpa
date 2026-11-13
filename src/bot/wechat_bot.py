@@ -3,6 +3,7 @@
 
 import logging as _logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -164,6 +165,13 @@ class WeChatBot:
         # 服务号/公众号列表恢复冷却
         self._last_recovery_time: float = 0.0
 
+        # 登录恢复冷却（微信掉线时避免每个 tick 重复点击登录按钮）
+        self._last_login_recovery_at: float = 0.0
+        self._login_recovery_cooldown_seconds: float = 60.0
+
+        # 保护 pending_self_messages：tick 线程与 send_to_chat（admin 线程）都会 append
+        self._pending_lock = threading.Lock()
+
         # 全局状态持久化目录
         project_root = Path(__file__).parent.parent.parent
         (project_root / "data").mkdir(parents=True, exist_ok=True)
@@ -261,9 +269,21 @@ class WeChatBot:
             except WeChatNotReadyError:
                 if self.replay_archive is not None:
                     raise DecisionPointCutoff("生产回放不执行登录恢复，已安全停止")
+                now = time.monotonic()
+                if now - self._last_login_recovery_at < self._login_recovery_cooldown_seconds:
+                    self.logger.log_capture(tick_id, success=False, error="微信未就绪，登录恢复冷却中，跳过本 tick")
+                    self.debug_logger.log_action("none", action_input="", success=False, error="微信未就绪: 登录恢复冷却中")
+                    return
+                self._last_login_recovery_at = now
                 recovery = self._login_handler.handle()
                 if recovery.status == LoginRecoveryStatus.SUCCESS:
-                    result = self.perception.perceive()
+                    try:
+                        result = self.perception.perceive()
+                    except WeChatNotReadyError:
+                        # 每 tick 最多恢复一次：恢复后仍不就绪则本 tick 直接结束，避免单 tick 内无限往复
+                        self.logger.log_capture(tick_id, success=False, error="登录恢复后微信仍未就绪，下个 tick 再试")
+                        self.debug_logger.log_action("none", action_input="", success=False, error="恢复后仍微信未就绪")
+                        return
                 else:
                     self.logger.log_capture(tick_id, success=False, error=f"微信未就绪且恢复失败: {recovery.message}")
                     self.debug_logger.log_action("none", action_input="", success=False, error=f"微信未就绪: {recovery.message}")
@@ -438,7 +458,11 @@ class WeChatBot:
 
             for msg in unreplied:
                 if self.on_message and self.replay_archive is None:
-                    self.on_message(msg, state)
+                    try:
+                        self.on_message(msg, state)
+                    except Exception as e:
+                        # 回调（如 admin 通知）异常不得中断本 tick 的回复流程
+                        self.logger.warning(f"on_message 回调异常，已跳过该消息: {e}")
 
             # 收集所有需要回复的未读消息
             to_reply = [msg for msg in unreplied if self.policy.should_reply(msg, state)]
@@ -600,11 +624,11 @@ class WeChatBot:
                      messages_count, new_messages_count,
                      system_prompt, user_prompt, raw_response, tool_calls_json, tool_results_json,
                      session_input_messages_json, session_output_unreplied_json,
-                     should_reply, replies_sent_json, screenshot_path,
+                     should_reply, replies_sent_json, send_success, screenshot_path,
                      self_refine_applied, feedback_decision, feedback_issues, iterate_count,
                      react_round_count, think_tool_called,
                      feedback_raw_response, iterate_raw_response, llm_messages_json)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
                     self.session_id,
                     tick_id, chat_name, 1 if is_group else 0,
                     len(all_messages) if all_messages else 0,
@@ -618,6 +642,7 @@ class WeChatBot:
                     _serialize_msgs(unreplied) if unreplied else '[]',
                     1 if replies else 0,
                     '[]',
+                    None,  # send_success 预写为 NULL（待终结），发送完成后由 _update_tick_send_result 置 0/1
                     result.screenshot_path or '',
                     1 if getattr(self.generator, 'last_self_refine_applied', False) else 0,
                     getattr(self.generator, 'last_feedback_decision', '') or '',
@@ -701,7 +726,8 @@ class WeChatBot:
                     )
                     chat_state = self.global_store.chats.get(chat_name)
                     if chat_state is not None:
-                        chat_state.pending_self_messages.append(self_msg)
+                        with self._pending_lock:
+                            chat_state.pending_self_messages.append(self_msg)
                         self.logger.info("[Pending] %s 记录 pending self 消息 (pending 队列长度=%d): %.60s",
                                              chat_name, len(chat_state.pending_self_messages), reply)
                 elif action_result.skipped:
@@ -945,7 +971,8 @@ class WeChatBot:
             )
             state = self.global_store.chats.get(norm)
             if state is not None:
-                state.pending_self_messages.append(msg)
+                with self._pending_lock:
+                    state.pending_self_messages.append(msg)
                 self.logger.info("[Pending] %s 记录 pending self 消息 (pending 队列长度=%d): %.60s",
                                      norm, len(state.pending_self_messages), text)
         return result

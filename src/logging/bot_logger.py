@@ -15,6 +15,7 @@ AI 使用指南：
 
 import json
 import logging
+import os
 import threading
 import traceback
 from datetime import datetime
@@ -88,7 +89,8 @@ class BotLogger:
         execution_backup_count: int = 3,
     ):
         if logs_dir is None:
-            logs_dir = str(Path(__file__).parent.parent.parent / "data" / "logs")
+            logs_dir = os.environ.get("WECHAT_BOT_LOGS_DIR") or str(
+                Path(__file__).parent.parent.parent / "data" / "logs")
         self.logs_dir = Path(logs_dir)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
 

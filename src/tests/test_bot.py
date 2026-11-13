@@ -20,7 +20,7 @@ from src.capture.window_capture import WeChatNotReadyError
 from src.layout.profile import PROFILE_WECHAT_MAC_1760X1280
 from src.models.base import ActionResult, ChatMessage, PerceptionResult, SenderType
 from src.reply.digital_human import DigitalHumanError, DigitalHumanReplyGenerator
-from src.session.global_store import ChatState
+from src.session.global_store import ChatState, GlobalStore
 
 
 class TestWeChatBot:
@@ -82,6 +82,50 @@ class TestWeChatBot:
         default_bot = WeChatBot(PROFILE_WECHAT_MAC_1760X1280, perception=Mock())
         assert isinstance(default_bot.generator, DigitalHumanReplyGenerator)
         assert default_bot.generator.llm_client is None
+
+    @pytest.mark.parametrize('is_group', [False, True])
+    @pytest.mark.parametrize('with_text', [False, True])
+    @pytest.mark.parametrize('outcome', ['silence', 'block', 'allow'])
+    def test_tick_passes_images_to_model_and_respects_decision(self, bot, tmp_path, is_group, with_text, outcome):
+        bot.group_reply_enabled = True
+        image = ChatMessage('', 'friend', SenderType.OTHER, 'example', observed_at=150,
+                            message_type='image', image_description=(
+                                '一只猫' if outcome == 'allow' else '灰色的加载失败图标（圆圈内有旋转箭头）'))
+        messages = [image]
+        if with_text:
+            messages.append(ChatMessage('晚点聊', 'friend', SenderType.OTHER, 'example', observed_at=151))
+        bot.global_store = GlobalStore(state_file=str(tmp_path / 'global_state.json'))
+        bot.perception.perceive.return_value = PerceptionResult('example', messages, [], '', is_group=is_group)
+        bot._try_switch_to_unread_chat = Mock(return_value='')
+        bot.sender = Mock(silent_mode=False)
+        reply = '图挂了' if outcome == 'block' else ('一会儿说' if with_text else '哈哈')
+        bot.sender.send.return_value = ActionResult(success=True, sent_text=reply)
+        client = Mock()
+        client.draft.return_value = dict(replies=[] if outcome == 'silence' else [reply],
+                                        binding=dict(instance='test', generator='g-test', data='d-test'))
+        client.review.return_value = dict(decision='block' if outcome == 'block' else 'allow',
+            issues=[dict(category='hallucination', quote=reply, reply_index=0,
+                         reason='仅凭可能有误的图片识别不能确认加载失败')] if outcome == 'block' else [])
+        bot.generator._client = client
+
+        bot.tick()
+        bot.tick()
+
+        assert bot.global_store.get_unreplied('example') == []
+        client.draft.assert_called_once()
+        online_input = client.draft.call_args.args[0]
+        assert image.image_description in online_input['context'][0]['text']
+        assert '机器推测，可能有误' in online_input['context'][0]['text']
+        if with_text:
+            assert online_input['context'][-1]['text'] == '晚点聊'
+        if outcome == 'silence':
+            client.review.assert_not_called()
+        else:
+            client.review.assert_called_once_with([reply], online_input, list(range(len(messages))))
+        if outcome == 'allow':
+            bot.sender.send.assert_called_once_with(reply, chat_name='example')
+        else:
+            bot.sender.send.assert_not_called()
 
     @pytest.mark.parametrize('setting,is_group,should_generate', [
         (None, True, False), ('0', True, False), ('1', True, True), ('0', False, True),
@@ -237,6 +281,38 @@ class TestWeChatBot:
 
         assert bot.perception.perceive.call_count == 2
         bot._login_handler.handle.assert_called_once()
+
+    def test_login_recovery_cooldown_skips_repeat_attempts(self, bot, tmp_path):
+        """掉线时登录恢复必须有冷却，不能每个 tick 重复点击登录按钮。"""
+        bot.perception = Mock()
+        bot.perception.perceive.side_effect = WeChatNotReadyError("需要登录")
+        bot._login_handler = Mock()
+        bot._login_handler.handle.return_value = LoginRecoveryResult(
+            LoginRecoveryStatus.NEEDS_PHONE_CONFIRM, "等待手机确认"
+        )
+
+        bot.tick()
+        assert bot._login_handler.handle.call_count == 1
+
+        bot.tick()  # 冷却期内不再尝试恢复
+        assert bot._login_handler.handle.call_count == 1
+
+    def test_login_recovery_once_per_tick_when_still_not_ready(self, bot, tmp_path):
+        """恢复后仍不就绪时本 tick 必须结束，不能单 tick 内无限往复。"""
+        bot.perception = Mock()
+        bot.perception.perceive.side_effect = [
+            WeChatNotReadyError("需要登录"),
+            WeChatNotReadyError("仍然未就绪"),
+        ]
+        bot._login_handler = Mock()
+        bot._login_handler.handle.return_value = LoginRecoveryResult(
+            LoginRecoveryStatus.SUCCESS, "已恢复"
+        )
+
+        bot.tick()
+
+        assert bot._login_handler.handle.call_count == 1
+        assert bot.perception.perceive.call_count == 2
 
     def test_chat_switch_can_be_disabled(self, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)

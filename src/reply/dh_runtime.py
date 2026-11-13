@@ -8,6 +8,7 @@ import queue
 import signal
 import subprocess
 import sys
+import time
 from threading import Lock, Thread
 from types import SimpleNamespace
 import uuid
@@ -25,8 +26,14 @@ class _RemoteClient:
         return self.runtime.call("chat", client=self.name, messages=messages, kwargs=kwargs)
 
 
+# 审查/闲聊类操作比 draft 更快，给更短的超时，避免下游挂起拖住整个主循环 10 分钟
+REVIEW_TIMEOUT_SECONDS = 300
+
+
 class WorkerRuntime:
-    def __init__(self, repository, instance, *, timeout, instances_root, settings_file=None, env_file=None):
+    def __init__(self, repository, instance, *, timeout, instances_root, settings_file=None, env_file=None,
+                 generator_ref=None, data_ref=None, sent_replies_db=None, source_chat_ids=None,
+                 sent_replies_history_db=None):
         self.timeout = timeout
         self._lock = Lock()
         self._responses = queue.Queue()
@@ -38,6 +45,16 @@ class WorkerRuntime:
                    "--instances-root", str(instances_root), "--env-file", str(env_file)]
         if settings_file is not None:
             command.extend(["--settings-file", str(settings_file)])
+        if generator_ref is not None:
+            command.extend(["--generator", generator_ref])
+        if data_ref is not None:
+            command.extend(["--data", data_ref])
+        if sent_replies_db is not None:
+            command.extend(["--sent-replies-db", str(sent_replies_db)])
+        if sent_replies_history_db is not None:
+            command.extend(["--sent-replies-history-db", str(sent_replies_history_db)])
+        if source_chat_ids is not None:
+            command.extend(["--source-chat-ids", json.dumps(source_chat_ids, ensure_ascii=False)])
         try:
             self._process = subprocess.Popen(command, cwd=repository, stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
@@ -51,7 +68,8 @@ class WorkerRuntime:
             self.client_identity = ready["client_identity"]
             self.generator = SimpleNamespace(_llm={key: _RemoteClient(self, key, model)
                 for key, model in ready["models"].items()})
-            _logger.info("DH worker ready pid=%s source=%s", self._process.pid, self.source)
+            _logger.info("DH worker ready pid=%s source=%s data=%s sent_replies=%s",
+                         self._process.pid, self.source, self.binding.get("data"), self.binding.get("sent_replies"))
         except BaseException:
             self.close()
             raise
@@ -72,9 +90,9 @@ class WorkerRuntime:
             for line in stream:
                 _logger.info("DH worker: %s", line.decode("utf-8", errors="replace").rstrip())
 
-    def _receive(self):
+    def _receive(self, timeout=None):
         try:
-            result = self._responses.get(timeout=self.timeout)
+            result = self._responses.get(timeout=self.timeout if timeout is None else timeout)
         except queue.Empty as exc:
             self.close()
             raise TimeoutError("DH worker 请求超时") from exc
@@ -84,11 +102,9 @@ class WorkerRuntime:
         if not isinstance(result, dict):
             self.close()
             raise ValueError("DH worker 返回无效协议对象")
-        if result.get("type") == "error":
-            raise RuntimeError("DH worker 失败：" + str(result.get("error")))
         return result
 
-    def call(self, operation, **payload):
+    def call(self, operation, *, timeout=None, **payload):
         with self._lock:
             if self._process is None or self._process.poll() is not None:
                 raise RuntimeError("DH worker 已关闭")
@@ -99,11 +115,24 @@ class WorkerRuntime:
                 raise ValueError("DH worker 输入超过协议限制")
             self._process.stdin.write(line)
             self._process.stdin.flush()
-            response = self._receive()
-            if response.get("id") != request_id:
-                self.close()
-                raise ValueError("DH worker 响应请求不符")
-            return response["result"]
+            wait = self.timeout if timeout is None else timeout
+            deadline = time.monotonic() + wait
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.close()
+                    raise TimeoutError("DH worker 请求超时")
+                response = self._receive(remaining)
+                if response.get("id") != request_id:
+                    if response.get("type") == "error" and response.get("id") is None:
+                        # 协议流层面的外来错误（如上游坏行重同步后的告警）：
+                        # 不销毁 worker，继续等待本请求的响应
+                        continue
+                    self.close()
+                    raise ValueError("DH worker 响应请求不符")
+                if response.get("type") == "error":
+                    raise RuntimeError("DH worker 失败：" + str(response.get("error")))
+                return response["result"]
 
     def draft(self, request, *, review=None):
         return self.call("draft", request=request, review=review)

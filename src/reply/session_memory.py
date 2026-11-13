@@ -2,9 +2,12 @@
 """Session Memory - 跨 tick 短期记忆（工具缓存、对话上下文）."""
 
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -104,10 +107,14 @@ class SessionMemory:
         if chat_name not in self._sessions:
             self._sessions[chat_name] = SessionSnapshot(chat_name=chat_name, is_group=is_group)
         else:
-            # 如果传入的 is_group 与当前不同，更新它
-            if self._sessions[chat_name].is_group != is_group:
-                self._sessions[chat_name].is_group = is_group
-            self._sessions[chat_name].last_active = time.time()
+            session = self._sessions[chat_name]
+            if session.is_group != is_group:
+                # 同名会话类型不一致（如同名私聊与群聊）：保留原会话类型并告警，
+                # 不静默改写，避免工具缓存跨会话污染且无任何痕迹
+                _logger.warning(
+                    "session '%s' 类型不一致: 已存=%s 请求=%s，保留已存类型",
+                    chat_name, session.is_group, is_group)
+            session.last_active = time.time()
         return self._sessions[chat_name]
 
     def add_tool_result(self, chat_name: str, tool_name: str, query: str, result: str):

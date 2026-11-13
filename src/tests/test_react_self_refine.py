@@ -122,6 +122,10 @@ class TestSelfRefine:
         feedback_messages = mock_llm.calls[2]["messages"]
         assert feedback_messages[0]["role"] == "system"
         assert ET.fromstring(feedback_messages[0]["content"]).tag == "reply_audit"
+        relevance = ET.fromstring(feedback_messages[0]["content"]).find("./priority_order/check[@id='relevance']")
+        assert relevance is not None
+        assert "先只用 unread 确定本轮应回应的对象、最新未解决问题或请求" in (relevance.text or "")
+        assert "history 中更早的话题、旧梗、旧问题或旧承诺" in (relevance.text or "")
         assert feedback_messages[2] == {"role": "assistant", "content": '{"replies": ["test reply"]}'}
         assert feedback_messages[3]["content"] == "现在执行回复质量审计，只输出规定的 JSON。"
         # 消息流应包含 system + user + generation assistant + feedback prompt + feedback assistant
@@ -225,6 +229,14 @@ class TestSelfRefine:
         assert gen.last_feedback_decision == "fail"
         assert gen.last_feedback_issues == ["事实矛盾：物价高；上下文明确说物价低"]
         assert gen.last_iterate_count == 1
+        assert gen.last_fact_check["attempted"] is True
+        assert gen.last_fact_check["status"] == "issues_found"
+        assert gen.last_fact_check["extract_parsed"]["claims"][0]["verdict"] == "contradicted"
+        assert gen.last_fact_check["caused_feedback_fail"] is True
+        assert gen.last_fact_check["rewrite_attempted"] is True
+        assert gen.last_fact_check["rewrite_applied"] is True
+        assert gen.last_fact_check["reply_before"] == '{"replies": ["物价高"]}'
+        assert gen.last_fact_check["reply_after"] == "物价挺低的"
         assert len(fact_llm.calls) == 1
         assert len(mock_llm.calls) == 3
 
@@ -247,6 +259,8 @@ class TestSelfRefine:
         assert gen.last_feedback_decision == "fail"
         assert gen.last_feedback_issues == ["事实无依据：物价高；没有直接证据"]
         assert gen.last_iterate_count == 1
+        assert gen.last_fact_check["verify_parsed"]["claims"][0]["verdict"] == "unknown"
+        assert gen.last_fact_check["rewrite_applied"] is True
         assert len(fact_llm.calls) == 2
 
     def test_iterate_issues_are_structured_json(self, mock_llm, sample_message):
@@ -267,7 +281,7 @@ class TestSelfRefine:
 
 
 class TestForceSkill:
-    """FORCE_SKILL 环境变量的测试。"""
+    """FORCE_SKILL / DISABLED_SKILLS 环境变量的测试。"""
 
     def test_force_skill_valid_bypasses_router(self, mock_llm, sample_message):
         """有效 skill 名 → 跳过路由，强制注入。"""
@@ -303,6 +317,38 @@ class TestForceSkill:
         with patch.dict(os.environ, {"FORCE_SKILL": ""}):
             gen.generate([sample_message], [sample_message])
         assert "casual_chat" in gen.last_loaded_skills
+
+    def test_disabled_routed_skill_is_not_injected(self, mock_llm, sample_message):
+        mock_llm.responses = [
+            '{"skills": ["handling_vent"]}',
+            '{"replies": ["test reply"]}',
+        ]
+        gen = _make_generator(mock_llm, enable_self_refine=False)
+        with patch.dict(os.environ, {"DISABLED_SKILLS": "handling_vent"}, clear=False):
+            gen.generate([sample_message], [sample_message])
+        assert gen.last_loaded_skills == []
+        assert "<active_skill" not in str(mock_llm.calls[-1]["messages"])
+
+    def test_disabled_fallback_is_not_replaced(self, mock_llm, sample_message):
+        mock_llm.responses = [
+            '{"skills": []}',
+            '{"replies": ["test reply"]}',
+        ]
+        gen = _make_generator(mock_llm, enable_self_refine=False)
+        with patch.dict(os.environ, {"DISABLED_SKILLS": "casual_chat"}, clear=False):
+            gen.generate([sample_message], [sample_message])
+        assert gen.last_loaded_skills == []
+        assert "<active_skill" not in str(mock_llm.calls[-1]["messages"])
+
+    def test_last_loaded_skills_reflects_injected_fallback(self, mock_llm, sample_message):
+        mock_llm.responses = [
+            '{"skills": []}',
+            '{"replies": ["test reply"]}',
+        ]
+        gen = _make_generator(mock_llm, enable_self_refine=False)
+        with patch.dict(os.environ, {"DISABLED_SKILLS": ""}, clear=False):
+            gen.generate([sample_message], [sample_message])
+        assert gen.last_loaded_skills == ["casual_chat"]
 
 
 class TestParseReplies:
@@ -365,7 +411,26 @@ class TestReActLoop:
         assert gen.generate([sample_message], [sample_message]) == ["ok"]
         router_timeout = mock_llm.calls[0]["kwargs"]["timeout"]
         generation_timeout = mock_llm.calls[1]["kwargs"]["timeout"]
-        assert 0 < generation_timeout <= router_timeout <= 20.0
+        assert 0 < router_timeout <= 5.0
+        assert 0 < generation_timeout <= 20.0
+        assert mock_llm.calls[0]["kwargs"]["max_retries"] == 0
+        assert mock_llm.calls[1]["kwargs"]["max_retries"] == 0
+
+    def test_no_tools_uses_json_mode_and_reserves_retry_time(self):
+        mock_llm = MockLLM(responses=['{"replies": ["ok"]}'])
+        gen = _make_generator(mock_llm, enable_self_refine=False)
+
+        replies, _ = gen._react_generate(
+            [{"role": "user", "content": "test"}],
+            [],
+            deadline=time.time() + 20.0,
+        )
+
+        assert replies == ["ok"]
+        kwargs = mock_llm.calls[0]["kwargs"]
+        assert kwargs["response_format"] == {"type": "json_object"}
+        assert 0 < kwargs["timeout"] <= 15.0
+        assert kwargs["max_retries"] == 0
 
     def test_reserves_time_for_final_response(self):
         executed = []

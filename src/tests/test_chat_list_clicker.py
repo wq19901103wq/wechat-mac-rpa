@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """ChatListClicker 单元测试"""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.action.chat_list_clicker import ChatListClicker
 from src.action.system_automation import SystemAutomation
 from src.models.base import ChatListItem, Rect
+
+
+@pytest.fixture(autouse=True)
+def reset_click_cooldown(monkeypatch):
+    monkeypatch.setattr(ChatListClicker, "_last_click_time", 0.0)
 
 
 def _make_mock_automation() -> SystemAutomation:
@@ -17,6 +24,24 @@ def _make_mock_automation() -> SystemAutomation:
 
 
 class TestChatListClicker:
+    def test_click_cooldown_is_shared_between_instances(self):
+        window_rect = Rect(x=0, y=0, width=100, height=100)
+        automation = _make_mock_automation()
+        first = ChatListClicker(window_rect, automation=automation)
+        second = ChatListClicker(window_rect, automation=automation)
+        item = ChatListItem(nickname="test", last_message_preview="", unread_count="", timestamp="", rect=Rect(x=10, y=10, width=20, height=20))
+
+        with patch("wechat_reader.action.chat_list_clicker.time") as clock:
+            clock.time.return_value = 100.0
+            assert first.click_item(item) is True
+            clock.time.return_value = 100.5
+            assert second.click_item(item) is False
+            automation.click_at.assert_called_once()
+            clock.time.return_value = 101.0
+            assert second.click_item(item) is True
+
+        assert automation.click_at.call_count == 2
+
     def test_click_item_coordinates(self):
         """验证坐标计算：屏幕绝对坐标 = 窗口逻辑坐标 + 截图像素坐标 / scale_factor"""
         window_rect = Rect(x=100, y=200, width=800, height=600)

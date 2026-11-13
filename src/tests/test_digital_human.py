@@ -4,6 +4,7 @@ import importlib.util
 import io
 import os
 import sys
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,8 +15,78 @@ import pytest
 from src.models.base import ChatMessage, PerceptionResult, SenderType
 from src.reply.digital_human import (
     DigitalHumanDraftClient, DigitalHumanError, DigitalHumanReplyGenerator,
-    input_digest, load_digital_human_config, messages_input,
+    load_digital_human_config, messages_input,
 )
+
+def input_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+@pytest.mark.parametrize('failed', [False, True])
+@pytest.mark.parametrize('kind', ['draft', 'review'])
+def test_worker_request_trace_is_optional_uncached_and_finishes(tmp_path, monkeypatch, failed, kind):
+    worker_path = Path(__file__).parents[1] / 'reply/dh_worker.py'
+    monkeypatch.syspath_prepend(str(worker_path.parent))
+    spec = importlib.util.spec_from_file_location('test_dh_worker', worker_path)
+    worker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(worker)
+    trace = Mock(ref='trace-id')
+    trace.operation.return_value = nullcontext()
+    factory = Mock(return_value=trace)
+    monkeypatch.setitem(sys.modules, 'src.infrastructure.tracing', SimpleNamespace(CaseTrace=factory))
+    runtime = SimpleNamespace(binding=dict(data='d-test', generator='g-test'))
+    request = dict(request_id='case-1', input=dict(text='hello'))
+    with worker.request_trace(None, runtime, request, kind=kind) as ref:
+        assert ref is None
+    factory.assert_not_called()
+    try:
+        with worker.request_trace(tmp_path, runtime, request, kind=kind) as ref:
+            assert ref == 'trace-id'
+            if failed:
+                raise RuntimeError('draft failed')
+    except RuntimeError as exc:
+        assert failed and str(exc) == 'draft failed'
+    factory.assert_called_once_with(tmp_path, dict(case_id='case-1'),
+        dict(kind=kind, data_ref='d-test', candidate_ref='g-test', cache=dict(enabled=False)))
+    trace.operation.assert_called_once_with('generation' if kind == 'draft' else kind, kind, 0, request)
+    trace.finish.assert_called_once_with('failed' if failed else 'complete')
+
+
+@pytest.mark.parametrize('config_key', ['review_model_config', 'context_model_config'])
+def test_review_model_override_uses_an_isolated_client_and_requires_tracing(monkeypatch, config_key):
+    worker_path = Path(__file__).parents[1] / 'reply/dh_worker.py'
+    monkeypatch.syspath_prepend(str(worker_path.parent))
+    spec = importlib.util.spec_from_file_location('test_dh_worker', worker_path)
+    worker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(worker)
+    shared = Mock()
+    runtime = SimpleNamespace(generator=SimpleNamespace(_llm={'group': shared}))
+    factory = Mock()
+    settings = dict(llm=dict(max_retries=2))
+    monkeypatch.setitem(sys.modules, 'src.llm', SimpleNamespace(ChatClient=factory))
+    monkeypatch.setitem(sys.modules, 'src.infrastructure.config',
+                        SimpleNamespace(load_settings=lambda: settings))
+    request = dict(client='group', review=dict(parallel=False))
+    assert worker.review_client(runtime, request, None) is shared
+    factory.assert_not_called()
+    config = dict(model='test', thinking=dict(type='disabled'))
+    request.update({config_key: config, 'trace_dir': 'offline'})
+    assert worker.review_client(runtime, request, None, config_key) is factory.return_value
+    factory.assert_called_once_with(settings, config)
+    assert runtime.generator._llm['group'] is shared
+    shared.assert_not_called()
+    for invalid, prefetch in [({**request, 'trace_dir': None}, None),
+                              ({**request, 'review': dict(parallel=True)}, None),
+                              (request, object())]:
+        with pytest.raises(ValueError, match='串行审查追踪'):
+            worker.review_client(runtime, invalid, prefetch, config_key)
+    if config_key == 'context_model_config':
+        for invalid in [{**request, 'review_model_config': config},
+                        {**request, 'review': dict(parallel=False, direct_context=True)}]:
+            with pytest.raises(ValueError, match='不能.*混用'):
+                worker.review_client(runtime, invalid, None, config_key)
+    assert factory.call_count == 1
+    assert worker.review_client(runtime, dict(client='group'), None) is shared
 
 
 class FakeRuntime:
@@ -47,8 +118,7 @@ class FakeRuntime:
             status='draft' if replies else 'silence', replies=replies, input_sha256='c'*64,
             input_payload_sha256=input_digest(value), pid=os.getpid())
         changes = {'binding': ('binding', dict(self.binding, generator='wrong')),
-            'request_id': ('request_id', 'wrong'), 'digest': ('input_payload_sha256', 'd'*64),
-            'case_hash': ('input_sha256', 'z'*64), 'sent': ('sent', True), 'draft_only': ('draft_only', False),
+            'request_id': ('request_id', 'wrong'), 'sent': ('sent', True), 'draft_only': ('draft_only', False),
             'empty_reply': ('replies', ['']), 'status': ('status', 'silence'), 'failure': ('status', 'error')}
         if fault in changes:
             key, changed = changes[fault]
@@ -77,6 +147,29 @@ def test_messages_preserve_original_time_and_explicit_roles():
     assert value['context'] == [dict(text='hello', sender='friend', is_self=False, timestamp=100),
                                 dict(text='hello', sender='self', is_self=True, timestamp=101)]
     assert all('message_id' not in row for row in value['context'])
+
+
+@pytest.mark.parametrize('observed_at', [None, 150])
+def test_explicit_source_binding_uses_id_instead_of_same_chat_name(endpoint, observed_at):
+    mapping = {'_chats_first': 'source-first', '_chats_second': 'source-second'}
+    generator = DigitalHumanReplyGenerator(endpoint, 'test', source_chat_ids=mapping)
+    try:
+        for alias, source in mapping.items():
+            target = message(chatroom_id=alias, observed_at=observed_at)
+            assert generator.generate([target], [target], is_group=True) == ['synthetic draft']
+            assert json.loads(generator.last_user_prompt)['source_chat_id'] == source
+        first, second = (message(chatroom_id=alias, observed_at=observed_at) for alias in mapping)
+        assert generator.generate([second], [first, second], is_group=True) == []
+        assert generator.last_generation_failed
+    finally:
+        generator.close()
+
+
+@pytest.mark.parametrize('mapped', [None, '', 12, [], '_chats_unknown'])
+def test_recorded_alias_requires_valid_explicit_source_id(mapped):
+    with pytest.raises(DigitalHumanError):
+        messages_input([message(chatroom_id='_chats_first')], source_chat_id='_chats_first',
+                       source_chat_ids={'_chats_first': mapped}, is_group=True)
 
 
 @pytest.mark.parametrize('is_group', [False, True])
@@ -109,8 +202,8 @@ def test_unsupported_message_boundaries_are_rejected(kwargs):
         messages_input([message(**kwargs)], source_chat_id='source-test', is_group=False)
 
 
-@pytest.mark.parametrize('message_type,label', [('image', '图片'), ('sticker', '表情包'),
-    ('mixed', '图文'), ('link_card', '链接卡片'), ('video', '视频')])
+@pytest.mark.parametrize('message_type,label', [('sticker', '表情包'),
+    ('link_card', '链接卡片'), ('video', '视频')])
 def test_media_adapter_preserves_recognized_content_and_quotes(message_type, label):
     target = message(message_type=message_type, text='正文', image_description='画面描述',
                      image_text='画面文字', quoted_text='被引用的原话', observed_at=150)
@@ -123,6 +216,20 @@ def test_media_adapter_preserves_recognized_content_and_quotes(message_type, lab
     assert messages_input([target], is_group=False)['context'][0]['text'].count('相同文字') == 1
 
 
+@pytest.mark.parametrize('message_type', ['image', 'mixed'])
+def test_image_context_preserves_uncertain_recognition_and_quotes(message_type):
+    target = message(message_type=message_type, text='晚点聊', image_description='灰色的加载失败图标',
+                     image_text='图片中的错误文字', quoted_text='被引用的原话')
+    text = messages_input([target], source_chat_id='source-test', is_group=False)['context'][0]['text']
+    assert text.startswith('「引用：被引用的原话」\n[')
+    assert '描述：灰色的加载失败图标' in text
+    assert '识别文字：图片中的错误文字' in text
+    assert '晚点聊' in text and '机器推测，可能有误' in text
+    assert target.text == '晚点聊' and target.image_description == '灰色的加载失败图标'
+    target.text = target.image_text = '相同文字'
+    assert messages_input([target], source_chat_id='source-test', is_group=False)['context'][0]['text'].count('相同文字') == 1
+
+
 @pytest.mark.parametrize('is_group', [False, True])
 def test_bot_adapter_generates_with_media_and_quoted_reply(endpoint, is_group):
     media = message(text='', message_type='image', observed_at=150)
@@ -132,8 +239,10 @@ def test_bot_adapter_generates_with_media_and_quoted_reply(endpoint, is_group):
     try:
         assert generator.generate([target], [media, target, later], is_group=is_group) == ['synthetic draft']
         value = json.loads(generator.last_user_prompt)
-        assert [row['text'] for row in value['context']] == [
-            '[图片]', '「引用：这个给我留着」\n明天带给你', '已经发送的回复']
+        assert value['context'][0]['text'].startswith('[图片]\n')
+        assert '机器推测，可能有误' in value['context'][0]['text']
+        assert [row['text'] for row in value['context'][1:]] == [
+            '「引用：这个给我留着」\n明天带给你', '已经发送的回复']
         assert [row['timestamp'] for row in value['context']] == [150, 151, 152]
         assert not generator.last_generation_failed
         assert json.loads(generator.last_raw_response)['sent'] is False
@@ -272,7 +381,9 @@ def test_screenshot_cli_saves_observed_input_and_outputs_only_draft_json(endpoin
     assert response['replies'] == ['synthetic draft'] and response['sent'] is False
     assert response['input_payload_sha256'] == input_digest(value)
     assert value == dict(kind='observed', chat_type='group' if is_group else 'private',
-        chat_name='example', context=[dict(text='「引用：给我看看」\n[图片]\n描述：一只猫', sender='friend', is_self=False,
+        chat_name='example', context=[dict(text='「引用：给我看看」\n[图片]\n'
+            '图片描述和识别文字为机器推测，可能有误；结合聊天文字谨慎回应。'
+            '无可靠依据时可不回复，勿仅凭识别断言图片加载失败或要求重发。\n描述：一只猫', sender='friend', is_self=False,
                                          timestamp=150, time_basis='first_observed')])
     assert 'perception diagnostics' in captured.err
     pipeline.perceive.assert_called_once_with()
@@ -300,7 +411,7 @@ def test_screenshot_cli_capture_failure_does_not_start_dh(endpoint, monkeypatch,
     client.assert_not_called()
 
 
-@pytest.mark.parametrize('fault', ['binding', 'request_id', 'digest', 'case_hash', 'sent', 'draft_only',
+@pytest.mark.parametrize('fault', ['binding', 'request_id', 'sent', 'draft_only',
                                  'empty_reply', 'status', 'failure', 'array', 'exception'])
 def test_invalid_results_close_runtime_without_fallback(endpoint, fault):
     client = DigitalHumanDraftClient(endpoint, 'test')
@@ -310,13 +421,6 @@ def test_invalid_results_close_runtime_without_fallback(endpoint, fault):
     assert client._runtime is None and runtime.closed
     with pytest.raises(DigitalHumanError, match='关闭'):
         client.draft({'text': 'hello'})
-
-
-def test_input_limit(endpoint):
-    client = DigitalHumanDraftClient(endpoint, 'test')
-    with pytest.raises(DigitalHumanError, match='输入超过'):
-        client.draft({'text': 'x' * (4 * 1024 * 1024)})
-    assert client._runtime is None
 
 
 def test_invalid_binding_and_timeout(endpoint):
@@ -358,7 +462,7 @@ class Client:
         prompt = messages[0]['content']
         if prompt == 'inspect':
             return json.dumps(dict(calls=self.calls, pid=os.getpid(),
-                contexts=self.contexts,
+                contexts=self.contexts, options=self.options,
                 instance=os.environ.get('DH_INSTANCE'), settings=os.environ.get('DH_SETTINGS_FILE')))
         self.calls.append(prompt)
         if prompt == 'actual generation evidence':
@@ -381,7 +485,10 @@ class Client:
             if self.mode == 'concurrent':
                 self.barrier.wait(timeout=2)
             return '{"events":[],"targets":[]}'
-        assert payload['context_analysis'] == dict(events=[], targets=[])
+        if self.direct_context:
+            assert 'context_analysis' not in payload
+        else:
+            assert payload['context_analysis'] == dict(events=[], targets=[])
         if self.mode == 'review_error':
             raise RuntimeError('review failed')
         if self.mode == 'first_block' or (self.mode == 'verify_block' and '独立质检员' in prompt):
@@ -390,13 +497,19 @@ class Client:
         return '{"decision":"allow","issues":[]}'
 
 class DraftRuntime:
-    def __init__(self, instance):
+    def __init__(self, instance, **options):
         from types import SimpleNamespace
         self.binding = dict(instance=instance, generator='g-test', data='d-test',
             config_sha256='a'*64, sources_sha256='b'*64)
         client = Client()
+        client.options = options
         self.client = client
         self.generator = SimpleNamespace(_llm=dict(private=client, group=client))
+
+    def update_sent_replies(self, evidence):
+        self.client.options['sent_replies'].extend(evidence)
+        self.binding = {**self.binding, 'sent_replies': dict(
+            sent_count=len(self.client.options['sent_replies']))}
 
     def draft(self, request):
         value = request['input']
@@ -406,6 +519,9 @@ class DraftRuntime:
         if mode == 'timeout':
             time.sleep(10)
         client = self.generator._llm['private']
+        self.client.direct_context = mode.startswith('direct_')
+        if self.client.direct_context:
+            mode = mode[len('direct_'):]
         self.client.mode = mode
         if mode == 'next_after_silence':
             self.client.release.set()
@@ -452,21 +568,69 @@ def test_shared_worker_isolates_imports_environment_and_reuses_runtime(worker_re
         _load_runtime(worker_repository / 'absent')
 
 
+def test_shared_worker_binds_send_evidence_and_generator_once(worker_repository, tmp_path, monkeypatch):
+    import sqlite3
+    database = tmp_path / 'cases.db'
+    with sqlite3.connect(database) as connection:
+        connection.execute('CREATE TABLE tick_log (id INTEGER PRIMARY KEY, created_at TEXT, '
+                           'session_input_messages_json TEXT, replies_sent_json TEXT, send_success INTEGER)')
+        connection.execute('INSERT INTO tick_log VALUES (1,?,?,?,1)',
+                           ('2026-07-06 12:00:00', json.dumps([dict(observed_at=1783310300.25,
+                               text='observed', sender='Alice', sender_type='other')]),
+                            '["known bot reply"]'))
+    history = tmp_path / 'history.db'
+    with sqlite3.connect(history) as connection:
+        connection.execute('CREATE TABLE chatrooms (id INTEGER PRIMARY KEY, chatroom_id TEXT)')
+        connection.execute('CREATE TABLE messages (chatroom_id INTEGER, observed_at REAL, create_time REAL, '
+                           'content TEXT, sender_display_name TEXT, is_self INTEGER)')
+        connection.execute("INSERT INTO chatrooms VALUES (1,'_chats_same_name_a')")
+        connection.execute("INSERT INTO messages VALUES (1,1783310300.25,NULL,'observed','Alice',0)")
+    monkeypatch.setattr('src.reply.digital_human._ROOT', tmp_path)
+    config_path = tmp_path / 'digital_human.json'
+    config_path.write_text(json.dumps(dict(repository=str(worker_repository), instance='test',
+        timeout_seconds=10, generator_ref='g-candidate', data_ref='d-online', sent_replies_db='cases.db', direct_context=True,
+        sent_replies_history_db='history.db', source_chat_ids={'_chats_same_name_a': 'group-1'})), encoding='utf-8')
+    with DigitalHumanDraftClient(**load_digital_human_config(config_path)) as client:
+        assert client.direct_context is True
+        first = client.draft(dict(text='first', chat_type='private'))
+        history.unlink()
+        with sqlite3.connect(database) as connection:
+            connection.execute('INSERT INTO tick_log VALUES (2,?,?,?,0)',
+                ('2026-07-06 12:01:00', json.dumps([dict(chatroom_id='group-1')]),
+                 '["new bot reply"]'))
+        second = client.draft(dict(text='second', chat_type='private'))
+        third = client.draft(dict(text='third', chat_type='private'))
+        assert 'sent_replies' not in first['binding']
+        assert second['binding']['sent_replies'] == dict(sent_count=2)
+        assert client.binding == second['binding'] == third['binding']
+        state = json.loads(client._runtime.generator._llm['private'].chat([dict(content='inspect')]))
+        assert state['options'] == dict(generator_ref='g-candidate', data_ref='d-online', sent_replies=[
+            dict(source_chat_id='group-1', timestamp=1783310400, text='known bot reply'),
+            dict(source_chat_id='group-1', timestamp=1783310460, text='new bot reply')])
+
+
 @pytest.mark.parametrize('mode,blocked,failed,review_calls', [
     ('allow', False, False, 3), ('first_block', True, False, 2),
     ('verify_block', True, False, 3), ('review_error', False, True, 2)])
-def test_shared_worker_preserves_review_decisions(worker_repository, mode, blocked, failed, review_calls):
-    generator = DigitalHumanReplyGenerator(worker_repository, 'test', timeout=10)
+@pytest.mark.parametrize('direct_context', [False, True])
+def test_shared_worker_preserves_review_decisions(worker_repository, monkeypatch, mode, blocked, failed,
+                                                review_calls, direct_context):
+    generator = DigitalHumanReplyGenerator(worker_repository, 'test', timeout=10, direct_context=direct_context)
+    if direct_context:
+        draft = generator._client.draft
+        monkeypatch.setattr(generator._client, 'draft', lambda online_input: draft(online_input, target_indices=[0]))
     try:
-        target = message(text=mode)
+        target = message(text=('direct_' if direct_context else '') + mode)
         replies = generator.generate([target], [target])
         assert replies == ([] if blocked or failed else ['synthetic draft'])
         assert bool(generator.last_exposure_block) is blocked
         assert generator.last_generation_failed is failed
         if not failed:
             assert generator.last_generation_trace[-1]['context_review']['prefetched'] is False
+            assert generator.last_generation_trace[-1]['context_review'].get('skipped', False) is direct_context
         state = json.loads(generator._client._runtime.generator._llm['private'].chat([dict(content='inspect')]))
-        assert len(state['calls']) == 1 + review_calls
+        assert len(state['calls']) == 1 + review_calls - int(direct_context)
+        assert len(state['contexts']) == (0 if direct_context else 1)
     finally:
         generator.close()
 
@@ -535,12 +699,6 @@ def test_shared_worker_failure_closes_process_without_fallback(worker_repository
     assert client._runtime is None and runtime._process is None and process.poll() is not None
     with pytest.raises(DigitalHumanError, match='关闭'):
         client.draft(dict(text='after', chat_type='private'))
-
-
-def test_digest_is_canonical_and_matches_dh_encoding():
-    assert input_digest({'text': '中文', 'kind': 'composed'}) == input_digest({'kind': 'composed', 'text': '中文'})
-    assert input_digest({'text': '中文'}) == hashlib.sha256(
-        json.dumps({'text': '中文'}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 @pytest.mark.parametrize('is_group', [False, True])
@@ -623,7 +781,7 @@ def test_invalid_bot_config_is_rejected(tmp_path, timeout):
     path = tmp_path / 'digital_human.json'
     path.write_text(json.dumps(dict(repository='../digital-human', instance='test', timeout_seconds=timeout)))
     with pytest.raises(DigitalHumanError):
-        load_digital_human_config(path)
+        DigitalHumanDraftClient(**load_digital_human_config(path))
 
 
 def test_missing_bot_config_explains_local_setup(tmp_path):

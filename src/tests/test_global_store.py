@@ -466,6 +466,7 @@ class TestGlobalStoreDbSync:
             contents = [m.content for m in result]
             assert "old msg" in contents
             assert "new msg" in contents
+            assert store.chats["TestGroup"].messages[-1].chatroom_id == "room_real@chatroom"
 
     def test_db_sync_uses_bulk_insert_not_per_message_select(self):
         """GlobalStore.save() 应该调 bulk_sync_chat，而不是逐条 SELECT。"""

@@ -74,6 +74,14 @@ class SystemAutomation(ABC):
         """读取系统剪贴板文本。"""
         pass
 
+    def backup_clipboard_image(self, dest_path: str) -> bool:
+        """若剪贴板当前内容是图片，保存为 PNG 到 dest_path；非图片或失败返回 False。"""
+        return False
+
+    def restore_clipboard_image(self, src_path: str) -> bool:
+        """从 PNG 文件还原图片剪贴板；失败返回 False。"""
+        return False
+
     @abstractmethod
     def capture_screen(
         self,
@@ -225,6 +233,45 @@ class MacOSSystemAutomation(SystemAutomation):
             return False, r.stderr.decode("utf-8", errors="replace")
         except Exception as e:
             return False, str(e)
+
+    def backup_clipboard_image(self, dest_path: str) -> bool:
+        """剪贴板是图片（PNG/TIFF）时备份为 PNG 文件，供发送后还原。"""
+        try:
+            import AppKit
+            pasteboard = AppKit.NSPasteboard.generalPasteboard()
+            data = pasteboard.dataForType_(AppKit.NSPasteboardTypePNG)
+            if data is None:
+                tiff = pasteboard.dataForType_(AppKit.NSPasteboardTypeTIFF)
+                if tiff is None:
+                    return False
+                image = AppKit.NSImage.alloc().initWithData_(tiff)
+                if image is None:
+                    return False
+                rep = AppKit.NSBitmapImageRep.imageRepWithData_(image.TIFFRepresentation())
+                data = rep.representationUsingType_properties_(
+                    AppKit.NSBitmapImageFileTypePNG, None
+                )
+                if data is None:
+                    return False
+            return bool(data.writeToFile_atomically_(dest_path, True))
+        except Exception as e:
+            _logger.warning("backup_clipboard_image 失败: %s", e)
+            return False
+
+    def restore_clipboard_image(self, src_path: str) -> bool:
+        """从备份的 PNG 文件还原图片剪贴板。"""
+        try:
+            import AppKit
+            data = AppKit.NSData.dataWithContentsOfFile_(src_path)
+            if data is None:
+                return False
+            pasteboard = AppKit.NSPasteboard.generalPasteboard()
+            pasteboard.clearContents()
+            pasteboard.setData_forType_(data, AppKit.NSPasteboardTypePNG)
+            return True
+        except Exception as e:
+            _logger.warning("restore_clipboard_image 失败: %s", e)
+            return False
 
     def capture_screen(
         self,

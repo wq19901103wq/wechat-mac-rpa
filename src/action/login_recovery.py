@@ -18,6 +18,7 @@ import Quartz
 from src.action.system_automation import MacOSSystemAutomation, SystemAutomation
 from src.models.base import OCRTextElement, Rect
 from src.ocr.vision_ocr import VisionOCREngine
+from src.perception.smart_pipeline import SmartPerceptionPipeline
 
 _logger = logging.getLogger("src.login_recovery")
 
@@ -42,8 +43,9 @@ class WeChatLoginHandler:
         self,
         capture_output: Optional[str] = None,
         login_keywords: Optional[List[str]] = None,
-        min_effective_width: int = 800,
-        min_effective_height: int = 600,
+        # 主界面最小尺寸与感知层共用同一真源，避免两处阈值漂移
+        min_effective_width: int = SmartPerceptionPipeline.MIN_WINDOW_WIDTH,
+        min_effective_height: int = SmartPerceptionPipeline.MIN_WINDOW_HEIGHT,
         automation: SystemAutomation | None = None,
     ):
         if capture_output is None:

@@ -2,7 +2,7 @@
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 import json
 import logging
 import os
@@ -14,10 +14,44 @@ from dotenv import load_dotenv
 
 import dh_profile
 from exposure_guard import ContextPrefetch, capture_generation, review_replies
+from sent_ledger import SentReplyLedger
 
 
 def emit(value):
     print(json.dumps(value, ensure_ascii=False, allow_nan=False), flush=True)
+
+
+@contextmanager
+def request_trace(directory, runtime, request, *, kind="draft"):
+    if directory is None:
+        yield None
+        return
+    from src.infrastructure.tracing import CaseTrace
+    trace = CaseTrace(Path(directory), {"case_id": request["request_id"]},
+        dict(kind=kind, data_ref=runtime.binding["data"],
+             candidate_ref=runtime.binding["generator"], cache={"enabled": False}))
+    try:
+        with trace.operation("generation" if kind == "draft" else kind, kind, 0, request):
+            yield trace.ref
+    except BaseException:
+        trace.finish("failed")
+        raise
+    else:
+        trace.finish("complete")
+
+
+def review_client(runtime, request, prefetch, config_key="review_model_config"):
+    config = request.get(config_key)
+    if config is None:
+        return runtime.generator._llm[request["client"]]
+    if not request.get("trace_dir") or request["review"].get("parallel", True) or prefetch is not None:
+        raise ValueError("模型配置覆盖仅支持独立的串行审查追踪")
+    if config_key == "context_model_config" and (request.get("review_model_config") is not None
+            or request["review"].get("direct_context")):
+        raise ValueError("上下文模型覆盖不能与整次模型覆盖或直接原文审查混用")
+    from src.infrastructure.config import load_settings
+    from src.llm import ChatClient
+    return ChatClient(load_settings(), config)
 
 
 def main():
@@ -27,6 +61,12 @@ def main():
     parser.add_argument("--instances-root", required=True)
     parser.add_argument("--env-file", required=True)
     parser.add_argument("--settings-file")
+    parser.add_argument("--generator")
+    parser.add_argument("--data")
+    parser.add_argument("--sent-replies-db", type=Path)
+    parser.add_argument("--sent-replies-history-db", type=Path)
+    parser.add_argument("--source-chat-ids", type=json.loads)
+    parser.add_argument("--trace-dir", type=Path)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     for key in tuple(os.environ):
@@ -39,12 +79,22 @@ def main():
         os.environ["DH_SETTINGS_FILE"] = args.settings_file
     sys.path.insert(0, str(args.repository.resolve()))
     runtime = None
+    ledger = None
     pool = ThreadPoolExecutor(max_workers=1)
     pending = active = None
     try:
         with redirect_stdout(sys.stderr):
             from src.generator.draft import DraftRuntime
-            runtime = DraftRuntime(args.instance)
+            options = {}
+            if args.generator is not None:
+                options['generator_ref'] = args.generator
+            if args.data is not None:
+                options['data_ref'] = args.data
+            if args.sent_replies_db is not None:
+                ledger = SentReplyLedger(args.sent_replies_db, args.source_chat_ids,
+                    history_database=args.sent_replies_history_db)
+                options['sent_replies'] = ledger.read()
+            runtime = DraftRuntime(args.instance, **options)
             try:
                 dh_profile.install(namespace="src")
             except (ModuleNotFoundError, AttributeError):
@@ -58,10 +108,20 @@ def main():
             request = None
             try:
                 if len(line) > 16 * 1024 * 1024 or not line.endswith(b"\n"):
+                    # 消费掉本行剩余字节直到换行符，重新对齐协议流，
+                    # 避免后续 readline 读到半行垃圾而连锁失败
+                    while True:
+                        chunk = sys.stdin.buffer.readline(16 * 1024 * 1024 + 1)
+                        if not chunk or chunk.endswith(b"\n"):
+                            break
                     raise ValueError("DH worker 输入超过协议限制")
                 request = json.loads(line)
                 with redirect_stdout(sys.stderr):
                     if request["operation"] == "draft":
+                        if ledger is not None:
+                            evidence = ledger.read()
+                            if evidence:
+                                runtime.update_sent_replies(evidence)
                         pending = None
                         review = request.get("review")
                         if review is not None and (active is None or active.future is None or active.future.done()):
@@ -69,10 +129,19 @@ def main():
                                 request["request"]["input"], review["target_indices"])
                         dh_profile.begin(request["request"]["request_id"])
                         try:
-                            with capture_generation(runtime.generator._llm,
-                                    on_messages=pending.start if pending is not None else None) as messages:
-                                result = runtime.draft(request["request"])
+                            with request_trace(request.get("trace_dir", args.trace_dir), runtime, request["request"]) as trace_ref:
+                                with capture_generation(runtime.generator._llm,
+                                        on_messages=pending.start if pending is not None else None) as messages:
+                                    result = runtime.draft(request["request"])
+                            if trace_ref is not None:
+                                result["trace_ref"] = trace_ref
                             result["generation_messages"] = messages
+                        except Exception:
+                            # draft 失败：取消预取并清空引用，避免陈旧 future 占住单线程池
+                            if pending is not None and pending.future is not None:
+                                pending.future.cancel()
+                            pending = active = None
+                            raise
                         finally:
                             dh_profile.finish()
                     elif request["operation"] == "chat":
@@ -80,8 +149,21 @@ def main():
                             request["messages"], **request["kwargs"])
                     elif request["operation"] == "review":
                         prefetch, pending = pending, None
-                        result = review_replies(runtime.generator._llm[request["client"]],
-                                                **request["review"], prefetch=prefetch)
+                        client = review_client(runtime, request, prefetch)
+                        context_options = {}
+                        if request.get("context_model_config") is not None:
+                            context_options["context_client"] = review_client(
+                                runtime, request, prefetch, "context_model_config")
+                        with request_trace(request.get("trace_dir"), runtime,
+                                dict(request_id=request.get("trace_case_id", request["id"]),
+                                     review=request["review"]), kind="review") as trace_ref:
+                            result = review_replies(client, **request["review"], prefetch=prefetch, **context_options)
+                        if trace_ref is not None:
+                            result["trace_ref"] = trace_ref
+                        if request.get("review_model_config") is not None:
+                            result["client_identity"] = client.cache_identity()
+                        if context_options:
+                            result["context_review"]["client_identity"] = context_options["context_client"].cache_identity()
                     else:
                         raise ValueError("未知 DH worker 操作")
                 emit(dict(id=request["id"], result=result))

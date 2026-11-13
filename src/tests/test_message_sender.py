@@ -20,10 +20,13 @@ class MockSystemAutomation(SystemAutomation):
         frontmost: bool = True,
         pasted_texts: list[str] | None = None,
         original_clipboard: str = "original_clipboard",
+        clipboard_image: bool = False,
     ):
         self.frontmost = frontmost
         self.pasted_texts = list(pasted_texts or [])
         self.original_clipboard = original_clipboard
+        self.clipboard_image = clipboard_image
+        self.image_backup_path: str | None = None
         self._pbpaste_call_index = 0
         self.calls: list[tuple[str, tuple, dict]] = []
 
@@ -63,12 +66,25 @@ class MockSystemAutomation(SystemAutomation):
         # 第一次调用：读取原始剪贴板；后续调用：读取验证时的输入框内容
         if self._pbpaste_call_index == 0:
             self._pbpaste_call_index += 1
+            if self.clipboard_image:
+                return False, "非文本剪贴板"
             return True, self.original_clipboard
         idx = self._pbpaste_call_index - 1
         self._pbpaste_call_index += 1
         if idx < len(self.pasted_texts):
             return True, self.pasted_texts[idx]
         return True, ""
+
+    def backup_clipboard_image(self, dest_path: str) -> bool:
+        self._log("backup_clipboard_image", dest_path)
+        if self.clipboard_image:
+            self.image_backup_path = dest_path
+            return True
+        return False
+
+    def restore_clipboard_image(self, src_path: str) -> bool:
+        self._log("restore_clipboard_image", src_path)
+        return True
 
     def capture_screen(
         self,
@@ -100,6 +116,24 @@ class TestPasteVerification:
         # 至少应包含 focus、paste、verify、return 相关的 automation 调用
         assert any(c[0] == "run_applescript" for c in automation.calls)
         assert any(c[0] == "get_clipboard_text" for c in automation.calls)
+
+    def test_clipboard_image_backup_and_restore(self):
+        """剪贴板是图片时：备份图片、发送后还原，不得用空文本覆盖。"""
+        automation = MockSystemAutomation(pasted_texts=["测试消息"], clipboard_image=True)
+        sender = WeChatMessageSender(automation=automation)
+
+        result = sender.send("测试消息")
+
+        assert result.success is True
+        assert automation.image_backup_path is not None
+        assert any(c[0] == "backup_clipboard_image" for c in automation.calls)
+        restore_index = next(
+            i for i, c in enumerate(automation.calls) if c[0] == "restore_clipboard_image"
+        )
+        # 恢复图片之后不得再调用 set_clipboard_text（那会清空用户的图片剪贴板）
+        assert not any(
+            c[0] == "set_clipboard_text" for c in automation.calls[restore_index:]
+        )
 
     def test_paste_verification_fail_then_retry(self):
         """paste 验证失败，重试后成功"""

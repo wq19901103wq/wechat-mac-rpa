@@ -1,17 +1,15 @@
 """Shared-checkout digital-human drafts; this module has no sending capability."""
 
-import hashlib
 import json
 import logging
 from functools import partial
 import math
-import re
 import time
 import uuid
 from pathlib import Path
 
 from src.models.base import ChatMessage, SenderType
-from src.reply.dh_runtime import WorkerRuntime
+from src.reply.dh_runtime import REVIEW_TIMEOUT_SECONDS, WorkerRuntime
 from src.reply.exposure_guard import capture_generation, review_replies
 
 
@@ -38,25 +36,18 @@ def load_digital_human_config(path: Path | None = None) -> dict:
     repository = Path(config["repository"])
     if not repository.is_absolute():
         repository = _ROOT / repository
-    instance, timeout = config["instance"], config["timeout_seconds"]
-    if (not isinstance(instance, str) or not instance.strip()
-            or type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0):
-        raise DigitalHumanError("digital-human 配置需要明确实例和有限正数超时")
-    result = {"repository": repository.resolve(), "instance": instance, "timeout": timeout}
+    result = {"repository": repository.resolve(), "instance": config["instance"],
+              "timeout": config["timeout_seconds"]}
     if config.get("review_client") is not None:
-        if config["review_client"] not in ("private", "group"):
-            raise DigitalHumanError("回复审查客户端必须为 private 或 group")
         result["review_client"] = config["review_client"]
-    for key in ("instances_root", "settings_file", "env_file"):
+    for key in ("instances_root", "settings_file", "env_file", "sent_replies_db", "sent_replies_history_db"):
         if config.get(key):
             value = Path(config[key]).expanduser()
             result[key] = (value if value.is_absolute() else _ROOT / value).resolve()
+    for key in ("generator_ref", "data_ref", "source_chat_ids", "direct_context"):
+        if config.get(key) is not None:
+            result[key] = config[key]
     return result
-
-
-def input_digest(value: dict) -> str:
-    encoded = json.dumps(value, sort_keys=True, ensure_ascii=False).encode()
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _message_text(message: ChatMessage) -> str:
@@ -67,6 +58,9 @@ def _message_text(message: ChatMessage) -> str:
         if label is None:
             raise DigitalHumanError(f"未知消息类型：{message.message_type}")
         parts = [f"[{label}]"]
+        if message.message_type in ("image", "mixed"):
+            parts.append("图片描述和识别文字为机器推测，可能有误；结合聊天文字谨慎回应。"
+                         "无可靠依据时可不回复，勿仅凭识别断言图片加载失败或要求重发。")
         if message.image_description.strip():
             parts.append(f"描述：{message.image_description}")
         if text.strip():
@@ -79,7 +73,8 @@ def _message_text(message: ChatMessage) -> str:
     return text
 
 
-def messages_input(messages: list[ChatMessage], *, source_chat_id: str | None = None, is_group: bool) -> dict:
+def messages_input(messages: list[ChatMessage], *, source_chat_id: str | None = None,
+                   source_chat_ids: dict | None = None, is_group: bool) -> dict:
     observed = any(message.observed_at is not None for message in messages)
     if not messages or type(is_group) is not bool or (not observed and not source_chat_id):
         raise DigitalHumanError("需要非空文本上下文、明确聊天类型和原始聊天 ID")
@@ -101,29 +96,42 @@ def messages_input(messages: list[ChatMessage], *, source_chat_id: str | None = 
             context[-1]["time_basis"] = "first_observed" if message.observed_at is not None else "recorded"
     value = {"kind": "observed" if observed else "messages", "chat_type": "group" if is_group else "private",
              "chat_name": chat_name, "context": context}
-    if not observed:
-        value["source_chat_id"] = source_chat_id
+    mapped_source = (source_chat_ids or {}).get(source_chat_id, source_chat_id)
+    if mapped_source is not None and (not isinstance(mapped_source, str) or not mapped_source.strip()):
+        raise DigitalHumanError("原始聊天 ID 映射必须是非空字符串")
+    if not observed and (not mapped_source or mapped_source.startswith("_chats_")):
+        raise DigitalHumanError("需要唯一的原始聊天 ID；不能使用未映射的 OCR 合成 ID")
+    if mapped_source and not mapped_source.startswith("_chats_"):
+        value["source_chat_id"] = mapped_source
     return value
 
 
 class DigitalHumanDraftClient:
     def __init__(self, repository: Path, instance: str, *, timeout: float = 600,
-                 instances_root=None, settings_file=None, env_file=None, review_client=None):
+                 instances_root=None, settings_file=None, env_file=None, review_client=None,
+                 generator_ref=None, data_ref=None, sent_replies_db=None, source_chat_ids=None,
+                 sent_replies_history_db=None, direct_context=False):
         started = time.perf_counter()
-        if (not isinstance(instance, str) or not instance or type(timeout) not in (int, float)
+        if (not isinstance(instance, str) or not instance.strip() or type(timeout) not in (int, float)
                 or timeout <= 0 or not math.isfinite(timeout)):
             raise DigitalHumanError("需要明确实例和有限正数超时")
         if review_client is not None and review_client not in ("private", "group"):
             raise DigitalHumanError("回复审查客户端必须为 private 或 group")
+        if type(direct_context) is not bool:
+            raise DigitalHumanError("直接原文审查选项必须为布尔值")
         repository = repository.resolve()
         self.instance, self.timeout = instance, timeout
         self.review_client = review_client
+        self.direct_context = direct_context
         self._runtime = None
         try:
             runtime = _load_runtime(repository)
+            options = {key: value for key, value in dict(generator_ref=generator_ref, data_ref=data_ref,
+                sent_replies_db=sent_replies_db, source_chat_ids=source_chat_ids,
+                sent_replies_history_db=sent_replies_history_db).items() if value is not None}
             self._runtime = runtime(instance, timeout=timeout,
                 instances_root=instances_root or repository / "instances",
-                settings_file=settings_file, env_file=env_file or repository / ".env")
+                settings_file=settings_file, env_file=env_file or repository / ".env", **options)
             self.binding = dict(self._runtime.binding)
             if (self.binding.get("instance") != instance
                     or not all(isinstance(self.binding.get(key), str) and self.binding[key]
@@ -141,21 +149,21 @@ class DigitalHumanDraftClient:
             raise DigitalHumanError("DH 草稿客户端已关闭")
         request_id = uuid.uuid4().hex
         try:
-            payload = json.dumps({"request_id": request_id, "input": online_input}, ensure_ascii=False,
-                                 allow_nan=False).encode() + b"\n"
-            if len(payload) > 4 * 1024 * 1024:
-                raise DigitalHumanError("DH 输入超过协议限制")
+            request = {"request_id": request_id, "input": online_input}
             clients = getattr(getattr(self._runtime, "generator", None), "_llm", {})
             with capture_generation(clients) as generation_messages:
-                if isinstance(self._runtime, WorkerRuntime) and target_indices is not None:
-                    response = self._runtime.draft(json.loads(payload), review=dict(
+                if isinstance(self._runtime, WorkerRuntime) and target_indices is not None and not self.direct_context:
+                    response = self._runtime.draft(request, review=dict(
                         client=self.review_client or online_input["chat_type"], target_indices=target_indices))
                 else:
-                    response = self._runtime.draft(json.loads(payload))
+                    response = self._runtime.draft(request)
             if not isinstance(response, dict):
                 raise DigitalHumanError("DH 返回无效结果对象")
             self._review_messages = response.pop("generation_messages", generation_messages)
-            if response.get("request_id") != request_id or response.get("binding") != self.binding:
+            binding = response.get("binding")
+            if (response.get("request_id") != request_id or not isinstance(binding, dict)
+                    or {key: value for key, value in binding.items() if key != "sent_replies"}
+                    != {key: value for key, value in self.binding.items() if key != "sent_replies"}):
                 raise DigitalHumanError("DH 响应身份或版本绑定不符")
             if response.get("status") == "error":
                 raise DigitalHumanError("DH 生成失败：" + str(response.get("error", "unknown")))
@@ -163,11 +171,9 @@ class DigitalHumanDraftClient:
             if (response.get("draft_only") is not True or response.get("sent") is not False
                     or not isinstance(replies, list) or len(replies) > 3
                     or any(not isinstance(reply, str) or not reply.strip() for reply in replies)
-                    or response.get("status") != ("draft" if replies else "silence")
-                    or response.get("input_payload_sha256") != input_digest(online_input)
-                    or not isinstance(response.get("input_sha256"), str)
-                    or not re.fullmatch(r"[0-9a-f]{64}", response["input_sha256"])):
+                    or response.get("status") != ("draft" if replies else "silence")):
                 raise DigitalHumanError("DH 草稿结果未通过协议核验")
+            self.binding = dict(binding)
             response["rpa_timing_ms"] = {"startup": self.startup_ms,
                                          "draft": (time.perf_counter() - started) * 1000}
             return response
@@ -182,11 +188,15 @@ class DigitalHumanDraftClient:
             raise DigitalHumanError("DH 草稿客户端已关闭")
         name = self.review_client or online_input["chat_type"]
         if isinstance(self._runtime, WorkerRuntime):
-            return self._runtime.call("review", client=name, review=dict(replies=replies,
+            # 审查用更短超时：下游挂起时最多拖 5 分钟而不是 draft 的完整超时
+            return self._runtime.call("review", timeout=min(self._runtime.timeout,
+                REVIEW_TIMEOUT_SECONDS), client=name, review=dict(replies=replies,
                 online_input=online_input, target_indices=target_indices,
-                generation_messages=self._review_messages))
+                generation_messages=self._review_messages, parallel=False,
+                direct_context=self.direct_context))
         client = self._runtime.generator._llm[name]
-        return review_replies(client, replies, online_input, target_indices, self._review_messages)
+        return review_replies(client, replies, online_input, target_indices, self._review_messages,
+                              parallel=False, direct_context=self.direct_context)
 
     def close(self):
         runtime, self._runtime = self._runtime, None
@@ -202,15 +212,22 @@ class DigitalHumanDraftClient:
 
 class DigitalHumanReplyGenerator:
     def __init__(self, repository: Path, instance: str, *, timeout: float = 900, tool_registry=None,
-                 instances_root=None, settings_file=None, env_file=None, review_client=None):
+                 instances_root=None, settings_file=None, env_file=None, review_client=None,
+                 generator_ref=None, data_ref=None, sent_replies_db=None, source_chat_ids=None,
+                 sent_replies_history_db=None, direct_context=False):
         self.repository, self.instance, self.timeout = repository, instance, timeout
         self.runtime_config = {key: value for key, value in dict(instances_root=instances_root,
-            settings_file=settings_file, env_file=env_file, review_client=review_client).items() if value is not None}
+            settings_file=settings_file, env_file=env_file, review_client=review_client,
+            generator_ref=generator_ref, data_ref=data_ref, sent_replies_db=sent_replies_db,
+            source_chat_ids=source_chat_ids, sent_replies_history_db=sent_replies_history_db,
+            direct_context=direct_context).items() if value is not None}
         self.tool_registry = tool_registry
         self.llm_client = None
         self._client = None
         self.last_generation_failed = False
         self.last_exposure_block = None
+        # 同一消息被审查连续拦截的计数，用于识别无限误拦并给出告警出口
+        self._exposure_block_streaks: dict = {}
         self.last_user_prompt = ""
         self.last_raw_response = ""
         self.last_generation_trace = []
@@ -248,10 +265,10 @@ class DigitalHumanReplyGenerator:
             if min(target_positions) < len(history) - 200:
                 raise DigitalHumanError("待回复消息超过 DH 的 200 条上下文限制")
             source_ids = {row.chatroom_id for row in history if row.chatroom_id}
-            if len(source_ids) > 1 or (not observed and
-                    (not source_ids or next(iter(source_ids)).startswith("_chats_"))):
+            if len(source_ids) > 1:
                 raise DigitalHumanError("需要唯一的原始聊天 ID；不能使用 OCR 合成 ID")
-            online_input = messages_input(history[-200:], source_chat_id=next(iter(source_ids), None), is_group=is_group)
+            online_input = messages_input(history[-200:], source_chat_id=next(iter(source_ids), None),
+                source_chat_ids=self.runtime_config.get("source_chat_ids"), is_group=is_group)
             target_indices = [position - max(0, len(history) - 200) for position in target_positions]
             cutoff = min(online_input["context"][index]["timestamp"] for index in target_indices) - 24 * 60 * 60
             retained = [index for index, row in enumerate(online_input["context"])
@@ -278,7 +295,15 @@ class DigitalHumanReplyGenerator:
                         self.last_exposure_block = {"rule": ",".join(dict.fromkeys(
                             issue["category"] for issue in review["issues"])),
                             "issues": review["issues"], "replies": list(response["replies"])}
-                        _logger.warning("大模型回复审查拦截，整轮不发送: %s", self.last_exposure_block)
+                        block_key = messages[-1].text if messages else ""
+                        streak = self._exposure_block_streaks.get(block_key, 0) + 1
+                        self._exposure_block_streaks[block_key] = streak
+                        if streak >= 3:
+                            # 同一消息被连续拦截：大概率是审查/生成僵局，需要人工出口
+                            _logger.error("大模型回复审查连续 %d 次拦截同一消息，可能存在无限误拦，请人工检查: %.60s",
+                                          streak, block_key)
+                        else:
+                            _logger.warning("大模型回复审查拦截，整轮不发送: %s", self.last_exposure_block)
                         self.last_generation_failed = False
                         return []
                 except Exception as exc:
@@ -287,6 +312,7 @@ class DigitalHumanReplyGenerator:
                     _logger.exception("大模型回复审查失败，本轮不发送，保留未读等待重试")
                     return []
             self.last_generation_failed = False
+            self._exposure_block_streaks.clear()
             return response["replies"]
         except Exception as exc:
             self.close()

@@ -7,6 +7,7 @@
 import logging
 import os
 import re
+import tempfile
 import threading
 import time
 import unicodedata
@@ -263,11 +264,23 @@ class WeChatMessageSender(MessageSender):
 
         # 保存用户原始剪贴板内容（尽力恢复文本内容）
         original_clipboard = ""
+        clipboard_read_ok = False
+        clipboard_image_backup: str | None = None
         t0 = time.time()
         try:
             ok, cb_text = self.automation.get_clipboard_text()
+            clipboard_read_ok = ok
             if ok:
                 original_clipboard = cb_text
+            else:
+                # 剪贴板可能是图片/文件：图片备份到临时文件，发送后还原，
+                # 避免 finally 用空文本覆盖用户的图片剪贴板
+                backup_path = os.path.join(
+                    tempfile.gettempdir(), f"wechat_sender_clipboard_{os.getpid()}.png"
+                )
+                if self.automation.backup_clipboard_image(backup_path):
+                    clipboard_image_backup = backup_path
+                    _logger.info("[Sender] 原始剪贴板非文本，已备份为图片")
             perf["read_clipboard"] = (time.time() - t0) * 1000
         except Exception as e:
             _logger.warning(f"[Sender] 读取原始剪贴板异常: {e}")
@@ -339,6 +352,13 @@ class WeChatMessageSender(MessageSender):
                 label = f"attempt {attempt + 1}/3"
                 is_match, pasted_text, err = _try_once(delay, label)
 
+                if is_match:
+                    # 粘贴与回车之间焦点可能被用户/系统切走：回车前二次确认前台仍是微信，
+                    # 避免把消息发到别的应用（verify 只验内容验不出错发窗口）
+                    focused, focus_err = self._ensure_wechat_frontmost()
+                    if not focused:
+                        _logger.error(f"[Sender] {label} 回车前焦点丢失，放弃本次发送并重试: {focus_err}")
+                        is_match, err = False, ""
                 if is_match:
                     rc, err = self._send_return()
                     if rc == 0:
@@ -421,8 +441,20 @@ class WeChatMessageSender(MessageSender):
         finally:
             # 恢复用户原始剪贴板内容
             try:
-                self.automation.set_clipboard_text(original_clipboard)
-                _logger.info("[Sender] 恢复剪贴板完成")
+                if clipboard_image_backup is not None:
+                    if self.automation.restore_clipboard_image(clipboard_image_backup):
+                        _logger.info("[Sender] 恢复剪贴板图片完成")
+                    else:
+                        _logger.warning("[Sender] 恢复剪贴板图片失败，用户原剪贴板内容可能丢失")
+                    try:
+                        os.remove(clipboard_image_backup)
+                    except OSError:
+                        pass
+                elif clipboard_read_ok:
+                    self.automation.set_clipboard_text(original_clipboard)
+                    _logger.info("[Sender] 恢复剪贴板完成")
+                else:
+                    _logger.warning("[Sender] 原始剪贴板既非文本也无法备份为图片，未能恢复")
             except Exception as e:
                 _logger.warning(f"[Sender] 恢复剪贴板异常: {e}")
 
