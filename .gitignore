@@ -54,12 +54,19 @@ prompts/persona.md
 *.sqlite
 *.sqlite3
 *.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite*-wal
+*.sqlite*-shm
+*.sqlite*-journal
 
 # PID 文件
 bot.pid
 
 # 敏感配置
 .env
+.env.*
 *.env
 !.env.example
 

@@ -1,5 +1,5 @@
 # Shared capture source is pinned with personal-context (docs/wechat-reader.md).
-wechat-reader[capture] @ git+https://github.com/wq19901103wq/wechat-reader.git@1fe7234493412fa6a0976739eb678169da5b2ab4
+wechat-reader[capture] @ git+https://github.com/wq19901103wq/wechat-reader.git@72d4e9f
 
 # 核心运行依赖
 openai>=2.45.0
@@ -9,6 +9,7 @@ python-dotenv>=1.2.1
 numpy==1.24.3
 sqlalchemy>=2.0.51,<3.0.0
 scikit-learn==1.2.1
+xgboost==2.1.4
 scipy>=1.10.0,<1.16
 Pillow>=12.3.0,<13.0.0
 requests>=2.34.2
