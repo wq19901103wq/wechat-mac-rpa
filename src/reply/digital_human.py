@@ -9,8 +9,7 @@ import uuid
 from pathlib import Path
 
 from src.models.base import ChatMessage, SenderType
-from src.reply.dh_runtime import REVIEW_TIMEOUT_SECONDS, WorkerRuntime
-from src.reply.exposure_guard import capture_generation, review_replies
+from src.reply.dh_runtime import WorkerRuntime
 
 
 _logger = logging.getLogger(__name__)
@@ -150,16 +149,14 @@ class DigitalHumanDraftClient:
         request_id = uuid.uuid4().hex
         try:
             request = {"request_id": request_id, "input": online_input}
-            clients = getattr(getattr(self._runtime, "generator", None), "_llm", {})
-            with capture_generation(clients) as generation_messages:
-                if isinstance(self._runtime, WorkerRuntime) and target_indices is not None and not self.direct_context:
-                    response = self._runtime.draft(request, review=dict(
-                        client=self.review_client or online_input["chat_type"], target_indices=target_indices))
-                else:
-                    response = self._runtime.draft(request)
+            if target_indices is not None and not self.direct_context:
+                response = self._runtime.draft(request, review=dict(
+                    client=self.review_client or online_input["chat_type"], target_indices=target_indices))
+            else:
+                response = self._runtime.draft(request)
             if not isinstance(response, dict):
                 raise DigitalHumanError("DH 返回无效结果对象")
-            self._review_messages = response.pop("generation_messages", generation_messages)
+            self._review_messages = response.pop("generation_messages", [])
             binding = response.get("binding")
             if (response.get("request_id") != request_id or not isinstance(binding, dict)
                     or {key: value for key, value in binding.items() if key != "sent_replies"}
@@ -187,16 +184,9 @@ class DigitalHumanDraftClient:
         if self._runtime is None:
             raise DigitalHumanError("DH 草稿客户端已关闭")
         name = self.review_client or online_input["chat_type"]
-        if isinstance(self._runtime, WorkerRuntime):
-            # 审查用更短超时：下游挂起时最多拖 5 分钟而不是 draft 的完整超时
-            return self._runtime.call("review", timeout=min(self._runtime.timeout,
-                REVIEW_TIMEOUT_SECONDS), client=name, review=dict(replies=replies,
-                online_input=online_input, target_indices=target_indices,
-                generation_messages=self._review_messages, parallel=False,
-                direct_context=self.direct_context))
-        client = self._runtime.generator._llm[name]
-        return review_replies(client, replies, online_input, target_indices, self._review_messages,
-                              parallel=False, direct_context=self.direct_context)
+        return self._runtime.review(name, replies=replies, online_input=online_input,
+            target_indices=target_indices, generation_messages=self._review_messages,
+            parallel=False, direct_context=self.direct_context)
 
     def close(self):
         runtime, self._runtime = self._runtime, None

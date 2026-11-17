@@ -10,7 +10,6 @@ import subprocess
 import sys
 import time
 from threading import Lock, Thread
-from types import SimpleNamespace
 import uuid
 
 
@@ -41,33 +40,27 @@ class WorkerRuntime:
         python = repository / ".venv/bin/python"
         command = [str(python) if python.is_file() else sys.executable,
                    "-u", str(Path(__file__).with_name("dh_worker.py")),
-                   "--repository", str(repository), "--instance", instance,
-                   "--instances-root", str(instances_root), "--env-file", str(env_file)]
-        if settings_file is not None:
-            command.extend(["--settings-file", str(settings_file)])
-        if generator_ref is not None:
-            command.extend(["--generator", generator_ref])
-        if data_ref is not None:
-            command.extend(["--data", data_ref])
-        if sent_replies_db is not None:
-            command.extend(["--sent-replies-db", str(sent_replies_db)])
-        if sent_replies_history_db is not None:
-            command.extend(["--sent-replies-history-db", str(sent_replies_history_db)])
-        if source_chat_ids is not None:
-            command.extend(["--source-chat-ids", json.dumps(source_chat_ids, ensure_ascii=False)])
+                   "--repository", str(repository)]
+        config = dict(instance=instance, instances_root=str(instances_root), env_file=str(env_file),
+            settings_file=str(settings_file) if settings_file is not None else None,
+            generator=generator_ref, data=data_ref,
+            sent_replies_db=str(sent_replies_db) if sent_replies_db is not None else None,
+            sent_replies_history_db=str(sent_replies_history_db) if sent_replies_history_db is not None else None,
+            source_chat_ids=source_chat_ids)
         try:
             self._process = subprocess.Popen(command, cwd=repository, stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
             Thread(target=self._read, args=(self._process.stdout,), daemon=True).start()
             Thread(target=self._logs, args=(self._process.stderr,), daemon=True).start()
+            self._send(dict(operation="initialize", protocol=1, config=config))
             ready = self._receive()
             if ready.get("type") != "ready" or ready.get("protocol") != 1:
                 raise RuntimeError("DH worker 初始化协议不符")
             self.binding = ready["binding"]
             self.source = ready["source"]
             self.client_identity = ready["client_identity"]
-            self.generator = SimpleNamespace(_llm={key: _RemoteClient(self, key, model)
-                for key, model in ready["models"].items()})
+            self.clients = {key: _RemoteClient(self, key, model)
+                for key, model in ready["models"].items()}
             _logger.info("DH worker ready pid=%s source=%s data=%s sent_replies=%s",
                          self._process.pid, self.source, self.binding.get("data"), self.binding.get("sent_replies"))
         except BaseException:
@@ -104,17 +97,19 @@ class WorkerRuntime:
             raise ValueError("DH worker 返回无效协议对象")
         return result
 
+    def _send(self, payload):
+        line = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode() + b"\n"
+        if len(line) > _LIMIT:
+            raise ValueError("DH worker 输入超过协议限制")
+        self._process.stdin.write(line)
+        self._process.stdin.flush()
+
     def call(self, operation, *, timeout=None, **payload):
         with self._lock:
             if self._process is None or self._process.poll() is not None:
                 raise RuntimeError("DH worker 已关闭")
             request_id = uuid.uuid4().hex
-            line = json.dumps(dict(id=request_id, operation=operation, **payload),
-                              ensure_ascii=False, allow_nan=False).encode() + b"\n"
-            if len(line) > _LIMIT:
-                raise ValueError("DH worker 输入超过协议限制")
-            self._process.stdin.write(line)
-            self._process.stdin.flush()
+            self._send(dict(id=request_id, operation=operation, **payload))
             wait = self.timeout if timeout is None else timeout
             deadline = time.monotonic() + wait
             while True:
@@ -137,6 +132,10 @@ class WorkerRuntime:
     def draft(self, request, *, review=None):
         return self.call("draft", request=request, review=review)
 
+    def review(self, client, **review):
+        return self.call("review", timeout=min(self.timeout, REVIEW_TIMEOUT_SECONDS),
+                         client=client, review=review)
+
     def close(self):
         process, self._process = self._process, None
         if process is None:
@@ -155,5 +154,8 @@ class WorkerRuntime:
             except ProcessLookupError:
                 pass
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 process.wait()

@@ -1,0 +1,21 @@
+{
+  "self_sender": "wxid_example_self",
+  "common_talker": "example-common-group",
+  "target_chat": "example-target-group",
+  "target_chat_name": "示例群",
+  "review_chat_label": "示例群",
+  "common_chat_name": "另一个示例群",
+  "pending_confirmation_server_ids": ["pending-example"],
+  "user_confirmed_human_server_ids": ["confirmed-example"],
+  "user_confirmation": {
+    "status": "用户已确认真人",
+    "confirmed_on": "2026-01-01",
+    "source": "合成测试确认记录",
+    "scope": "仅用于示例，不确认邻近 Bot 日志文本"
+  },
+  "account_evidence": "合成测试：用户确认示例账号气泡为真人手发",
+  "identity_policy": "Example account bubbles are user-confirmed human-authored; example-bot is the Bot identity",
+  "selected_anchors": ["anchor-example"],
+  "excluded_exposed_anchors": ["excluded-example"],
+  "case_ids": ["case-example"]
+}

@@ -1,5 +1,4 @@
 from scripts.discover_youzi_judge_candidates import discover_candidates
-from scripts.seal_youzi_stage2_quota import SELF_SENDER
 
 
 def _message(
@@ -31,13 +30,14 @@ def _discover(messages, *, exposed_events=None):
     )
 
 
-def test_discovers_one_verified_reply_per_clean_event():
+def test_discovers_one_verified_reply_per_clean_event(synthetic_private_case_config):
+    self_sender = synthetic_private_case_config["self_sender"]
     messages = [
         _message(1, "甲"),
         _message(2, "乙"),
         _message(3, "丙"),
-        _message(4, "真人回复", sender=SELF_SENDER, is_send=True),
-        _message(5, "同事件第二条", sender=SELF_SENDER, is_send=True),
+        _message(4, "真人回复", sender=self_sender, is_send=True),
+        _message(5, "同事件第二条", sender=self_sender, is_send=True),
     ]
 
     cases, _ = _discover(messages)
@@ -47,12 +47,13 @@ def test_discovers_one_verified_reply_per_clean_event():
     assert cases[0]["review"]["tail_three_messages_text_only"] is True
 
 
-def test_excludes_event_with_media_in_last_three_messages():
+def test_excludes_event_with_media_in_last_three_messages(synthetic_private_case_config):
+    self_sender = synthetic_private_case_config["self_sender"]
     messages = [
         _message(1, "甲"),
         _message(2, "图片", local_type=3),
         _message(3, "丙"),
-        _message(4, "真人回复", sender=SELF_SENDER, is_send=True),
+        _message(4, "真人回复", sender=self_sender, is_send=True),
     ]
 
     cases, exclusions = _discover(messages)
@@ -61,12 +62,13 @@ def test_excludes_event_with_media_in_last_three_messages():
     assert exclusions["no_clean_text_tail"] == 1
 
 
-def test_excludes_previously_exposed_event_cluster():
+def test_excludes_previously_exposed_event_cluster(synthetic_private_case_config):
+    self_sender = synthetic_private_case_config["self_sender"]
     messages = [
         _message(1, "甲"),
         _message(2, "乙"),
         _message(3, "丙"),
-        _message(4, "真人回复", sender=SELF_SENDER, is_send=True),
+        _message(4, "真人回复", sender=self_sender, is_send=True),
     ]
     first, _ = _discover(messages)
 

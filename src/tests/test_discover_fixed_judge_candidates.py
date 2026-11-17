@@ -13,7 +13,7 @@ from scripts.discover_fixed_judge_candidates import (
 
 
 def test_common_candidate_skips_dirty_first_reply_and_uses_later_clean_reply(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, synthetic_private_case_config
 ):
     source = tmp_path / "common.json"
     messages = [
@@ -36,7 +36,7 @@ def test_common_candidate_skips_dirty_first_reply_and_uses_later_clean_reply(
             "localType": 1,
             "content": "第一条真人回复",
             "isSend": True,
-            "senderUsername": stage2.SELF_SENDER,
+            "senderUsername": synthetic_private_case_config["self_sender"],
         },
         {
             "createTime": 102,
@@ -64,11 +64,11 @@ def test_common_candidate_skips_dirty_first_reply_and_uses_later_clean_reply(
             "localType": 1,
             "content": "第二条真人回复",
             "isSend": True,
-            "senderUsername": stage2.SELF_SENDER,
+            "senderUsername": synthetic_private_case_config["self_sender"],
         },
     ]
     source.write_text(
-        json.dumps({"talker": stage2.COMMON_TALKER, "messages": messages}),
+        json.dumps({"talker": synthetic_private_case_config["common_talker"], "messages": messages}),
         encoding="utf-8",
     )
     monkeypatch.setattr(stage2, "COMMON_SOURCE", source)
@@ -83,10 +83,12 @@ def test_common_candidate_skips_dirty_first_reply_and_uses_later_clean_reply(
     assert cases[0]["reply"] == "第二条真人回复"
 
 
-def test_extra_common_source_has_separate_ids_and_preserves_original(tmp_path, monkeypatch):
+def test_extra_common_source_has_separate_ids_and_preserves_original(
+    tmp_path, monkeypatch, synthetic_private_case_config,
+):
     def write_source(path):
         path.write_text(json.dumps({
-            "talker": stage2.COMMON_TALKER,
+            "talker": synthetic_private_case_config["common_talker"],
             "messages": [
                 {"createTime": 100, "localType": 1, "content": "甲", "isSend": False,
                  "senderUsername": "member"},
@@ -95,7 +97,7 @@ def test_extra_common_source_has_separate_ids_and_preserves_original(tmp_path, m
                 {"createTime": 102, "localType": 1, "content": "丙", "isSend": False,
                  "senderUsername": "member"},
                 {"createTime": 103, "localType": 1, "content": path.stem, "isSend": True,
-                 "senderUsername": stage2.SELF_SENDER},
+                 "senderUsername": synthetic_private_case_config["self_sender"]},
             ],
         }), encoding="utf-8")
 
@@ -112,7 +114,8 @@ def test_extra_common_source_has_separate_ids_and_preserves_original(tmp_path, m
 
     cases = _common_candidates(set())
 
-    original_event = hashlib.sha256(f"{stage2.COMMON_TALKER}:0".encode()).hexdigest()[:20]
+    common_talker = synthetic_private_case_config["common_talker"]
+    original_event = hashlib.sha256(f"{common_talker}:0".encode()).hexdigest()[:20]
     assert len(cases) == 2
     assert cases[0]["event_cluster"] == original_event
     assert cases[1]["event_cluster"] != original_event

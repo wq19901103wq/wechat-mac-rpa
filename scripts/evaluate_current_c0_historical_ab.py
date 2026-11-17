@@ -27,6 +27,7 @@ from scripts.evaluate_human_ai_judge import (  # noqa: E402
     build_api_judge_messages,
     load_volcengine_credentials,
 )
+from scripts.private_case_config import load_private_case_config  # noqa: E402
 from scripts.seal_youzi_stage2_quota import load_source as load_youzi_source  # noqa: E402
 from src.memory.engine import MemoryEngine  # noqa: E402
 from src.models.base import ChatMessage, SenderType  # noqa: E402
@@ -38,18 +39,6 @@ from src.utils.xml_utils import _extract_xml_text  # noqa: E402
 
 OUT_DIR = ROOT / "data/reports/private/current_c0_historical_ab_v1"
 MANIFEST = ROOT / "data/reports/private/adversarial_stage2_holdout_v1/manifest.json"
-CASE_IDS = (
-    "531482b0ef7752db9758",
-    "5988ce82d12154b255be",
-    "44ac3f322623582db2b7",
-    "29488f5f4508f25469b5",
-    "d417b65bb84974c22b2a",
-    "75dc8a9bbeb3530040d4",
-    "93cf5f1173f81a13e5ed",
-    "5879d944b785ef716d81",
-    "ea2ad63d7f09a4f21dbb",
-    "ed953cc318e15c7338c7",
-)
 SIDE_EFFECT_TOOLS = {
     "tuya_control_device",
     "tuya_set_temperature",
@@ -118,13 +107,14 @@ def _load_cases(
 def _source(case: dict[str, Any]) -> tuple[list[dict[str, Any]], str, str]:
     source_path = str(case["source_path"])
     if "adversarial_stage2_youzi_quota_v1" in source_path:
+        config = load_private_case_config('target_chat', 'target_chat_name')
         messages, _ = load_youzi_source()
-        return messages, "柚子群2", "50570746383@chatroom"
+        return messages, config['target_chat_name'], config['target_chat']
     path = ROOT / source_path
     payload = json.loads(path.read_text(encoding="utf-8"))
     session = payload.get("session") or {}
     if case.get("specified_group") == "correct_common_prosperity_with_luxixi":
-        chat_name = "共同富裕群（含鲁西西）"
+        chat_name = load_private_case_config('common_chat_name')['common_chat_name']
     else:
         chat_name = str(session.get("displayName") or session.get("nickname") or path.stem.removeprefix("群聊_"))
     chatroom_id = str(payload.get("talker") or session.get("wxid") or case.get("chat_id") or "")
@@ -523,7 +513,10 @@ def main() -> int:
     parser.add_argument("--skip-judge", action="store_true", help="skip the auxiliary external Judge")
     args = parser.parse_args()
     _load_env()
-    cases = _load_cases(args.manifest, None if args.all_cases else CASE_IDS)
+    cases = _load_cases(
+        args.manifest,
+        None if args.all_cases else tuple(load_private_case_config('case_ids')['case_ids']),
+    )
     if args.case_indices:
         selected_indices = {int(value) for value in args.case_indices.split(",")}
         cases = [case for position, case in enumerate(cases, 1) if position in selected_indices]

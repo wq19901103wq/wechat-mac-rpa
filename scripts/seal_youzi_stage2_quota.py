@@ -7,13 +7,18 @@ import hashlib
 import json
 import os
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
-
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts.private_case_config import load_private_case_config  # noqa: E402
+
+
 SOURCE_DIR = (
     ROOT
     / "data/private_benchmarks/judge_bot_adversarial_sources/20260818_account20b2"
@@ -22,43 +27,9 @@ SOURCE_GLOB = "youzi_group_2_page5k_*.json"
 PRIVATE_DIR = ROOT / "data/reports/private/adversarial_stage2_youzi_quota_v1"
 MANIFEST_PATH = PRIVATE_DIR / "manifest.json"
 PUBLIC_SUMMARY_PATH = PRIVATE_DIR / "public_summary.json"
-SELF_SENDER = "wxid_qxlscnesk92m21"
-TARGET_CHAT = "50570746383@chatroom"
 EVENT_GAP_SECONDS = 30 * 60
 CUTOFF_EXCLUSIVE = int(
     datetime(2026, 7, 10, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
-)
-
-# These private source anchors identify the 20 human-reviewed replies. Reply text is
-# deliberately resolved from the source snapshot rather than copied into code.
-SELECTED_ANCHORS = (
-    "5599976154269606335",
-    "1196854352504676302",
-    "238441494770924081",
-    "3283629197011986",
-    "3773519698045537627",
-    "5950391076098854335",
-    "4293487878351394628",
-    "4470158650780945036",
-    "3243490984093356024",
-    "5207484378887320651",
-    "3451941504539409196",
-    "3862333470637439378",
-    "5797356078175731114",
-    "2161006476473867699",
-    "6799380797379049500",
-    "7523466520713697417",
-    "7851754303805153643",
-    "5303900675262217968",
-    "2415534627179261928",
-    "3737354607511576418",
-)
-
-EXCLUDED_EXPOSED_ANCHORS = (
-    "2673061487083439128",
-    "26272553820882380",
-    "8471931083934576241",
-    "5633454371123083136",
 )
 
 EXPOSURE_ROOTS = (
@@ -157,6 +128,7 @@ def _message_key(message: dict[str, Any]) -> str:
 
 
 def load_source() -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    config = load_private_case_config('target_chat')
     unique: dict[str, dict[str, Any]] = {}
     source_files: list[dict[str, str]] = []
     paths = sorted(SOURCE_DIR.glob(SOURCE_GLOB))
@@ -165,7 +137,7 @@ def load_source() -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     for path in paths:
         raw = path.read_bytes()
         payload = json.loads(raw)
-        if str(payload.get("talker")) != TARGET_CHAT:
+        if str(payload.get("talker")) != config['target_chat']:
             raise RuntimeError(f"unexpected talker in {path.name}")
         source_files.append(
             {
@@ -222,8 +194,9 @@ def _private_message(message: dict[str, Any]) -> dict[str, Any]:
 def select_cases(
     messages: list[dict[str, Any]], exposed: set[str]
 ) -> list[dict[str, Any]]:
-    selected = set(SELECTED_ANCHORS)
-    excluded = set(EXCLUDED_EXPOSED_ANCHORS)
+    config = load_private_case_config('excluded_exposed_anchors', 'selected_anchors', 'self_sender')
+    selected = set(config['selected_anchors'])
+    excluded = set(config['excluded_exposed_anchors'])
     if selected & excluded:
         raise RuntimeError("selected and excluded anchors overlap")
 
@@ -240,7 +213,7 @@ def select_cases(
     cases: list[dict[str, Any]] = []
     event_hashes: set[str] = set()
     normalized_replies: set[str] = set()
-    for anchor in SELECTED_ANCHORS:
+    for anchor in config['selected_anchors']:
         event, index = resolved[anchor]
         message = event[index]
         timestamp = int(message.get("createTime") or 0)
@@ -249,7 +222,7 @@ def select_cases(
         normalized_reply = _normalize(reply)
         if not (
             message.get("isSend")
-            and str(message.get("senderUsername") or "") == SELF_SENDER
+            and str(message.get("senderUsername") or "") == config['self_sender']
             and int(message.get("localType") or 0) == 1
             and reply
             and timestamp < CUTOFF_EXCLUSIVE
@@ -297,6 +270,7 @@ def _atomic_private_write(path: Path, payload: dict[str, Any]) -> None:
 
 
 def build() -> tuple[dict[str, Any], dict[str, Any]]:
+    config = load_private_case_config('excluded_exposed_anchors')
     messages, source_files = load_source()
     exposed, files_scanned = collect_exposed_fingerprints()
     cases = select_cases(messages, exposed)
@@ -333,8 +307,8 @@ def build() -> tuple[dict[str, Any], dict[str, Any]]:
                 max(selected_timestamps), ZoneInfo("Asia/Shanghai")
             ).date().isoformat(),
         },
-        "excluded_exposed_anchor_count": len(EXCLUDED_EXPOSED_ANCHORS),
-        "excluded_exposed_anchors": list(EXCLUDED_EXPOSED_ANCHORS),
+        "excluded_exposed_anchor_count": len(config['excluded_exposed_anchors']),
+        "excluded_exposed_anchors": list(config['excluded_exposed_anchors']),
         "cases": cases,
     }
     _atomic_private_write(MANIFEST_PATH, manifest)

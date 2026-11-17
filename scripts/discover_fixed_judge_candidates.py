@@ -18,6 +18,7 @@ from scripts.discover_youzi_judge_candidates import (
     _load_reply_exposure,
     _walk_reply_strings,
 )
+from scripts.private_case_config import load_private_case_config
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -117,6 +118,7 @@ def _common_candidates(exposed_fingerprints: set[str]) -> list[dict[str, Any]]:
 def _common_candidates_from_source(
     exposed_fingerprints: set[str], source: Path, namespace: str | None = None
 ) -> list[dict[str, Any]]:
+    config = load_private_case_config('common_talker')
     stage2.COMMON_SOURCE = source
     cases = _attach_common_event_numbers(
         stage2._common_candidates(
@@ -133,11 +135,11 @@ def _common_candidates_from_source(
         {
             **case,
             "internal_id": hashlib.sha256(
-                f"{stage2.COMMON_TALKER}:{namespace}:"
+                f"{config['common_talker']}:{namespace}:"
                 f"{case['event_cluster_source_number']}:{case['timestamp']}:{case['reply']}".encode()
             ).hexdigest()[:20],
             "event_cluster": hashlib.sha256(
-                f"{stage2.COMMON_TALKER}:{namespace}:"
+                f"{config['common_talker']}:{namespace}:"
                 f"{case['event_cluster_source_number']}".encode()
             ).hexdigest()[:20],
         }
@@ -151,9 +153,10 @@ def _attach_common_event_numbers(
     """Resolve the private event ordinal without changing the stable event hash."""
     if all("event_cluster_source_number" in case for case in cases):
         return cases
+    config = load_private_case_config('common_talker')
     raw = json.loads((source or stage2.COMMON_SOURCE).read_text(encoding="utf-8"))
     by_hash = {
-        hashlib.sha256(f"{stage2.COMMON_TALKER}:{event_number}".encode()).hexdigest()[:20]: event_number
+        hashlib.sha256(f"{config['common_talker']}:{event_number}".encode()).hexdigest()[:20]: event_number
         for event_number, _event in stage2._event_rows(raw.get("messages") or [])
     }
     return [

@@ -17,6 +17,7 @@ from src.reply.digital_human import (
     DigitalHumanDraftClient, DigitalHumanError, DigitalHumanReplyGenerator,
     load_digital_human_config, messages_input,
 )
+from src.reply.exposure_guard import review_replies
 
 def input_digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -103,20 +104,22 @@ class FakeRuntime:
         if instance == "bad_ready":
             self.binding["instance"] = "wrong"
 
-    def draft(self, request):
+    def draft(self, request, *, review=None):
         assert not self.closed
         value = request['input']
         fault = value.get('fault')
         if fault == 'exception':
             raise RuntimeError('unavailable')
         replies = [] if fault == 'silence' else ['synthetic draft']
+        generation_messages = []
         if replies:
-            self.generator._llm[value.get('chat_type', 'private')].chat([
+            generation_messages = [
                 dict(role='system', content='Test persona and verified evidence'),
-                dict(role='user', content=json.dumps(value))], json_mode=True)
+                dict(role='user', content=json.dumps(value))]
+            self.generator._llm[value.get('chat_type', 'private')].chat(generation_messages, json_mode=True)
         response = dict(request_id=request['request_id'], binding=dict(self.binding), draft_only=True, sent=False,
             status='draft' if replies else 'silence', replies=replies, input_sha256='c'*64,
-            input_payload_sha256=input_digest(value), pid=os.getpid())
+            input_payload_sha256=input_digest(value), pid=os.getpid(), generation_messages=generation_messages)
         changes = {'binding': ('binding', dict(self.binding, generator='wrong')),
             'request_id': ('request_id', 'wrong'), 'sent': ('sent', True), 'draft_only': ('draft_only', False),
             'empty_reply': ('replies', ['']), 'status': ('status', 'silence'), 'failure': ('status', 'error')}
@@ -124,6 +127,9 @@ class FakeRuntime:
             key, changed = changes[fault]
             response[key] = changed
         return [] if fault == 'array' else response
+
+    def review(self, client, **review):
+        return review_replies(self.generator._llm[client], **review)
 
     def close(self):
         self.closed = True
@@ -556,7 +562,7 @@ def test_shared_worker_isolates_imports_environment_and_reuses_runtime(worker_re
         second = client.draft(dict(text='second', chat_type='private'))
         assert first['pid'] == second['pid'] == process.pid != os.getpid()
         assert client.review(second['replies'], dict(chat_type='private'), [0])['decision'] == 'allow'
-        state = json.loads(runtime.generator._llm['private'].chat([dict(content='inspect')]))
+        state = json.loads(runtime.clients['private'].chat([dict(content='inspect')]))
         assert state['instance'] == 'test' and state['settings'] == 'worker-settings'
         assert state['calls'].count('actual generation evidence') == 2
         assert len(state['calls']) == 5
@@ -566,6 +572,31 @@ def test_shared_worker_isolates_imports_environment_and_reuses_runtime(worker_re
     from src.reply.digital_human import _load_runtime
     with pytest.raises(DigitalHumanError, match='缺失'):
         _load_runtime(worker_repository / 'absent')
+
+
+def test_shared_worker_keeps_private_configuration_out_of_process_arguments(worker_repository, monkeypatch):
+    from src.reply import dh_runtime
+    commands = []
+    popen = dh_runtime.subprocess.Popen
+
+    def record(command, **kwargs):
+        commands.append(command)
+        return popen(command, **kwargs)
+
+    monkeypatch.setattr(dh_runtime.subprocess, 'Popen', record)
+    with DigitalHumanDraftClient(worker_repository, 'private-instance-marker', timeout=10,
+            instances_root=worker_repository / 'private-instance-materials',
+            settings_file=worker_repository / 'private-settings-marker',
+            source_chat_ids={'private-alias-marker': 'private-source-marker'}) as client:
+        assert client.draft(dict(text='first', chat_type='private'))['replies'] == ['synthetic draft']
+        arguments = ' '.join(commands[0])
+        assert 'private-' not in arguments
+        assert '--env-file' not in arguments
+        assert '--source-chat-ids' not in arguments
+        assert not hasattr(client._runtime, 'generator')
+        state = json.loads(client._runtime.clients['private'].chat([dict(content='inspect')]))
+        assert state['instance'] == 'private-instance-marker'
+        assert state['settings'] == str(worker_repository / 'private-settings-marker')
 
 
 def test_shared_worker_binds_send_evidence_and_generator_once(worker_repository, tmp_path, monkeypatch):
@@ -603,7 +634,7 @@ def test_shared_worker_binds_send_evidence_and_generator_once(worker_repository,
         assert 'sent_replies' not in first['binding']
         assert second['binding']['sent_replies'] == dict(sent_count=2)
         assert client.binding == second['binding'] == third['binding']
-        state = json.loads(client._runtime.generator._llm['private'].chat([dict(content='inspect')]))
+        state = json.loads(client._runtime.clients['private'].chat([dict(content='inspect')]))
         assert state['options'] == dict(generator_ref='g-candidate', data_ref='d-online', sent_replies=[
             dict(source_chat_id='group-1', timestamp=1783310400, text='known bot reply'),
             dict(source_chat_id='group-1', timestamp=1783310460, text='new bot reply')])
@@ -628,7 +659,7 @@ def test_shared_worker_preserves_review_decisions(worker_repository, monkeypatch
         if not failed:
             assert generator.last_generation_trace[-1]['context_review']['prefetched'] is False
             assert generator.last_generation_trace[-1]['context_review'].get('skipped', False) is direct_context
-        state = json.loads(generator._client._runtime.generator._llm['private'].chat([dict(content='inspect')]))
+        state = json.loads(generator._client._runtime.clients['private'].chat([dict(content='inspect')]))
         assert len(state['calls']) == 1 + review_calls - int(direct_context)
         assert len(state['contexts']) == (0 if direct_context else 1)
     finally:
@@ -651,7 +682,7 @@ def test_shared_worker_reanalyzes_final_wiki_material(prefetch_generator):
         assert generator.generate([target], [target]) == ['synthetic draft']
         review = generator.last_generation_trace[-1]
         assert review['context_review']['prefetched'] is False
-        state = json.loads(generator._client._runtime.generator._llm['private'].chat([dict(content='inspect')]))
+        state = json.loads(generator._client._runtime.clients['private'].chat([dict(content='inspect')]))
         assert len(state['contexts']) == 2
         assert state['contexts'][-1]['generation_material'][-1]['content'] == 'final Wiki result'
     finally:
@@ -699,6 +730,30 @@ def test_shared_worker_failure_closes_process_without_fallback(worker_repository
     assert client._runtime is None and runtime._process is None and process.poll() is not None
     with pytest.raises(DigitalHumanError, match='关闭'):
         client.draft(dict(text='after', chat_type='private'))
+
+
+def test_worker_close_reaps_process_that_exits_before_sigkill(monkeypatch):
+    import subprocess
+    from src.reply import dh_runtime
+
+    process = Mock(pid=12345)
+    process.wait.side_effect = [subprocess.TimeoutExpired('worker', 2),
+                               subprocess.TimeoutExpired('worker', 2), 0]
+    killpg = Mock(side_effect=[None, ProcessLookupError()])
+    monkeypatch.setattr(dh_runtime.os, 'killpg', killpg)
+    runtime = dh_runtime.WorkerRuntime.__new__(dh_runtime.WorkerRuntime)
+    runtime._process = process
+
+    runtime.close()
+    runtime.close()
+
+    assert runtime._process is None
+    process.stdin.close.assert_called_once()
+    assert process.wait.call_count == 3
+    assert killpg.call_args_list == [
+        ((process.pid, dh_runtime.signal.SIGTERM),),
+        ((process.pid, dh_runtime.signal.SIGKILL),),
+    ]
 
 
 @pytest.mark.parametrize('is_group', [False, True])

@@ -11,10 +11,10 @@ from typing import Any, Iterable
 
 from scripts.audit_judge_split_exposure import collect_exposure
 from scripts.build_adversarial_stage2_holdout import _near_duplicate
+from scripts.private_case_config import load_private_case_config
 from scripts.seal_youzi_stage2_quota import (
     CUTOFF_EXCLUSIVE,
     EVENT_GAP_SECONDS,
-    SELF_SENDER,
     _event_hash,
     _events,
     _fingerprint,
@@ -90,6 +90,7 @@ def discover_candidates(
     exposed_reply_fingerprints: set[str],
     comparison_replies: list[str],
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    config = load_private_case_config('self_sender')
     cases: list[dict[str, Any]] = []
     selected_replies: list[str] = []
     exclusions = {
@@ -112,7 +113,7 @@ def discover_candidates(
             reply = str(message.get("content") or "").strip()
             if (
                 message.get("isSend")
-                and str(message.get("senderUsername") or "") == SELF_SENDER
+                and str(message.get("senderUsername") or "") == config['self_sender']
                 and int(message.get("localType") or 0) == 1
                 and reply
                 and int(message.get("createTime") or 0) < CUTOFF_EXCLUSIVE

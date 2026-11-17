@@ -57,32 +57,39 @@ def review_client(runtime, request, prefetch, config_key="review_model_config"):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repository", type=Path, required=True)
-    parser.add_argument("--instance", required=True)
-    parser.add_argument("--instances-root", required=True)
-    parser.add_argument("--env-file", required=True)
-    parser.add_argument("--settings-file")
-    parser.add_argument("--generator")
-    parser.add_argument("--data")
-    parser.add_argument("--sent-replies-db", type=Path)
-    parser.add_argument("--sent-replies-history-db", type=Path)
-    parser.add_argument("--source-chat-ids", type=json.loads)
-    parser.add_argument("--trace-dir", type=Path)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
-    for key in tuple(os.environ):
-        if key.startswith("DH_"):
-            del os.environ[key]
-    load_dotenv(args.env_file, override=True)
-    os.environ.update(DH_INSTANCE=args.instance, DH_INSTANCES_ROOT=args.instances_root,
-                      DH_ENV_FILE=args.env_file)
-    if args.settings_file is not None:
-        os.environ["DH_SETTINGS_FILE"] = args.settings_file
-    sys.path.insert(0, str(args.repository.resolve()))
     runtime = None
     ledger = None
     pool = ThreadPoolExecutor(max_workers=1)
     pending = active = None
     try:
+        line = sys.stdin.buffer.readline(16 * 1024 * 1024 + 1)
+        if len(line) > 16 * 1024 * 1024 or not line.endswith(b"\n"):
+            raise ValueError("DH worker 初始化输入超过协议限制或不完整")
+        initialization = json.loads(line)
+        if (not isinstance(initialization, dict) or initialization.get("operation") != "initialize"
+                or initialization.get("protocol") != 1 or not isinstance(initialization.get("config"), dict)):
+            raise ValueError("DH worker 初始化协议不符")
+        config = initialization["config"]
+        fields = {"instance", "instances_root", "env_file", "settings_file", "generator", "data",
+                  "sent_replies_db", "sent_replies_history_db", "source_chat_ids"}
+        if set(config) != fields or any(not isinstance(config[key], str) or not config[key].strip()
+                for key in ("instance", "instances_root", "env_file")):
+            raise ValueError("DH worker 初始化配置不符")
+        vars(args).update(config)
+        for key in ("sent_replies_db", "sent_replies_history_db"):
+            if getattr(args, key) is not None:
+                setattr(args, key, Path(getattr(args, key)))
+        for key in tuple(os.environ):
+            if key.startswith("DH_"):
+                del os.environ[key]
+        load_dotenv(args.env_file, override=True)
+        os.environ.update(DH_INSTANCE=args.instance, DH_INSTANCES_ROOT=args.instances_root,
+                          DH_ENV_FILE=args.env_file)
+        if args.settings_file is not None:
+            os.environ["DH_SETTINGS_FILE"] = args.settings_file
+        sys.path.insert(0, str(args.repository.resolve()))
         with redirect_stdout(sys.stderr):
             from src.generator.draft import DraftRuntime
             options = {}
@@ -129,7 +136,7 @@ def main():
                                 request["request"]["input"], review["target_indices"])
                         dh_profile.begin(request["request"]["request_id"])
                         try:
-                            with request_trace(request.get("trace_dir", args.trace_dir), runtime, request["request"]) as trace_ref:
+                            with request_trace(request.get("trace_dir"), runtime, request["request"]) as trace_ref:
                                 with capture_generation(runtime.generator._llm,
                                         on_messages=pending.start if pending is not None else None) as messages:
                                     result = runtime.draft(request["request"])

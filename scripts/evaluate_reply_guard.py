@@ -250,7 +250,7 @@ def evaluate(args, cfg, runtime, *, initialization_seconds=0.0):
             if direct_context:
                 review['direct_context'] = True
             if prefetch_context:
-                client = runtime.generator._llm[client_name]
+                client = runtime.clients[client_name]
                 with ThreadPoolExecutor(max_workers=1) as pool:
                     prefetch = ContextPrefetch(pool, client, case['conversation'], case['target_indices'])
                     prefetch.start(case['generation_material'])

@@ -6,6 +6,19 @@ RPA 直接调用配置指定的 DH checkout，不复制其生成代码。默认�
 
 需要使用支持 `src.generator.draft.DraftRuntime` 和 `observed` 截图输入协议的 DH 版本，并在该 checkout 中准备好 production 实例材料和依赖。公开仓库的任意版本不一定具备这些入口；本仓库不包含 DH 私有材料或未发布源码。子进程优先使用 DH 自己的 `.venv/bin/python`，没有时使用宿主解释器。
 
+### RPA 与 DH 的调用边界
+
+| 层 | 职责与接口 |
+|---|---|
+| RPA Bot 与 `DigitalHumanDraftClient` | 准备当前聊天输入、核验实例与版本绑定、请求草稿和审核；发送及发送确认仍归 RPA |
+| `WorkerRuntime` | 管理子进程、超时和 JSONL 协议；提供 `draft(request, review=...)` 与 `review(client, ...)`，诊断代码可用 `clients` 调用远端客户端 |
+| `dh_worker.py` | 集中适配 DH 内部对象，装配发送账本，捕获生成材料并执行审核；宿主不再模拟或访问 DH 的 `generator._llm` |
+| DH `DraftRuntime` | 加载选定实例、背景和本人示例并生成草稿；不发送微信消息 |
+
+worker 启动后，第一条 JSONL 消息为 `initialize`，携带协议版本和本机配置，成功后才返回 `ready`。实例名称、私有目录、环境文件位置、聊天 ID 映射通过标准输入管道传递，不再放入 worker 的进程启动参数。完整绑定仍保留在本机草稿结果中。
+
+进程隔离解决两仓包名和 DH 环境冲突；数据权限仍来自本机配置。原始聊天、人物资料、环境文件、发送账本与完整追踪材料只放被 Git 忽略的私有目录，公开代码和测试使用合成数据。模型与工具仍按原配置使用必要上下文，本次整理不扩大数据访问范围。
+
 ## 本机配置
 
 1. 安装 RPA 和 DH 各自的依赖。
@@ -70,6 +83,12 @@ RPA 直接调用配置指定的 DH checkout，不复制其生成代码。默认�
 `--history-account`、`--history-source` 提供账号和来源绑定。适配器只读同一份原始库，
 不复制消息。DH 输入使用 `observed` 格式，RPA 行号不作为 DH 冻结消息 ID。
 重新建立虚拟环境时需重新安装共用包，截图和原有结构化输入模式不依赖该包。
+
+## 历史离线案例的私有配置
+
+历史选题、身份复核与离线对比脚本通过 `scripts/private_case_config.py` 读取本机的 `data/private_benchmarks/case_config.json`。账号、群标识、身份确认记录和固定选集保存在这个被 Git 忽略的文件中，权限为 `0600`；它与 DH 的生产实例配置分开。
+
+新环境可参考 `config/private_case_config.json.example` 的合成结构准备配置，复现原有案例需恢复原始私有配置和材料。模块导入及支持 `--help` 的帮助入口不依赖私有配置；实际读取私有案例时缺少配置或必要字段会明确报错，不会猜测身份或重新选题。此次迁移保持既有身份规则、案例编号和封存数据不变。
 
 ## 发布前检查
 

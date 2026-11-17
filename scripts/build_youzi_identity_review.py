@@ -9,60 +9,33 @@ import html
 import json
 import os
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts.private_case_config import load_private_case_config  # noqa: E402
+
+
 SOURCE_DIR = ROOT / "data/private_benchmarks/judge_bot_adversarial_sources/20260818_account20b2"
 SOURCE_GLOB = "youzi_group_2_page5k_*.json"
 MEMBERS_PATH = SOURCE_DIR / "youzi_group_2_members.json"
 LOG_PATHS = (ROOT / "data/logs/execution.jsonl.1", ROOT / "data/logs/execution.jsonl")
 OUTPUT_DIR = ROOT / "data/reports/private/youzi_identity_review_v1"
-TARGET_CHAT = "50570746383@chatroom"
-TARGET_CHAT_NAME = "柚子群2"
-SELF_SENDER = "wxid_qxlscnesk92m21"
 EVENT_GAP_SECONDS = 30 * 60
 COLLISION_SECONDS = 10
 MIN_QUALIFIED_EVENTS = 7
 TZ = ZoneInfo("Asia/Shanghai")
-PENDING_CONFIRMATION_SERVER_IDS = (
-    "5278612712177403526",
-    "2039022965924810276",
-)
-
-USER_CONFIRMED_HUMAN_SERVER_IDS = frozenset(
-    {
-        "3732567670665303461",
-        "843420406975241680",
-        "9137219767804178700",
-        "1626499216596393015",
-        "7126116260531224334",
-        "5798129490978776406",
-        "6400981979698023102",
-        "3292358293486618907",
-        "3945254183450218897",
-        "8471931083934576241",
-        "8856833826520054690",
-        "615155421457512356",
-        "5278612712177403526",
-        "2039022965924810276",
-    }
-)
-KNOWN_EXPOSED_SERVER_IDS = USER_CONFIRMED_HUMAN_SERVER_IDS
-USER_CONFIRMATION = {
-    "status": "用户已确认真人",
-    "confirmed_on": "2026-08-19",
-    "source": "用户明确确认：柚子群中显示为王芊的气泡均为真人手发；Bot 只使用不爱说话身份在该群回复",
-    "scope": "适用于目标柚子群中 senderUsername 为王芊账号的气泡；不爱说话身份不得作为真人标准；不确认邻近 Bot 日志文本",
-}
 
 
 def is_user_confirmed_human(message: dict[str, Any]) -> bool:
+    config = load_private_case_config('self_sender')
     return (
-        str(message.get("senderUsername") or "") == SELF_SENDER
+        str(message.get("senderUsername") or "") == config['self_sender']
         and bool(message.get("isSend"))
     )
 
@@ -83,13 +56,14 @@ def _message_key(message: dict[str, Any]) -> str:
 
 
 def load_messages(source_dir: Path = SOURCE_DIR) -> list[dict[str, Any]]:
+    config = load_private_case_config('target_chat')
     unique: dict[str, dict[str, Any]] = {}
     paths = sorted(source_dir.glob(SOURCE_GLOB))
     if not paths:
         raise RuntimeError("Youzi source pages are missing")
     for path in paths:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if str(payload.get("talker")) != TARGET_CHAT:
+        if str(payload.get("talker")) != config['target_chat']:
             raise RuntimeError(f"unexpected talker in {path.name}")
         for message in payload.get("messages") or []:
             unique.setdefault(_message_key(message), message)
@@ -104,8 +78,9 @@ def load_messages(source_dir: Path = SOURCE_DIR) -> list[dict[str, Any]]:
 
 
 def load_members(path: Path = MEMBERS_PATH) -> dict[str, str]:
+    config = load_private_case_config('self_sender')
     payload = json.loads(path.read_text(encoding="utf-8"))
-    result: dict[str, str] = {SELF_SENDER: "我"}
+    result: dict[str, str] = {config['self_sender']: "我"}
     for member in payload.get("members") or []:
         wxid = str(member.get("wxid") or "")
         if not wxid:
@@ -129,6 +104,7 @@ def _parse_log_time(value: str) -> float:
 
 
 def load_successful_sends(log_paths: tuple[Path, ...] = LOG_PATHS) -> list[dict[str, Any]]:
+    config = load_private_case_config('target_chat_name')
     ticks: dict[str, dict[str, Any]] = {}
     for path in log_paths:
         if not path.exists():
@@ -153,7 +129,7 @@ def load_successful_sends(log_paths: tuple[Path, ...] = LOG_PATHS) -> list[dict[
         layout = tick.get("layout") or {}
         decision = tick.get("decision") or {}
         send = tick.get("send") or {}
-        if layout.get("chat_name") != TARGET_CHAT_NAME or send.get("success") is not True:
+        if layout.get("chat_name") != config['target_chat_name'] or send.get("success") is not True:
             continue
         reply_text = str(decision.get("reply_text") or "").strip()
         if not reply_text or not send.get("ts"):
@@ -198,6 +174,7 @@ def build_candidates(
     members: dict[str, str],
     collision_seconds: int = COLLISION_SECONDS,
 ) -> list[dict[str, Any]]:
+    config = load_private_case_config('account_evidence', 'self_sender', 'user_confirmation')
     event_by_key: dict[str, list[dict[str, Any]]] = {}
     for event in split_events(messages):
         for message in event:
@@ -205,7 +182,7 @@ def build_candidates(
 
     candidates: list[dict[str, Any]] = []
     for message in messages:
-        if str(message.get("senderUsername") or "") != SELF_SENDER:
+        if str(message.get("senderUsername") or "") != config['self_sender']:
             continue
         if not bool(message.get("isSend")) or int(message.get("localType") or 0) != 1:
             continue
@@ -228,15 +205,15 @@ def build_candidates(
                     "server_id": str(item.get("serverId") or ""),
                     "timestamp": int(item.get("createTime") or 0),
                     "sender": members.get(sender, sender or "未知成员"),
-                    "is_self": sender == SELF_SENDER,
+                    "is_self": sender == config['self_sender'],
                     "content": _display_content(item),
                 }
             )
         candidates.append(
             {
                 "case_id": f"youzi-identity-{len(candidates) + 1:02d}",
-                "identity_status": USER_CONFIRMATION["status"] if confirmed else "身份无法确认",
-                "identity_confirmation": USER_CONFIRMATION if confirmed else None,
+                "identity_status": config['user_confirmation']["status"] if confirmed else "身份无法确认",
+                "identity_confirmation": config['user_confirmation'] if confirmed else None,
                 "event_hash": _event_hash(event),
                 "wechat_message": {
                     "server_id": server_id,
@@ -245,7 +222,7 @@ def build_candidates(
                     "content": content,
                     "sender": "我",
                     "account_evidence": (
-                        "用户已明确确认：目标柚子群内王芊账号气泡均为真人手发"
+                        config['account_evidence']
                         if confirmed
                         else "isSend=1 + 本人 senderUsername，仅证明从本人微信账号发出"
                     ),
@@ -264,8 +241,9 @@ def build_candidates(
 def build_pending_confirmation_candidates(
     messages: list[dict[str, Any]],
     members: dict[str, str],
-    server_ids: tuple[str, ...] = PENDING_CONFIRMATION_SERVER_IDS,
+    server_ids: tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
+    config = load_private_case_config('pending_confirmation_server_ids', 'self_sender', 'user_confirmed_human_server_ids')
     event_by_key: dict[str, list[dict[str, Any]]] = {}
     message_by_server_id: dict[str, dict[str, Any]] = {}
     for event in split_events(messages):
@@ -276,8 +254,10 @@ def build_pending_confirmation_candidates(
                 message_by_server_id[server_id] = message
 
     candidates = []
+    if server_ids is None:
+        server_ids = tuple(config['pending_confirmation_server_ids'])
     for server_id in server_ids:
-        if server_id in USER_CONFIRMED_HUMAN_SERVER_IDS:
+        if server_id in config['user_confirmed_human_server_ids']:
             continue
         message = message_by_server_id.get(server_id)
         if message is None:
@@ -291,7 +271,7 @@ def build_pending_confirmation_candidates(
                     "server_id": str(item.get("serverId") or ""),
                     "timestamp": int(item.get("createTime") or 0),
                     "sender": members.get(sender, sender or "未知成员"),
-                    "is_self": sender == SELF_SENDER,
+                    "is_self": sender == config['self_sender'],
                     "content": _display_content(item),
                 }
             )
@@ -303,7 +283,7 @@ def build_pending_confirmation_candidates(
                 "event_hash": _event_hash(event),
                 "timestamp": timestamp,
                 "observed_at": _format_ts(timestamp),
-                "sender": members.get(SELF_SENDER, "我"),
+                "sender": members.get(config['self_sender'], "我"),
                 "content": _display_content(message),
                 "account_evidence": "isSend=1 只证明从本人微信账号发出，不能证明是真人手发",
                 "event_context": context,
@@ -313,8 +293,9 @@ def build_pending_confirmation_candidates(
 
 
 def assess_qualification(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    config = load_private_case_config('user_confirmation', 'user_confirmed_human_server_ids')
     confirmed = [
-        case for case in candidates if case["identity_status"] == USER_CONFIRMATION["status"]
+        case for case in candidates if case["identity_status"] == config['user_confirmation']["status"]
     ]
     by_event: dict[str, list[dict[str, Any]]] = {}
     for case in confirmed:
@@ -327,12 +308,12 @@ def assess_qualification(candidates: list[dict[str, Any]]) -> dict[str, Any]:
         unexposed = [
             case
             for case in event_cases
-            if case["wechat_message"]["server_id"] not in KNOWN_EXPOSED_SERVER_IDS
+            if case["wechat_message"]["server_id"] not in config['user_confirmed_human_server_ids']
         ]
         exposed_ids.extend(
             case["wechat_message"]["server_id"]
             for case in event_cases
-            if case["wechat_message"]["server_id"] in KNOWN_EXPOSED_SERVER_IDS
+            if case["wechat_message"]["server_id"] in config['user_confirmed_human_server_ids']
         )
         if not unexposed:
             continue
@@ -346,7 +327,7 @@ def assess_qualification(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     duplicate = set(duplicate_event_ids)
     for case in candidates:
         server_id = case["wechat_message"]["server_id"]
-        if case["identity_status"] != USER_CONFIRMATION["status"]:
+        if case["identity_status"] != config['user_confirmation']["status"]:
             status = "身份未确认，不可入题"
         elif server_id in exposed:
             status = "真人身份已确认，但原话已暴露，不可作独立题"
@@ -400,6 +381,7 @@ def render_report(
     candidates: list[dict[str, Any]],
     pending_candidates: list[dict[str, Any]] | None = None,
 ) -> str:
+    config = load_private_case_config('review_chat_label', 'user_confirmation', 'user_confirmed_human_server_ids')
     qualification = assess_qualification(candidates)
     pending_cards = []
     for index, case in enumerate(pending_candidates or [], 1):
@@ -427,7 +409,7 @@ def render_report(
     public_candidates = [
         case
         for case in candidates
-        if case["wechat_message"]["server_id"] in KNOWN_EXPOSED_SERVER_IDS
+        if case["wechat_message"]["server_id"] in config['user_confirmed_human_server_ids']
     ]
     for index, case in enumerate(public_candidates, 1):
         bubble = case["wechat_message"]
@@ -453,7 +435,7 @@ def render_report(
                 <div class="note">send.success=true；不等于已证明对应上方微信气泡</div></div>'''
         else:
             bot_evidence = '<div class="evidence bot"><div class="label">Bot 发送日志</div><div class="note">该已确认真人气泡附近没有成功发送日志；身份仅来自用户按 serverId 的明确确认。</div></div>'
-        confirmed = case["identity_status"] == USER_CONFIRMATION["status"]
+        confirmed = case["identity_status"] == config['user_confirmation']["status"]
         cards.append(
             f'''<section class="case" id="case-{index}">
               <div class="case-head"><b>#{index}</b><span class="status {'confirmed' if confirmed else ''}">{html.escape(case["identity_status"])}</span></div>
@@ -473,7 +455,7 @@ def render_report(
             </section>'''
         )
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>柚子群身份人工确认</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(config['review_chat_label'])}身份人工确认</title>
 <style>
 :root{{--bg:#0d1117;--card:#161b22;--line:#30363d;--text:#e6edf3;--muted:#8b949e;--yellow:#d29922;--blue:#58a6ff}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}}
@@ -485,9 +467,9 @@ def render_report(
 details{{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}}summary{{cursor:pointer;color:var(--blue)}}.chat,.trace{{margin-top:10px}}
 .msg{{background:#22272e;border-radius:9px;padding:8px 10px;margin:7px 15% 7px 0;white-space:pre-wrap}}.msg.self{{margin-left:15%;margin-right:0;background:#17385d}}.trace div{{margin:5px 0}}hr{{border:0;border-top:1px solid var(--line);margin:10px 0}}
 @media(max-width:600px){{.wrap{{padding:10px}}.case{{padding:12px}}.msg{{margin-right:7%}}.msg.self{{margin-left:7%}}.reply{{font-size:16px}}}}
-</style></head><body><main class="wrap"><h1>柚子群2 · 身份人工确认</h1>
+</style></head><body><main class="wrap"><h1>{html.escape(config['review_chat_label'])}2 · 身份人工确认</h1>
 <p class="intro">用途仅是核实“本人账号消息”究竟是真人手发还是 Bot 代发。本页不运行 Judge，也没有生成 C0 对照。</p>
-<div class="summary"><b>{qualification['confirmed_bubbles']}</b> 条已确认真人气泡 · {qualification['distinct_confirmed_events']} 个独立事件 · {qualification['qualified_independent_event_representatives']} 个含未暴露真人回复的事件<br><span class="note">身份规则已满足当前柚子群基础门槛。未公开内容继续保持隐藏；本页不形成 Judge 成绩。</span></div>
+<div class="summary"><b>{qualification['confirmed_bubbles']}</b> 条已确认真人气泡 · {qualification['distinct_confirmed_events']} 个独立事件 · {qualification['qualified_independent_event_representatives']} 个含未暴露真人回复的事件<br><span class="note">身份规则已满足当前{html.escape(config['review_chat_label'])}基础门槛。未公开内容继续保持隐藏；本页不形成 Judge 成绩。</span></div>
 <h2>待你确认的全新事件</h2>
 <p class="intro">下面只展示候选证据。请按 serverId 确认是否为你真人手发；未确认前不会进入题集。</p>
 {''.join(pending_cards) if pending_cards else '<div class="summary">当前没有待确认候选。</div>'}
@@ -501,14 +483,15 @@ def write_outputs(
     output_dir: Path = OUTPUT_DIR,
     pending_candidates: list[dict[str, Any]] | None = None,
 ) -> None:
+    config = load_private_case_config('identity_policy', 'target_chat', 'target_chat_name', 'user_confirmation')
     output_dir.mkdir(parents=True, exist_ok=True)
     qualification = assess_qualification(candidates)
     manifest = {
         "schema_version": 2,
-        "chat_name": TARGET_CHAT_NAME,
-        "talker": TARGET_CHAT,
-        "identity_policy": "in the target Youzi group, Wang Qian account bubbles are user-confirmed human-authored; the Bu Ai Shuo Hua identity is the Bot identity",
-        "user_confirmation": USER_CONFIRMATION,
+        "chat_name": config['target_chat_name'],
+        "talker": config['target_chat'],
+        "identity_policy": config['identity_policy'],
+        "user_confirmation": config['user_confirmation'],
         "collision_seconds": COLLISION_SECONDS,
         "candidate_count": len(candidates),
         "pending_confirmation_count": len(pending_candidates or []),

@@ -1,6 +1,7 @@
 import json
 
 from scripts import build_youzi_identity_review as review
+from scripts.private_case_config import load_private_case_config
 
 
 def _message(server_id, timestamp, sender, content, *, is_send=0):
@@ -14,10 +15,13 @@ def _message(server_id, timestamp, sender, content, *, is_send=0):
     }
 
 
-def test_target_self_bubble_is_confirmed_by_user_identity_rule_and_keeps_context():
+def test_target_self_bubble_is_confirmed_by_user_identity_rule_and_keeps_context(
+    synthetic_private_case_config,
+):
+    self_sender = synthetic_private_case_config["self_sender"]
     messages = [
         _message("before", 100, "wxid_friend", "前一句"),
-        _message("self", 105, review.SELF_SENDER, "本人账号气泡", is_send=1),
+        _message("self", 105, self_sender, "本人账号气泡", is_send=1),
         _message("after", 110, "wxid_friend", "后一句"),
     ]
     sends = [{
@@ -34,7 +38,7 @@ def test_target_self_bubble_is_confirmed_by_user_identity_rule_and_keeps_context
     candidates = review.build_candidates(
         messages,
         sends,
-        {review.SELF_SENDER: "我", "wxid_friend": "鲁西西"},
+        {self_sender: "我", "wxid_friend": "鲁西西"},
     )
 
     assert len(candidates) == 1
@@ -47,10 +51,13 @@ def test_target_self_bubble_is_confirmed_by_user_identity_rule_and_keeps_context
     assert case["bot_send"]["delta_seconds"] == 2.0
 
 
-def test_explicit_user_confirmation_is_traceable_and_does_not_claim_bot_text():
-    server_id = next(iter(review.USER_CONFIRMED_HUMAN_SERVER_IDS))
+def test_explicit_user_confirmation_is_traceable_and_does_not_claim_bot_text(
+    synthetic_private_case_config,
+):
+    self_sender = synthetic_private_case_config["self_sender"]
+    server_id = synthetic_private_case_config["user_confirmed_human_server_ids"][0]
     candidates = review.build_candidates(
-        [_message(server_id, 105, review.SELF_SENDER, "真人气泡", is_send=1)],
+        [_message(server_id, 105, self_sender, "真人气泡", is_send=1)],
         [{
             "tick_id": "tick-1",
             "timestamp": 105.0,
@@ -61,20 +68,21 @@ def test_explicit_user_confirmation_is_traceable_and_does_not_claim_bot_text():
             "decision_reason": "理由",
             "production_context": [],
         }],
-        {review.SELF_SENDER: "我"},
+        {self_sender: "我"},
     )
 
     case = candidates[0]
     assert case["identity_status"] == "用户已确认真人"
-    assert case["identity_confirmation"]["confirmed_on"] == "2026-08-19"
+    assert case["identity_confirmation"]["confirmed_on"] == "2026-01-01"
     assert case["wechat_message"]["content"] == "真人气泡"
     assert case["bot_send"]["reply_text"] == "不同的 Bot 日志文本"
     assert "不确认邻近 Bot 日志文本" in case["identity_confirmation"]["scope"]
 
 
-def test_report_does_not_publish_new_hidden_human_content():
+def test_report_does_not_publish_new_hidden_human_content(synthetic_private_case_config):
+    self_sender = synthetic_private_case_config["self_sender"]
     candidates = review.build_candidates(
-        [_message("self", 105, review.SELF_SENDER, "本人账号气泡", is_send=1)],
+        [_message("self", 105, self_sender, "本人账号气泡", is_send=1)],
         [{
             "tick_id": "tick-1",
             "timestamp": 105.0,
@@ -85,7 +93,7 @@ def test_report_does_not_publish_new_hidden_human_content():
             "decision_reason": "理由",
             "production_context": [],
         }],
-        {review.SELF_SENDER: "我"},
+        {self_sender: "我"},
     )
 
     page = review.render_report(candidates)
@@ -95,15 +103,18 @@ def test_report_does_not_publish_new_hidden_human_content():
     assert "其余真人原文不在网页展开" in page
 
 
-def test_pending_confirmation_candidates_are_not_scored_and_keep_full_context():
+def test_pending_confirmation_candidates_are_not_scored_and_keep_full_context(
+    synthetic_private_case_config,
+):
+    self_sender = synthetic_private_case_config["self_sender"]
     messages = [
         _message("before", 100, "wxid_friend", "前一句"),
-        _message("pending", 105, review.SELF_SENDER, "待确认原话", is_send=1),
+        _message("pending", 105, self_sender, "待确认原话", is_send=1),
         _message("after", 110, "wxid_friend", "后一句"),
     ]
     pending = review.build_pending_confirmation_candidates(
         messages,
-        {review.SELF_SENDER: "本人昵称", "wxid_friend": "鲁西西"},
+        {self_sender: "本人昵称", "wxid_friend": "鲁西西"},
         ("pending",),
     )
 
@@ -118,7 +129,9 @@ def test_pending_confirmation_candidates_are_not_scored_and_keep_full_context():
         assert expected in page
 
 
-def test_write_outputs_does_not_touch_existing_stage2_manifest(tmp_path):
+def test_write_outputs_does_not_touch_existing_stage2_manifest(
+    tmp_path, synthetic_private_case_config,
+):
     old_manifest = tmp_path / "existing-stage2.json"
     old_manifest.write_text("do-not-change", encoding="utf-8")
     output_dir = tmp_path / "identity-review"
@@ -127,7 +140,7 @@ def test_write_outputs_does_not_touch_existing_stage2_manifest(tmp_path):
 
     manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["candidate_count"] == 0
-    assert "Wang Qian account bubbles" in manifest["identity_policy"]
+    assert manifest["identity_policy"] == synthetic_private_case_config["identity_policy"]
     assert manifest["stage2_manifest_updated"] is False
     assert manifest["judge_run"] is False
     assert manifest["pending_confirmation_count"] == 0
@@ -146,7 +159,8 @@ def test_real_confirmation_rule_has_hidden_independent_events():
     assert qualification["qualified_independent_event_representatives"] == 38
     assert qualification["gap"] == 0
     assert qualification["ready_to_seal"] is True
-    assert set(review.USER_CONFIRMED_HUMAN_SERVER_IDS) == set(
+    config = load_private_case_config("user_confirmed_human_server_ids")
+    assert set(config["user_confirmed_human_server_ids"]) == set(
         qualification["exposed_server_ids"]
     )
     assert len(qualification["selected_server_ids"]) == len(

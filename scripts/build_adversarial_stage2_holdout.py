@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from scripts import build_adversarial_hidden_holdout as stage1
+from scripts.private_case_config import load_private_case_config
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,8 +38,6 @@ PUBLIC_SUMMARY_PATH = PRIVATE_DIR / "public_summary.json"
 TARGET_RESOLUTION_DIR = ROOT / "data/reports/private/adversarial_stage2_target_resolution_candidates_v1"
 TARGET_RESOLUTION_MANIFEST_PATH = TARGET_RESOLUTION_DIR / "manifest.json"
 
-SELF_SENDER = "wxid_qxlscnesk92m21"
-COMMON_TALKER = "18406812120@chatroom"
 TARGET_TOTAL = 240
 TARGET_GROUP = 160
 TARGET_PRIVATE = 80
@@ -196,6 +195,7 @@ def _common_candidates(
     *,
     candidate_filter: Callable[[list[dict[str, Any]], int], bool] | None = None,
 ) -> list[dict[str, Any]]:
+    config = load_private_case_config('common_talker', 'self_sender')
     cases: list[dict[str, Any]] = []
     sources = (COMMON_SOURCE,)
     if COMMON_SOURCE == _DEFAULT_COMMON_SOURCE:
@@ -203,7 +203,7 @@ def _common_candidates(
     for source_number, source_path in enumerate(sources):
         raw = source_path.read_bytes()
         payload = json.loads(raw)
-        if str(payload.get("talker")) != COMMON_TALKER:
+        if str(payload.get("talker")) != config['common_talker']:
             raise RuntimeError("correct common-prosperity source has unexpected talker")
         source_hash = hashlib.sha256(raw).hexdigest()
         source_namespace = "" if source_number == 0 else f":{source_hash[:16]}"
@@ -213,7 +213,7 @@ def _common_candidates(
                 timestamp = stage1._timestamp(message)
                 if not (
                     message.get("isSend")
-                    and str(message.get("senderUsername") or "") == SELF_SENDER
+                    and str(message.get("senderUsername") or "") == config['self_sender']
                     and int(message.get("localType") or 0) == 1
                     and 0 < timestamp < stage1.HUMAN_CUTOFF
                     and stage1._safe_text(reply)
@@ -234,7 +234,7 @@ def _common_candidates(
                 content_fingerprints = {_fingerprint(reply), *(_fingerprint(text) for text in context)}
                 if _fingerprint(reply) in exposed:
                     continue
-                event_identity = f"{COMMON_TALKER}{source_namespace}:{event_number}"
+                event_identity = f"{config['common_talker']}{source_namespace}:{event_number}"
                 cases.append({
                     "internal_id": hashlib.sha256(
                         f"{event_identity}:{timestamp}:{reply}".encode()
